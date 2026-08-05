@@ -16,17 +16,26 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
 
 ## Estado actual
 
-- El repositorio contiene diseño técnico y de producto consolidado, pero todavía
-  no contiene código de producto ni comandos verificados de build, test o
-  ejecución.
-- La documentación existente constituye contexto completado; no se convierte en
-  tareas artificiales.
-- Todas las tareas de implementación de este backlog comienzan en `Pendiente`.
-- La primera entrega útil será un corte vertical manual: crear un archivo
-  `.nirmata`, guardar un mundo mínimo, cerrarlo y reabrirlo desde la aplicación
-  de escritorio.
+- NIR-001–NIR-044 están completadas.
+- El workspace Rust incluye `nirmata-core`, `nirmata-store`, `nirmata-ai`,
+  `nirmata-app` y la aplicación Tauri.
+- El producto manual permite crear, editar, buscar, revisar, confirmar, auditar
+  y deshacer cambios del canon en un archivo `.nirmata`.
+- La recuperación determinista combina anclas, SQLite, relaciones, tiempo,
+  perspectivas y FTS5 con fuentes navegables.
+- La frontera de IA incluye credenciales seguras, streaming, contratos
+  estrictos, modo `Consultar` y generación validada de propuestas.
+- La siguiente tarea funcional es NIR-045, el crítico semántico independiente.
 - La aceptación de NIR-052 certifica el fundamento funcional. La solución
   general queda completa únicamente al satisfacer la Definition of Done final.
+
+## Bloqueos
+
+- **Azure AI Foundry sin deployment invocable.** `BASE_URL` y
+  `PROVIDER_API_KEY` autentican correctamente y permiten listar modelos, pero
+  las llamadas de generación responden `DeploymentNotFound`. Para ejecutar IA
+  real se debe crear un deployment en el recurso y usar su nombre como modelo;
+  las pruebas simuladas y el resto del desarrollo no están bloqueados.
 
 ## Resumen autónomo del producto y la arquitectura
 
