@@ -1,0 +1,21 @@
+{
+  "items": [
+    {
+      "itemId": "collapse-beneficiary-1",
+      "classification": "inference",
+      "answer": {
+        "markdown": "La Liga de Contrabandistas ganaría acceso a rutas alternativas si la mina central deja de operar.",
+        "contentReferences": [
+          "nirmata://entity/44444444-4444-4444-4444-444444444444",
+          "nirmata://event/99999999-9999-9999-9999-999999999999"
+        ]
+      },
+      "citations": [
+        {
+          "sourceUri": "nirmata://event/99999999-9999-9999-9999-999999999999",
+          "quoteMd": "El colapso bloqueó la ruta oficial y dejó libre el paso de contrabando."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "issues": [
+    {
+      "issueId": "temporal-conflict-1",
+      "summary": {
+        "markdown": "La propuesta revive a la reina después de su muerte canónica.",
+        "contentReferences": [
+          "nirmata://entity/44444444-4444-4444-4444-444444444444"
+        ]
+      },
+      "affectedOperationIds": [
+        "66666666-6666-6666-6666-666666666666"
+      ],
+      "relatedObjectUris": [
+        "nirmata://entity/44444444-4444-4444-4444-444444444444"
+      ],
+      "evidence": [
+        {
+          "sourceUri": "https://example.com/not-allowed",
+          "excerptMd": "La reina murió en el año 430."
+        }
+      ],
+      "severity": "warning",
+      "category": "insufficient_evidence",
+      "confidence": 0.5
+    }
+  ]
+}

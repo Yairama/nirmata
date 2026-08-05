@@ -79,6 +79,10 @@ FTS5 busca nombres, frases y documentos. Sirve para:
 - sinonimos controlados;
 - notas e historias.
 
+En store vive dentro del mismo archivo SQLite como un indice derivado y
+reconstruible desde las tablas canonicas. Sus escrituras viajan en la misma
+transaccion que cambia canon.
+
 ### 7. Ensamblaje
 
 El contexto final:

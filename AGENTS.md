@@ -103,6 +103,15 @@ una plantilla. Los limites anteriores ya asignan las responsabilidades.
 Cuando existan comandos oficiales de build, lint y test, documentalos aqui solo
 despues de ejecutarlos correctamente.
 
+Comandos verificados para el corte actual:
+
+```powershell
+npm ci --prefix apps\nirmata-desktop\frontend
+npm run build --prefix apps\nirmata-desktop\frontend
+cargo test --workspace
+cargo build -p nirmata-desktop
+```
+
 ## Documentacion
 
 - Actualiza documentacion cuando cambie una decision que ya describe.
@@ -110,4 +119,3 @@ despues de ejecutarlos correctamente.
 - Usa enlaces relativos y rutas estables.
 - No crees documentos de planificacion temporales dentro del repositorio.
 - Una propuesta futura no justifica scaffolding presente.
-

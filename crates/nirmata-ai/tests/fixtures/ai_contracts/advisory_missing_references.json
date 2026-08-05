@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "itemId": "collapse-beneficiary-1",
+      "classification": "inference",
+      "answer": {
+        "markdown": "La Liga de Contrabandistas se beneficiaría del vacío logístico.",
+        "contentReferences": []
+      },
+      "citations": [
+        {
+          "sourceUri": "nirmata://event/99999999-9999-9999-9999-999999999999",
+          "quoteMd": "La ruta oficial quedó cerrada durante semanas."
+        }
+      ]
+    }
+  ]
+}

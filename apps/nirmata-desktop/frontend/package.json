@@ -1,0 +1,12 @@
+{
+  "name": "nirmata-desktop-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs && tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

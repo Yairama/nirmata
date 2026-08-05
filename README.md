@@ -11,18 +11,16 @@ SQLite.
 
 ## Estado
 
-El proyecto esta en fase de diseno tecnico consolidado. Todavia no existe codigo
-de producto ni comandos de instalacion o ejecucion.
+El primer corte vertical local esta implementado. La aplicacion Tauri crea,
+cierra y reabre un mundo desde un archivo SQLite `.nirmata`, sin IA.
 
-La documentacion actual define:
+El corte incluye:
 
-- vision y alcance del MVP;
-- modelo de dominio;
-- arquitectura local-first;
-- almacenamiento y recuperacion;
-- workflow y validacion de IA;
-- fundamentos academicos;
-- orden de implementacion.
+- workspace Rust modular con `core`, `store`, `app` y `desktop`;
+- identidad y validacion minima de `World`;
+- esquema SQLite versionado con revision inicial;
+- casos de uso `create_world`, `open_world` y `close_world`;
+- frontend TypeScript, HTML y CSS nativos.
 
 Empieza por [`docs/README.md`](docs/README.md).
 
@@ -67,8 +65,29 @@ La estructura detallada esta en
 
 Las reglas para agentes y contribuidores estan en [`AGENTS.md`](AGENTS.md).
 
+Validacion del corte actual:
+
+```powershell
+npm ci --prefix apps\nirmata-desktop\frontend
+npm run build --prefix apps\nirmata-desktop\frontend
+cargo test --workspace
+cargo build -p nirmata-desktop
+```
+
+Para probar la frontera Tauri manualmente:
+
+```powershell
+cargo run -p nirmata-desktop
+```
+
+En la ventana, crea un `.nirmata`, cierralo y abre el mismo archivo. La revision
+mostrada debe conservarse.
+
+Para desarrollo con Azure AI Foundry, `.env` usa `BASE_URL` y
+`PROVIDER_API_KEY`. El recurso debe tener un deployment invocable; el nombre del
+modelo/deployment se selecciona al realizar la solicitud.
+
 Principio rector:
 
 > Implementar la solucion mas pequena que preserve el canon y resuelva una
 > necesidad demostrada.
-

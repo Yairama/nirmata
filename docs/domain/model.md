@@ -172,6 +172,10 @@ aliases y permite resolver ambiguedades.
 Un `DecisionPoint` agrupa alternativas mutuamente excluyentes, sus fuentes y
 consecuencias. Un `ChangeSet` con decisiones no resueltas no es aplicable.
 
+Cuando un `replacement` cambia canon existente, el `DecisionPoint` asociado
+identifica el target sustituido, registra la razon y conserva la alternativa
+resuelta que habilita la confirmacion.
+
 Cada operacion de un `ChangeSet` puede declarar:
 
 - `additive`: completa un vacio;

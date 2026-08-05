@@ -1,0 +1,21 @@
+{
+  "items": [
+    {
+      "itemId": "collapse-beneficiary-1",
+      "classification": "fact",
+      "answer": {
+        "markdown": "La mina pertenece al Reino del Sur.",
+        "contentReferences": [
+          "nirmata://entity/55555555-5555-5555-5555-555555555555"
+        ]
+      },
+      "citations": [
+        {
+          "sourceUri": "nirmata://entity/55555555-5555-5555-5555-555555555555",
+          "quoteMd": "Controla la ruta oficial de suministro."
+        }
+      ],
+      "unexpectedField": true
+    }
+  ]
+}

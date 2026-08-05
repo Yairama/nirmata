@@ -208,8 +208,9 @@ pueden quedar activos con polaridades opuestas. Durante la revision es un
 Cuando la proposicion solo existe como prosa y no puede normalizarse, el critico
 semantico detecta el conflicto.
 
-Un cambio `replacement` debe identificar el canon sustituido y producir un
-`DecisionPoint`. Un cambio `reinterpretive` no borra claims anteriores.
+Un cambio `replacement` debe identificar el canon sustituido, registrar una
+razon y producir un `DecisionPoint` resuelto antes de confirmar. Un cambio
+`reinterpretive` no borra claims anteriores.
 
 ## 7. Critico semantico
 

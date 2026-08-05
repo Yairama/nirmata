@@ -1,1 +1,5 @@
 .env
+/target/
+**/node_modules/
+apps/nirmata-desktop/frontend/dist/
+apps/nirmata-desktop/src-tauri/gen/

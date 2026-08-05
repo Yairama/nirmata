@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nirmata</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="main.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Nirmata</p>
+        <h1>Tu mundo, guardado localmente</h1>
+        <p>Crea o abre un archivo <code>.nirmata</code>. Los formularios manuales generan drafts; no escriben canon.</p>
+      </header>
+
+      <section id="closed-view" aria-labelledby="create-title">
+        <form id="create-form">
+          <h2 id="create-title">Crear mundo</h2>
+          <label>
+            Nombre
+            <input id="name" name="name" maxlength="200" required />
+          </label>
+          <label>
+            Premisa
+            <textarea id="premise" name="premise" rows="5" maxlength="100000"></textarea>
+          </label>
+          <label>
+            Etiqueta del epoch
+            <input id="epoch-label" name="epoch-label" maxlength="200" />
+          </label>
+          <label>
+            Archivo
+            <span class="path-row">
+              <input id="create-path" readonly placeholder="Selecciona dónde guardarlo" />
+              <button id="choose-create-path" type="button">Elegir…</button>
+            </span>
+          </label>
+          <button id="create-button" type="submit">Crear mundo</button>
+        </form>
+
+        <div class="divider" aria-hidden="true"></div>
+
+        <section aria-labelledby="open-title">
+          <h2 id="open-title">Abrir mundo</h2>
+          <p>Selecciona un proyecto existente para continuar con navegación lógica, búsqueda FTS y drafts manuales.</p>
+          <button id="open-button" type="button">Abrir .nirmata…</button>
+        </section>
+      </section>
+
+      <section id="world-view" hidden aria-labelledby="world-name">
+        <div class="world-header">
+          <div class="world-title-block">
+            <p class="eyebrow">Mundo activo</p>
+            <h2 id="world-name"></h2>
+            <p id="world-path" class="path"></p>
+          </div>
+          <div class="world-actions">
+            <dl class="world-meta">
+              <div>
+                <dt>Premisa</dt>
+                <dd id="world-premise"></dd>
+              </div>
+              <div>
+                <dt>Epoch</dt>
+                <dd id="world-epoch"></dd>
+              </div>
+              <div>
+                <dt>Revisión</dt>
+                <dd id="world-revision" class="path"></dd>
+              </div>
+            </dl>
+            <button id="edit-world-button" type="button">Editar mundo</button>
+            <button id="close-button" type="button">Cerrar mundo</button>
+          </div>
+        </div>
+
+        <section class="layout-toolbar" aria-label="Controles de disposición">
+          <div class="layout-control-group">
+            <button
+              id="toggle-navigation"
+              type="button"
+              aria-controls="navigation-panel"
+              aria-expanded="true"
+            >
+              Ocultar navegación
+            </button>
+            <label class="range-control" for="left-panel-size">
+              Ancho navegación
+              <input id="left-panel-size" type="range" min="16" max="36" step="1" value="24" />
+            </label>
+          </div>
+          <div class="layout-control-group">
+            <button
+              id="toggle-context"
+              type="button"
+              aria-controls="context-panel"
+              aria-expanded="true"
+            >
+              Ocultar contexto
+            </button>
+            <label class="range-control" for="right-panel-size">
+              Ancho contexto
+              <input id="right-panel-size" type="range" min="16" max="36" step="1" value="22" />
+            </label>
+          </div>
+          <div class="layout-control-group">
+            <button
+              id="toggle-pending"
+              type="button"
+              aria-controls="pending-panel"
+              aria-expanded="true"
+            >
+              Ocultar cambios
+            </button>
+            <label class="range-control" for="bottom-panel-size">
+              Alto cambios
+              <input id="bottom-panel-size" type="range" min="10" max="24" step="1" value="15" />
+            </label>
+          </div>
+        </section>
+
+        <div id="workspace-shell" class="workspace-shell">
+          <section id="navigation-panel" class="panel" aria-labelledby="navigation-title">
+            <div class="panel-header">
+              <div>
+                <p class="panel-eyebrow">Exploración</p>
+                <h3 id="navigation-title">Navegación y búsqueda</h3>
+              </div>
+              <p id="result-summary" class="panel-summary"></p>
+            </div>
+            <div class="panel-body section-stack">
+              <form id="uri-form" class="search-form compact-form">
+                <label class="search-field">
+                  Abrir por URI
+                  <input id="uri-input" type="text" placeholder="nirmata://entity/..." autocomplete="off" />
+                </label>
+                <button id="uri-button" type="submit">Abrir</button>
+              </form>
+
+              <form id="search-form" class="search-form compact-form">
+                <label class="search-field">
+                  Buscar FTS
+                  <input
+                    id="search-input"
+                    type="search"
+                    name="query"
+                    placeholder="Nombre, alias, cita o texto"
+                    autocomplete="off"
+                  />
+                </label>
+                <button id="search-button" type="submit">Buscar</button>
+              </form>
+
+              <div id="kind-filters" class="kind-filters" aria-label="Filtros por tipo"></div>
+
+              <section class="subsection" aria-labelledby="recents-title">
+                <div class="subsection-header">
+                  <h4 id="recents-title">Recientes de la sesión</h4>
+                </div>
+                <div id="recents-list" class="results-list"></div>
+                <p id="recents-empty" class="empty-state" hidden>
+                  La sesión todavía no tiene recientes.
+                </p>
+              </section>
+
+              <section class="subsection" aria-labelledby="tree-title">
+                <div class="subsection-header">
+                  <h4 id="tree-title">Árbol VFS lógico</h4>
+                </div>
+                <div id="tree-root" class="tree-root"></div>
+                <p id="tree-empty" class="empty-state" hidden>
+                  El mundo todavía no tiene objetos para navegar.
+                </p>
+              </section>
+
+              <section class="subsection" aria-labelledby="results-title">
+                <div class="subsection-header">
+                  <h4 id="results-title">Resultados</h4>
+                </div>
+                <div id="results-list" class="results-list" role="listbox" aria-label="Resultados de búsqueda"></div>
+                <p id="results-empty" class="empty-state" hidden>
+                  No hay resultados con el filtro actual.
+                </p>
+              </section>
+            </div>
+          </section>
+
+          <section id="editor-panel" class="panel" aria-labelledby="editor-title">
+            <div class="panel-header">
+              <div>
+                <p class="panel-eyebrow">Formularios manuales</p>
+                <h3 id="editor-title">Selecciona o crea un objeto</h3>
+              </div>
+              <p id="editor-subtitle" class="panel-summary"></p>
+            </div>
+            <div class="panel-body">
+              <div id="editor-empty" class="empty-state">
+                El panel central muestra formularios mínimos para editar la selección o crear un draft manual nuevo.
+              </div>
+              <div id="editor-content" hidden></div>
+            </div>
+          </section>
+
+          <section id="context-panel" class="panel" aria-labelledby="context-title">
+            <div class="panel-header">
+              <div>
+                <p class="panel-eyebrow">Lectura situada</p>
+                <h3 id="context-title">Contexto y relaciones</h3>
+              </div>
+              <p id="context-summary" class="panel-summary"></p>
+            </div>
+            <div class="panel-body">
+              <div id="context-empty" class="empty-state">
+                Al seleccionar un objeto verás relaciones, advertencias, procedencia y navegación contextual.
+              </div>
+              <div id="context-content" hidden></div>
+            </div>
+          </section>
+
+          <section id="pending-panel" class="panel" aria-labelledby="pending-title">
+            <div class="panel-header">
+              <div>
+                <p class="panel-eyebrow">Revisión manual</p>
+                <h3 id="pending-title">Cambios pendientes</h3>
+              </div>
+              <p id="pending-summary" class="panel-summary">Sin cambios pendientes.</p>
+            </div>
+            <div class="panel-body">
+              <div id="pending-empty" class="empty-state">
+                Cada ChangeSet manual y el historial local aparecerán aquí con diff, validaciones, waivers, auditoría before/after y undo visible.
+              </div>
+              <div id="pending-content" hidden></div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <p id="status" role="status" aria-live="polite"></p>
+      <p id="error" role="alert" hidden></p>
+    </main>
+  </body>
+</html>

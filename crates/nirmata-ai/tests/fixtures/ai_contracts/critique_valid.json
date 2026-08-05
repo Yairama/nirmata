@@ -1,0 +1,39 @@
+{
+  "issues": [
+    {
+      "issueId": "temporal-conflict-1",
+      "summary": {
+        "markdown": "La propuesta revive a la reina después de su muerte canónica.",
+        "contentReferences": [
+          "nirmata://entity/44444444-4444-4444-4444-444444444444",
+          "nirmata://event/99999999-9999-9999-9999-999999999999"
+        ]
+      },
+      "affectedOperationIds": [
+        "66666666-6666-6666-6666-666666666666"
+      ],
+      "relatedObjectUris": [
+        "nirmata://entity/44444444-4444-4444-4444-444444444444",
+        "nirmata://event/99999999-9999-9999-9999-999999999999"
+      ],
+      "evidence": [
+        {
+          "sourceUri": "nirmata://claim/77777777-7777-7777-7777-777777777777",
+          "excerptMd": "La reina murió en el año 430 y no volvió a aparecer en registros canónicos."
+        }
+      ],
+      "severity": "conflict",
+      "category": "temporal_conflict",
+      "attackType": "rebuts",
+      "targetClaimId": "77777777-7777-7777-7777-777777777777",
+      "confidence": 0.92,
+      "suggestedResolution": {
+        "markdown": "Ajusta la fecha del evento o agrega una excepción explícita a la regla aplicable.",
+        "contentReferences": [
+          "nirmata://claim/77777777-7777-7777-7777-777777777777",
+          "nirmata://event/99999999-9999-9999-9999-999999999999"
+        ]
+      }
+    }
+  ]
+}

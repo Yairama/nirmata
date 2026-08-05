@@ -131,7 +131,9 @@ herramientas.
 El contenido del mundo y la salida del modelo son datos no confiables:
 
 - Markdown se renderiza con HTML deshabilitado o sanitizado;
-- las claves de proveedor se guardan en el almacen seguro del sistema;
+- las claves de proveedor se guardan en el almacen seguro del sistema cuando
+  esta disponible de forma fiable; si no, permanecen solo en memoria de sesion
+  y la interfaz debe exponer esa limitacion;
 - los comandos Tauri validan IDs y rutas;
 - el modelo no recibe herramientas de escritura;
 - importar archivos nunca ejecuta contenido;
