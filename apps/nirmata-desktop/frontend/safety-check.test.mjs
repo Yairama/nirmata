@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
-const frontendSource = await readFile(new URL("./main.ts", import.meta.url), "utf8");
+const frontendDirectory = new URL("./", import.meta.url);
+const frontendSource = (
+  await Promise.all(
+    (await readdir(frontendDirectory))
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => readFile(new URL(name, frontendDirectory), "utf8")),
+  )
+).join("\n");
 const tauriSource = await readFile(new URL("../src-tauri/src/main.rs", import.meta.url), "utf8");
 
 test("GUI content stays in plain text mode", () => {
