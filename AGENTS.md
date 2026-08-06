@@ -108,7 +108,7 @@ Comandos verificados para el corte actual:
 ```powershell
 npm ci --prefix apps\nirmata-desktop\frontend
 npm run build --prefix apps\nirmata-desktop\frontend
-cargo test --workspace
+cargo nextest run --workspace
 cargo build -p nirmata-desktop
 ```
 
