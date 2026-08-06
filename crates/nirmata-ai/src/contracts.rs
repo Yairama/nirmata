@@ -19,7 +19,8 @@ pub const MAX_RELATED_OBJECT_URIS: usize = 16;
 pub const MAX_RESOLUTION_CHARS: usize = 1_000;
 pub const MAX_CONTRACT_ID_CHARS: usize = 64;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StructuredOutputErrorKind {
     EmptyResponse,
     FreeTextMutation,
@@ -308,10 +309,6 @@ impl CritiqueReport {
             self.issues.len(),
             MAX_CRITIQUE_ISSUES,
         )?;
-        if self.issues.is_empty() {
-            return Err("critique_report.issues must include at least one issue".to_owned());
-        }
-
         let mut seen_issue_ids = HashSet::with_capacity(self.issues.len());
         for issue in &self.issues {
             if !seen_issue_ids.insert(issue.issue_id.clone()) {
@@ -343,12 +340,15 @@ impl CritiqueReport {
                 "critique_report.issues.affected_operation_ids",
                 issue.affected_operation_ids.iter().copied(),
             )?;
-            if issue.affected_operation_ids.is_empty()
-                && issue.related_object_uris.is_empty()
-                && issue.target_claim_id.is_none()
-            {
+            if issue.affected_operation_ids.is_empty() {
                 return Err(format!(
-                    "critique_report issue {} must cite at least one affected id",
+                    "critique_report issue {} must cite at least one affected operation",
+                    issue.issue_id.as_str()
+                ));
+            }
+            if issue.severity == ValidationSeverity::Error {
+                return Err(format!(
+                    "critique_report issue {} cannot declare a hard error",
                     issue.issue_id.as_str()
                 ));
             }

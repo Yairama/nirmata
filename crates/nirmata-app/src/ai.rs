@@ -11,13 +11,22 @@ use nirmata_ai::{
     capabilities::{
         AzureFoundryCapabilityClient, CapabilityError, CapabilityInvocation, InvocationMetadata,
     },
-    contracts::{AdvisoryClassification, AdvisoryResponse},
+    contracts::{
+        AdvisoryClassification, AdvisoryResponse, CritiqueReport, StructuredOutputDiagnostic,
+        StructuredOutputError, StructuredOutputErrorKind,
+    },
 };
 use nirmata_core::{
     RevisionId, WorldId,
     change_set::{ChangeOperation, ChangeSetDraft},
-    document::ObjectRef,
-    validation::ValidationReport,
+    claim::Claim,
+    document::{ContentReference, Document, ObjectRef},
+    entity::Entity,
+    event::{Event, EventLink},
+    goal::Goal,
+    relation::Relation,
+    rule::Rule,
+    validation::{ValidationReport, ValidationSeverity},
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -123,8 +132,81 @@ pub struct AiCritiqueInput {
     pub mode: AiMode,
     pub request: String,
     pub draft: ChangeSetDraft,
+    pub deterministic_report: ValidationReport,
+    pub semantic_rules: Vec<Rule>,
+    pub affected_subgraph: AiAffectedSubgraphSnapshot,
     pub snapshot: AiContextSnapshot,
     pub context_object_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiParsingFailure {
+    pub kind: StructuredOutputErrorKind,
+    pub message: String,
+    pub diagnostic: StructuredOutputDiagnostic,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+enum AiRepairReport {
+    Parsing {
+        failure: AiParsingFailure,
+    },
+    ValidationAndCritique {
+        deterministic_report: ValidationReport,
+        critique_report: CritiqueReport,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiRepairInput {
+    mode: AiMode,
+    request: String,
+    snapshot: AiContextSnapshot,
+    context_object_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failed_draft: Option<ChangeSetDraft>,
+    repair_report: AiRepairReport,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAffectedSubgraphSnapshot {
+    pub entities: Vec<Entity>,
+    pub relations: Vec<Relation>,
+    pub goals: Vec<Goal>,
+    pub events: Vec<Event>,
+    pub event_links: Vec<EventLink>,
+    pub rules: Vec<Rule>,
+    pub claims: Vec<Claim>,
+    pub documents: Vec<Document>,
+    pub content_references: Vec<ContentReference>,
+    pub revisions: Vec<RevisionId>,
+}
+
+impl AiAffectedSubgraphSnapshot {
+    fn from_validation_snapshot(
+        snapshot: &nirmata_core::change_set::ChangeSetValidationSnapshot<'_>,
+    ) -> Self {
+        Self {
+            entities: snapshot.entities.to_vec(),
+            relations: snapshot.relations.to_vec(),
+            goals: snapshot.goals.to_vec(),
+            events: snapshot.events.to_vec(),
+            event_links: snapshot.event_links.to_vec(),
+            rules: snapshot.rules.to_vec(),
+            claims: snapshot.claims.to_vec(),
+            documents: snapshot.documents.to_vec(),
+            content_references: snapshot.content_references.to_vec(),
+            revisions: snapshot.revisions.to_vec(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -144,6 +226,8 @@ pub enum AiProposalProgress {
     IntentBriefReady,
     CallingModel,
     Validating,
+    CallingCritic,
+    Repairing,
     Completed,
 }
 
@@ -247,6 +331,10 @@ pub struct AiProposalDraftResponse {
     pub operations: Vec<AiProposalOperationPreview>,
     pub consequences: Vec<String>,
     pub validation_report: ValidationReport,
+    pub critique_report: CritiqueReport,
+    pub critique_metadata: InvocationMetadata,
+    pub repair_count: u8,
+    pub repair_output_failure: Option<AiParsingFailure>,
     pub ready_for_review: bool,
 }
 
@@ -277,6 +365,13 @@ trait AiModeClient {
         context_object_ids: Vec<String>,
         options: RequestOptions,
     ) -> ClientFuture<'a, Result<CapabilityInvocation<ChangeSetDraft>, CapabilityError>>;
+
+    fn run_critic<'a>(
+        &'a self,
+        payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<CritiqueReport>, CapabilityError>>;
 }
 
 impl AiModeClient for AzureFoundryCapabilityClient {
@@ -303,6 +398,15 @@ impl AiModeClient for AzureFoundryCapabilityClient {
         options: RequestOptions,
     ) -> ClientFuture<'a, Result<CapabilityInvocation<ChangeSetDraft>, CapabilityError>> {
         Box::pin(async move { self.propose(&payload, context_object_ids, options).await })
+    }
+
+    fn run_critic<'a>(
+        &'a self,
+        payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<CritiqueReport>, CapabilityError>> {
+        Box::pin(async move { self.critic(&payload, context_object_ids, options).await })
     }
 }
 
@@ -352,13 +456,33 @@ impl crate::NirmataApp {
                 current_revision: snapshot.base_revision,
             });
         }
-        let context_object_ids = snapshot.context_object_ids();
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let graph = active.store.load_affected_graph_for_draft(draft)?;
+        let validation_snapshot = graph.validation_snapshot();
+        let mut deterministic_report = draft.validation_report(&validation_snapshot);
+        annotate_report_with_change_operations(&mut deterministic_report, draft.operations());
+        let semantic_rules = validation_snapshot
+            .rules
+            .iter()
+            .filter(|rule| rule.validator_kind().is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        let affected_subgraph =
+            AiAffectedSubgraphSnapshot::from_validation_snapshot(&validation_snapshot);
+        let mut context_object_ids = snapshot
+            .context_object_ids()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        context_object_ids.extend(allowed_critique_uris(draft, &affected_subgraph));
         Ok(AiCritiqueInput {
             mode: AiMode::Critic,
             request: request.into(),
             draft: draft.clone(),
+            deterministic_report,
+            semantic_rules,
+            affected_subgraph,
             snapshot,
-            context_object_ids,
+            context_object_ids: context_object_ids.into_iter().collect(),
         })
     }
 
@@ -443,7 +567,7 @@ impl crate::NirmataApp {
         on_progress(AiQueryProgress::PreparingContext);
         let prepared = self.prepare_ai_query(request.clone(), context_request)?;
         let payload = serialize_payload(&prepared, "query")?;
-        let request_options = options.into_request_options();
+        let request_options = options.clone().into_request_options();
 
         on_progress(AiQueryProgress::CallingModel);
         let invocation = client
@@ -507,7 +631,14 @@ impl crate::NirmataApp {
         }
 
         let draft = self
-            .execute_ai_proposal_input_with(client, request, prepared, options, &mut on_progress)
+            .execute_ai_proposal_input_with(
+                client,
+                request,
+                prepared,
+                context_request,
+                options,
+                &mut on_progress,
+            )
             .await?;
         on_progress(AiProposalProgress::Completed);
         Ok(AiProposalResponse::Draft(draft))
@@ -529,7 +660,14 @@ impl crate::NirmataApp {
         let request = brief.render_request();
         let prepared = self.prepare_ai_proposal(request.clone(), context_request)?;
         let response = self
-            .execute_ai_proposal_input_with(client, request, prepared, options, &mut on_progress)
+            .execute_ai_proposal_input_with(
+                client,
+                request,
+                prepared,
+                context_request,
+                options,
+                &mut on_progress,
+            )
             .await?;
         on_progress(AiProposalProgress::Completed);
         Ok(response)
@@ -540,6 +678,7 @@ impl crate::NirmataApp {
         client: &C,
         request: String,
         prepared: AiProposalInput,
+        context_request: &ContextBundleRequest,
         options: AiRequestOptions,
         on_progress: &mut F,
     ) -> Result<AiProposalDraftResponse, AppError>
@@ -548,21 +687,179 @@ impl crate::NirmataApp {
         F: FnMut(AiProposalProgress) + Send,
     {
         let payload = serialize_payload(&prepared, "proposal")?;
-        let request_options = options.into_request_options();
 
         on_progress(AiProposalProgress::CallingModel);
-        let invocation = client
+        let initial_result = client
             .run_proposal(
                 payload,
                 prepared.context_object_ids.clone(),
-                request_options,
+                options.clone().into_request_options(),
+            )
+            .await;
+
+        match initial_result {
+            Ok(initial_invocation) => {
+                let (initial_critique_input, initial_critique) = self
+                    .evaluate_ai_proposal_with(
+                        client,
+                        &request,
+                        &initial_invocation.output,
+                        context_request,
+                        &options,
+                        on_progress,
+                    )
+                    .await?;
+                if !evaluation_needs_repair(
+                    &initial_critique_input.deterministic_report,
+                    &initial_critique.output,
+                ) {
+                    let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+                    return build_proposal_draft_response(
+                        &active.store,
+                        request,
+                        prepared.snapshot,
+                        initial_invocation,
+                        initial_critique_input.deterministic_report,
+                        initial_critique,
+                        0,
+                        None,
+                    );
+                }
+
+                let repair_input = AiRepairInput {
+                    mode: AiMode::Propose,
+                    request: request.clone(),
+                    snapshot: prepared.snapshot.clone(),
+                    context_object_ids: initial_critique_input.context_object_ids.clone(),
+                    failed_draft: Some(initial_invocation.output.clone()),
+                    repair_report: AiRepairReport::ValidationAndCritique {
+                        deterministic_report: initial_critique_input.deterministic_report.clone(),
+                        critique_report: initial_critique.output.clone(),
+                    },
+                };
+                let repair_payload = serialize_payload(&repair_input, "repair")?;
+                on_progress(AiProposalProgress::Repairing);
+                match client
+                    .run_proposal(
+                        repair_payload,
+                        repair_input.context_object_ids,
+                        options.clone().into_request_options(),
+                    )
+                    .await
+                {
+                    Ok(repaired_invocation) => {
+                        let (repaired_input, repaired_critique) = self
+                            .evaluate_ai_proposal_with(
+                                client,
+                                &request,
+                                &repaired_invocation.output,
+                                context_request,
+                                &options,
+                                on_progress,
+                            )
+                            .await?;
+                        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+                        build_proposal_draft_response(
+                            &active.store,
+                            request,
+                            prepared.snapshot,
+                            repaired_invocation,
+                            repaired_input.deterministic_report,
+                            repaired_critique,
+                            1,
+                            None,
+                        )
+                    }
+                    Err(CapabilityError::StructuredOutput(error)) => {
+                        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+                        build_proposal_draft_response(
+                            &active.store,
+                            request,
+                            prepared.snapshot,
+                            initial_invocation,
+                            initial_critique_input.deterministic_report,
+                            initial_critique,
+                            1,
+                            Some(parsing_failure(&error)),
+                        )
+                    }
+                    Err(error) => Err(map_capability_error(error)),
+                }
+            }
+            Err(CapabilityError::StructuredOutput(error)) => {
+                let repair_input = AiRepairInput {
+                    mode: AiMode::Propose,
+                    request: request.clone(),
+                    snapshot: prepared.snapshot.clone(),
+                    context_object_ids: prepared.context_object_ids.clone(),
+                    failed_draft: None,
+                    repair_report: AiRepairReport::Parsing {
+                        failure: parsing_failure(&error),
+                    },
+                };
+                let repair_payload = serialize_payload(&repair_input, "repair")?;
+                on_progress(AiProposalProgress::Repairing);
+                let repaired_invocation = client
+                    .run_proposal(
+                        repair_payload,
+                        repair_input.context_object_ids,
+                        options.clone().into_request_options(),
+                    )
+                    .await
+                    .map_err(map_capability_error)?;
+                let (repaired_input, repaired_critique) = self
+                    .evaluate_ai_proposal_with(
+                        client,
+                        &request,
+                        &repaired_invocation.output,
+                        context_request,
+                        &options,
+                        on_progress,
+                    )
+                    .await?;
+                let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+                build_proposal_draft_response(
+                    &active.store,
+                    request,
+                    prepared.snapshot,
+                    repaired_invocation,
+                    repaired_input.deterministic_report,
+                    repaired_critique,
+                    1,
+                    None,
+                )
+            }
+            Err(error) => Err(map_capability_error(error)),
+        }
+    }
+
+    async fn evaluate_ai_proposal_with<C, F>(
+        &self,
+        client: &C,
+        request: &str,
+        draft: &ChangeSetDraft,
+        context_request: &ContextBundleRequest,
+        options: &AiRequestOptions,
+        on_progress: &mut F,
+    ) -> Result<(AiCritiqueInput, CapabilityInvocation<CritiqueReport>), AppError>
+    where
+        C: AiModeClient,
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        on_progress(AiProposalProgress::Validating);
+        let critique_input = self.prepare_ai_critique(request, draft, context_request)?;
+        let critique_payload = serialize_payload(&critique_input, "critique")?;
+        on_progress(AiProposalProgress::CallingCritic);
+        let critique_invocation = client
+            .run_critic(
+                critique_payload,
+                critique_input.context_object_ids.clone(),
+                options.clone().into_request_options(),
             )
             .await
             .map_err(map_capability_error)?;
-
-        on_progress(AiProposalProgress::Validating);
-        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
-        build_proposal_draft_response(&active.store, request, prepared.snapshot, invocation)
+        validate_critique_references(&critique_input, &critique_invocation.output)?;
+        Ok((critique_input, critique_invocation))
     }
 
     fn build_ai_context_snapshot(
@@ -597,13 +894,19 @@ fn build_proposal_draft_response(
     request: String,
     snapshot: AiContextSnapshot,
     invocation: CapabilityInvocation<ChangeSetDraft>,
+    validation_report: ValidationReport,
+    critique_invocation: CapabilityInvocation<CritiqueReport>,
+    repair_count: u8,
+    repair_output_failure: Option<AiParsingFailure>,
 ) -> Result<AiProposalDraftResponse, AppError> {
     let CapabilityInvocation {
         output: draft,
         metadata,
     } = invocation;
-    let mut validation_report = store.validate_change_set_draft(&draft)?;
-    annotate_report_with_change_operations(&mut validation_report, draft.operations());
+    let CapabilityInvocation {
+        output: critique_report,
+        metadata: critique_metadata,
+    } = critique_invocation;
 
     let mut affected_seen = BTreeSet::new();
     let mut affected_objects = Vec::new();
@@ -650,6 +953,9 @@ fn build_proposal_draft_response(
         .map(|source| resolve_search_result(store, source.to_string()))
         .collect::<Result<Vec<_>, AppError>>()?;
 
+    let ready_for_review = validation_report.is_ok()
+        && !critique_blocks_review(&critique_report)
+        && repair_output_failure.is_none();
     Ok(AiProposalDraftResponse {
         request,
         snapshot,
@@ -660,8 +966,12 @@ fn build_proposal_draft_response(
         affected_objects,
         operations,
         consequences,
-        ready_for_review: validation_report.is_ok(),
+        ready_for_review,
         validation_report,
+        critique_report,
+        critique_metadata,
+        repair_count,
+        repair_output_failure,
     })
 }
 
@@ -969,12 +1279,170 @@ fn map_capability_error(error: CapabilityError) -> AppError {
     }
 }
 
+fn parsing_failure(error: &StructuredOutputError) -> AiParsingFailure {
+    AiParsingFailure {
+        kind: error.kind(),
+        message: error.message().to_owned(),
+        diagnostic: error.diagnostic().clone(),
+    }
+}
+
+fn evaluation_needs_repair(
+    deterministic_report: &ValidationReport,
+    critique_report: &CritiqueReport,
+) -> bool {
+    deterministic_report
+        .errors
+        .iter()
+        .chain(deterministic_report.conflicts.iter())
+        .any(|issue| issue.code != "change_set.replacement_decision_unresolved")
+        || critique_blocks_review(critique_report)
+}
+
+fn critique_blocks_review(report: &CritiqueReport) -> bool {
+    report
+        .issues
+        .iter()
+        .any(|issue| issue.severity == ValidationSeverity::Conflict)
+}
+
 fn merge_source_anchors(context_request: &mut ContextBundleRequest, sources: &[ObjectRef]) {
     for source in sources {
         if !context_request.anchors.contains(source) {
             context_request.anchors.push(*source);
         }
     }
+}
+
+fn allowed_critique_uris(
+    draft: &ChangeSetDraft,
+    snapshot: &AiAffectedSubgraphSnapshot,
+) -> BTreeSet<String> {
+    let mut uris = BTreeSet::from([ObjectRef::World(draft.world_id()).to_string()]);
+    uris.extend(draft.sources().iter().map(ToString::to_string));
+    for operation in draft.operations() {
+        uris.insert(operation.primary_ref().to_string());
+        uris.extend(operation.affected_ids().iter().map(ToString::to_string));
+    }
+    uris.extend(
+        snapshot
+            .entities
+            .iter()
+            .map(|entity| ObjectRef::Entity(entity.id()).to_string()),
+    );
+    uris.extend(
+        snapshot
+            .relations
+            .iter()
+            .map(|relation| ObjectRef::Relation(relation.id()).to_string()),
+    );
+    uris.extend(
+        snapshot
+            .goals
+            .iter()
+            .map(|goal| ObjectRef::Goal(goal.id()).to_string()),
+    );
+    uris.extend(
+        snapshot
+            .events
+            .iter()
+            .map(|event| ObjectRef::Event(event.id()).to_string()),
+    );
+    uris.extend(
+        snapshot
+            .rules
+            .iter()
+            .map(|rule| ObjectRef::Rule(rule.id()).to_string()),
+    );
+    uris.extend(
+        snapshot
+            .claims
+            .iter()
+            .map(|claim| ObjectRef::Claim(claim.id()).to_string()),
+    );
+    uris.extend(
+        snapshot
+            .documents
+            .iter()
+            .map(|document| ObjectRef::Document(document.id()).to_string()),
+    );
+    for reference in &snapshot.content_references {
+        uris.insert(reference.source().to_string());
+        uris.insert(reference.target().to_string());
+    }
+    uris
+}
+
+fn validate_critique_references(
+    input: &AiCritiqueInput,
+    report: &CritiqueReport,
+) -> Result<(), AppError> {
+    let operation_ids = input
+        .draft
+        .operations()
+        .iter()
+        .map(|operation| operation.operation_id().to_string())
+        .collect::<BTreeSet<_>>();
+    let mut allowed_uris = input
+        .context_object_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    allowed_uris.extend(allowed_critique_uris(
+        &input.draft,
+        &input.affected_subgraph,
+    ));
+
+    for issue in &report.issues {
+        for operation_id in &issue.affected_operation_ids {
+            if !operation_ids.contains(&operation_id.to_string()) {
+                return Err(invalid_critique_reference(format!(
+                    "issue {} cites operation {operation_id} outside the draft",
+                    issue.issue_id.as_str()
+                )));
+            }
+        }
+
+        for uri in issue
+            .summary
+            .content_references
+            .iter()
+            .chain(issue.related_object_uris.iter())
+            .chain(issue.evidence.iter().map(|evidence| &evidence.source_uri))
+            .chain(
+                issue
+                    .suggested_resolution
+                    .iter()
+                    .flat_map(|resolution| resolution.content_references.iter()),
+            )
+        {
+            let uri = String::from(*uri);
+            if !allowed_uris.contains(&uri) {
+                return Err(invalid_critique_reference(format!(
+                    "issue {} cites {uri} outside the critic snapshot",
+                    issue.issue_id.as_str()
+                )));
+            }
+        }
+
+        if let Some(claim_id) = issue.target_claim_id {
+            let claim_uri = ObjectRef::Claim(claim_id).to_string();
+            if !allowed_uris.contains(&claim_uri) {
+                return Err(invalid_critique_reference(format!(
+                    "issue {} targets claim {claim_uri} outside the critic snapshot",
+                    issue.issue_id.as_str()
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn invalid_critique_reference(message: String) -> AppError {
+    AppError::Ai(AiError::InvalidResponse(format!(
+        "critique report is not grounded: {message}"
+    )))
 }
 
 #[cfg(test)]
@@ -991,6 +1459,7 @@ mod tests {
     };
     use nirmata_store::WorldStore;
     use std::{
+        collections::VecDeque,
         fs,
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
@@ -998,26 +1467,47 @@ mod tests {
     };
 
     #[derive(Clone)]
+    enum FakeProposalReply {
+        Draft(ChangeSetDraft),
+        Structured(StructuredOutputError),
+    }
+
+    #[derive(Clone)]
     struct FakeClient {
         query_response: AdvisoryResponse,
         query_deltas: Vec<String>,
         query_delay: Duration,
-        proposal_draft: ChangeSetDraft,
+        proposal_replies: Arc<Mutex<VecDeque<FakeProposalReply>>>,
+        critique_reports: Arc<Mutex<VecDeque<CritiqueReport>>>,
         proposal_delay: Duration,
         query_calls: Arc<Mutex<usize>>,
         proposal_calls: Arc<Mutex<usize>>,
+        critique_calls: Arc<Mutex<usize>>,
+        critique_payloads: Arc<Mutex<Vec<Value>>>,
+        proposal_payloads: Arc<Mutex<Vec<Value>>>,
     }
 
     impl FakeClient {
         fn new(query_response: AdvisoryResponse, proposal_draft: ChangeSetDraft) -> Self {
+            let proposal_replies = VecDeque::from([
+                FakeProposalReply::Draft(proposal_draft.clone()),
+                FakeProposalReply::Draft(proposal_draft),
+            ]);
             Self {
                 query_response,
                 query_deltas: vec![],
                 query_delay: Duration::ZERO,
-                proposal_draft,
+                proposal_replies: Arc::new(Mutex::new(proposal_replies)),
+                critique_reports: Arc::new(Mutex::new(VecDeque::from([
+                    CritiqueReport { issues: vec![] },
+                    CritiqueReport { issues: vec![] },
+                ]))),
                 proposal_delay: Duration::ZERO,
                 query_calls: Arc::new(Mutex::new(0)),
                 proposal_calls: Arc::new(Mutex::new(0)),
+                critique_calls: Arc::new(Mutex::new(0)),
+                critique_payloads: Arc::new(Mutex::new(vec![])),
+                proposal_payloads: Arc::new(Mutex::new(vec![])),
             }
         }
 
@@ -1031,8 +1521,45 @@ mod tests {
             self
         }
 
+        fn with_critique_report(mut self, report: CritiqueReport) -> Self {
+            self.critique_reports = Arc::new(Mutex::new(VecDeque::from([report])));
+            self
+        }
+
+        fn with_proposal_replies(mut self, replies: Vec<FakeProposalReply>) -> Self {
+            self.proposal_replies = Arc::new(Mutex::new(replies.into()));
+            self
+        }
+
+        fn with_critique_reports(mut self, reports: Vec<CritiqueReport>) -> Self {
+            self.critique_reports = Arc::new(Mutex::new(reports.into()));
+            self
+        }
+
         fn proposal_calls(&self) -> usize {
             *self.proposal_calls.lock().expect("proposal calls lock")
+        }
+
+        fn critique_calls(&self) -> usize {
+            *self.critique_calls.lock().expect("critique calls lock")
+        }
+
+        fn last_critique_payload(&self) -> Value {
+            self.critique_payloads
+                .lock()
+                .expect("critique payload lock")
+                .last()
+                .cloned()
+                .expect("captured critique payload")
+        }
+
+        fn last_proposal_payload(&self) -> Value {
+            self.proposal_payloads
+                .lock()
+                .expect("proposal payload lock")
+                .last()
+                .cloned()
+                .expect("captured proposal payload")
         }
     }
 
@@ -1064,17 +1591,59 @@ mod tests {
 
         fn run_proposal<'a>(
             &'a self,
-            _payload: Value,
+            payload: Value,
             context_object_ids: Vec<String>,
             options: RequestOptions,
         ) -> ClientFuture<'a, Result<CapabilityInvocation<ChangeSetDraft>, CapabilityError>>
         {
             Box::pin(async move {
                 *self.proposal_calls.lock().expect("proposal calls lock") += 1;
+                self.proposal_payloads
+                    .lock()
+                    .expect("proposal payload lock")
+                    .push(payload);
                 sleep_or_cancel(self.proposal_delay, options.cancellation.clone()).await?;
+                let reply = self
+                    .proposal_replies
+                    .lock()
+                    .expect("proposal replies lock")
+                    .pop_front()
+                    .expect("queued proposal reply");
+                match reply {
+                    FakeProposalReply::Draft(output) => Ok(CapabilityInvocation {
+                        output,
+                        metadata: test_metadata("proposal_test", context_object_ids),
+                    }),
+                    FakeProposalReply::Structured(error) => {
+                        Err(CapabilityError::StructuredOutput(error))
+                    }
+                }
+            })
+        }
+
+        fn run_critic<'a>(
+            &'a self,
+            payload: Value,
+            context_object_ids: Vec<String>,
+            options: RequestOptions,
+        ) -> ClientFuture<'a, Result<CapabilityInvocation<CritiqueReport>, CapabilityError>>
+        {
+            Box::pin(async move {
+                *self.critique_calls.lock().expect("critique calls lock") += 1;
+                self.critique_payloads
+                    .lock()
+                    .expect("critique payload lock")
+                    .push(payload);
+                sleep_or_cancel(Duration::ZERO, options.cancellation.clone()).await?;
+                let output = self
+                    .critique_reports
+                    .lock()
+                    .expect("critique reports lock")
+                    .pop_front()
+                    .expect("queued critique report");
                 Ok(CapabilityInvocation {
-                    output: self.proposal_draft.clone(),
-                    metadata: test_metadata("proposal_test", context_object_ids),
+                    output,
+                    metadata: test_metadata("critic_test", context_object_ids),
                 })
             })
         }
@@ -1084,7 +1653,7 @@ mod tests {
         mara: Entity,
         _sera: Entity,
         rumor: Claim,
-        _rule: Rule,
+        rule: Rule,
     }
 
     fn test_metadata(prompt_version: &str, context_object_ids: Vec<String>) -> InvocationMetadata {
@@ -1217,7 +1786,7 @@ mod tests {
             mara,
             _sera: sera,
             rumor,
-            _rule: rule,
+            rule,
         }
     }
 
@@ -1285,6 +1854,37 @@ mod tests {
             vec![],
         )
         .expect("invalid additive delete draft")
+    }
+
+    fn grounded_rule_critique(
+        draft: &ChangeSetDraft,
+        rule: &Rule,
+        severity: ValidationSeverity,
+    ) -> CritiqueReport {
+        let rule_uri = format!("nirmata://rule/{}", rule.id())
+            .try_into()
+            .expect("rule uri");
+        CritiqueReport {
+            issues: vec![nirmata_ai::contracts::CritiqueIssue {
+                issue_id: "rule-conflict".to_owned().try_into().expect("issue id"),
+                summary: nirmata_ai::contracts::ReferencedMarkdown {
+                    markdown: "La propuesta contradice la regla del puerto.".to_owned(),
+                    content_references: vec![rule_uri],
+                },
+                affected_operation_ids: vec![draft.operations()[0].operation_id()],
+                related_object_uris: vec![rule_uri],
+                evidence: vec![nirmata_ai::contracts::CritiqueEvidence {
+                    source_uri: rule_uri,
+                    excerpt_md: rule.statement_md().to_owned(),
+                }],
+                severity,
+                category: nirmata_ai::contracts::CritiqueCategory::UniverseRule,
+                attack_type: Some(nirmata_ai::contracts::CritiqueAttackType::Rebuts),
+                target_claim_id: None,
+                confidence: 0.9,
+                suggested_resolution: None,
+            }],
+        }
     }
 
     #[tokio::test]
@@ -1591,13 +2191,14 @@ mod tests {
             draft.clone(),
         );
 
+        let mut progress = Vec::new();
         let response = app
             .execute_ai_proposal_with(
                 &fake,
                 "Crea una nueva facción que proteja el puerto.".to_owned(),
                 &context_request(ObjectRef::Entity(seeded.mara.id())),
                 AiRequestOptions::default(),
-                |_| {},
+                |event| progress.push(event),
             )
             .await
             .expect("proposal response");
@@ -1614,6 +2215,29 @@ mod tests {
         assert!(draft_response.operations[0].after.is_some());
         assert!(!draft_response.consequences.is_empty());
         assert!(draft_response.validation_report.is_ok());
+        assert!(draft_response.critique_report.issues.is_empty());
+        assert_eq!(
+            draft_response.critique_metadata.prompt_version,
+            "critic_test"
+        );
+        assert_eq!(fake.critique_calls(), 1);
+        assert_eq!(fake.proposal_calls(), 1);
+        assert_eq!(draft_response.repair_count, 0);
+        assert!(draft_response.repair_output_failure.is_none());
+        assert!(progress.contains(&AiProposalProgress::CallingCritic));
+        assert!(!progress.contains(&AiProposalProgress::Repairing));
+        let critique_payload = fake.last_critique_payload();
+        assert_eq!(
+            critique_payload["draft"],
+            serde_json::to_value(&draft).expect("draft json")
+        );
+        assert!(critique_payload.get("deterministicReport").is_some());
+        assert!(
+            critique_payload["semanticRules"]
+                .as_array()
+                .is_some_and(|rules| !rules.is_empty())
+        );
+        assert!(critique_payload.get("affectedSubgraph").is_some());
 
         drop(app);
         fs::remove_file(path).expect("remove project");
@@ -1665,7 +2289,320 @@ mod tests {
                 .iter()
                 .any(|issue| issue.code == "change_set.retcon.additive_delete")
         );
+        assert_eq!(draft_response.repair_count, 1);
+        assert_eq!(fake.proposal_calls(), 2);
+        assert_eq!(fake.critique_calls(), 2);
 
+        drop(app);
+        fs::remove_file(path).expect("remove project");
+    }
+
+    #[tokio::test]
+    async fn proposal_replaces_an_invalid_draft_with_one_complete_repair() {
+        let path = project_path("ai-proposal-repair-validation");
+        let seeded = seed_world(&path);
+        let world = WorldStore::open(&path)
+            .expect("open store")
+            .load_world()
+            .expect("load world");
+        let initial = invalid_additive_delete_draft(&world, &seeded.mara);
+        let repaired = draft_for_new_faction(
+            &world,
+            ObjectRef::Entity(seeded.mara.id()),
+            "Custodios del Faro",
+            "custodios-del-faro",
+        );
+        let fake = FakeClient::new(advisory_response(vec![]), initial.clone())
+            .with_proposal_replies(vec![
+                FakeProposalReply::Draft(initial),
+                FakeProposalReply::Draft(repaired.clone()),
+            ]);
+        let app = open_app(&path);
+
+        let response = app
+            .execute_ai_proposal_with(
+                &fake,
+                "Crea los custodios del faro.".to_owned(),
+                &context_request(ObjectRef::Entity(seeded.mara.id())),
+                AiRequestOptions::default(),
+                |_| {},
+            )
+            .await
+            .expect("repair response");
+        let AiProposalResponse::Draft(response) = response else {
+            panic!("expected repaired draft");
+        };
+
+        assert_eq!(response.draft, repaired);
+        assert_eq!(response.repair_count, 1);
+        assert!(response.ready_for_review);
+        assert_eq!(fake.proposal_calls(), 2);
+        assert_eq!(fake.critique_calls(), 2);
+        let payload = fake.last_proposal_payload();
+        assert_eq!(payload["repairReport"]["kind"], "validation_and_critique");
+        assert!(payload.get("failedDraft").is_some());
+        assert!(
+            payload["repairReport"]["deterministicReport"]["errors"]
+                .as_array()
+                .is_some_and(|issues| issues
+                    .iter()
+                    .any(|issue| issue["code"] == "change_set.retcon.additive_delete"))
+        );
+
+        drop(app);
+        fs::remove_file(path).expect("remove project");
+    }
+
+    #[tokio::test]
+    async fn proposal_repairs_structured_output_once_without_raw_payload() {
+        let path = project_path("ai-proposal-repair-parsing");
+        let seeded = seed_world(&path);
+        let world = WorldStore::open(&path)
+            .expect("open store")
+            .load_world()
+            .expect("load world");
+        let repaired = draft_for_new_faction(
+            &world,
+            ObjectRef::Entity(seeded.mara.id()),
+            "Vigías del Canal",
+            "vigias-del-canal",
+        );
+        let parse_error = nirmata_ai::contracts::parse_change_set_draft("{\"worldId\":")
+            .expect_err("truncated output");
+        let fake = FakeClient::new(advisory_response(vec![]), repaired.clone())
+            .with_proposal_replies(vec![
+                FakeProposalReply::Structured(parse_error),
+                FakeProposalReply::Draft(repaired.clone()),
+            ]);
+        let app = open_app(&path);
+
+        let response = app
+            .execute_ai_proposal_with(
+                &fake,
+                "Crea vigías para el canal.".to_owned(),
+                &context_request(ObjectRef::Entity(seeded.mara.id())),
+                AiRequestOptions::default(),
+                |_| {},
+            )
+            .await
+            .expect("parsing repair response");
+        let AiProposalResponse::Draft(response) = response else {
+            panic!("expected repaired draft");
+        };
+
+        assert_eq!(response.draft, repaired);
+        assert_eq!(response.repair_count, 1);
+        assert_eq!(fake.proposal_calls(), 2);
+        assert_eq!(fake.critique_calls(), 1);
+        let payload = fake.last_proposal_payload();
+        assert_eq!(payload["repairReport"]["kind"], "parsing");
+        assert_eq!(payload["repairReport"]["failure"]["kind"], "truncated_json");
+        assert!(payload.get("failedDraft").is_none());
+        assert!(!payload.to_string().contains("{\"worldId\":"));
+
+        drop(app);
+        fs::remove_file(path).expect("remove project");
+    }
+
+    #[tokio::test]
+    async fn failed_repair_keeps_the_initial_draft_reviewable_without_a_third_call() {
+        let path = project_path("ai-proposal-repair-output-failure");
+        let seeded = seed_world(&path);
+        let world = WorldStore::open(&path)
+            .expect("open store")
+            .load_world()
+            .expect("load world");
+        let initial = invalid_additive_delete_draft(&world, &seeded.mara);
+        let parse_error =
+            nirmata_ai::contracts::parse_change_set_draft("{").expect_err("truncated repair");
+        let fake = FakeClient::new(advisory_response(vec![]), initial.clone())
+            .with_proposal_replies(vec![
+                FakeProposalReply::Draft(initial.clone()),
+                FakeProposalReply::Structured(parse_error),
+            ]);
+        let app = open_app(&path);
+
+        let response = app
+            .execute_ai_proposal_with(
+                &fake,
+                "Crea una facción para proteger el puerto.".to_owned(),
+                &context_request(ObjectRef::Entity(seeded.mara.id())),
+                AiRequestOptions::default(),
+                |_| {},
+            )
+            .await
+            .expect("initial draft remains available");
+        let AiProposalResponse::Draft(response) = response else {
+            panic!("expected initial draft fallback");
+        };
+
+        assert_eq!(response.draft, initial);
+        assert_eq!(response.repair_count, 1);
+        assert_eq!(
+            response.repair_output_failure.expect("repair failure").kind,
+            StructuredOutputErrorKind::TruncatedJson
+        );
+        assert!(!response.ready_for_review);
+        assert_eq!(fake.proposal_calls(), 2);
+        assert_eq!(fake.critique_calls(), 1);
+
+        drop(app);
+        fs::remove_file(path).expect("remove project");
+    }
+
+    #[tokio::test]
+    async fn two_parsing_failures_stop_after_the_single_repair() {
+        let path = project_path("ai-proposal-two-parsing-failures");
+        let seeded = seed_world(&path);
+        let world = WorldStore::open(&path)
+            .expect("open store")
+            .load_world()
+            .expect("load world");
+        let unused = draft_for_new_faction(
+            &world,
+            ObjectRef::Entity(seeded.mara.id()),
+            "Unused",
+            "unused",
+        );
+        let first =
+            nirmata_ai::contracts::parse_change_set_draft("{").expect_err("first truncated output");
+        let second = nirmata_ai::contracts::parse_change_set_draft("{\"id\":")
+            .expect_err("second truncated output");
+        let fake = FakeClient::new(advisory_response(vec![]), unused).with_proposal_replies(vec![
+            FakeProposalReply::Structured(first),
+            FakeProposalReply::Structured(second),
+        ]);
+        let app = open_app(&path);
+
+        let error = app
+            .execute_ai_proposal_with(
+                &fake,
+                "Crea una facción menor.".to_owned(),
+                &context_request(ObjectRef::Entity(seeded.mara.id())),
+                AiRequestOptions::default(),
+                |_| {},
+            )
+            .await
+            .expect_err("second parser failure ends the workflow");
+
+        assert!(matches!(error, AppError::Ai(AiError::InvalidResponse(_))));
+        assert_eq!(fake.proposal_calls(), 2);
+        assert_eq!(fake.critique_calls(), 0);
+
+        drop(app);
+        fs::remove_file(path).expect("remove project");
+    }
+
+    #[tokio::test]
+    async fn proposal_repairs_one_critic_conflict_and_never_loops() {
+        let path = project_path("ai-proposal-repair-critic");
+        let seeded = seed_world(&path);
+        let world = WorldStore::open(&path)
+            .expect("open store")
+            .load_world()
+            .expect("load world");
+        let initial = draft_for_new_faction(
+            &world,
+            ObjectRef::Entity(seeded.mara.id()),
+            "Guardia del Puerto",
+            "guardia-del-puerto",
+        );
+        let repaired = draft_for_new_faction(
+            &world,
+            ObjectRef::Entity(seeded.mara.id()),
+            "Guardia del Dique",
+            "guardia-del-dique",
+        );
+        let first_conflict =
+            grounded_rule_critique(&initial, &seeded.rule, ValidationSeverity::Conflict);
+        let second_conflict =
+            grounded_rule_critique(&repaired, &seeded.rule, ValidationSeverity::Conflict);
+        let fake = FakeClient::new(advisory_response(vec![]), initial.clone())
+            .with_proposal_replies(vec![
+                FakeProposalReply::Draft(initial),
+                FakeProposalReply::Draft(repaired.clone()),
+            ])
+            .with_critique_reports(vec![first_conflict, second_conflict]);
+        let app = open_app(&path);
+
+        let response = app
+            .execute_ai_proposal_with(
+                &fake,
+                "Crea una guardia para el puerto.".to_owned(),
+                &context_request(ObjectRef::Entity(seeded.mara.id())),
+                AiRequestOptions::default(),
+                |_| {},
+            )
+            .await
+            .expect("bounded critic repair");
+        let AiProposalResponse::Draft(response) = response else {
+            panic!("expected repaired draft");
+        };
+
+        assert_eq!(response.draft, repaired);
+        assert_eq!(response.repair_count, 1);
+        assert!(!response.ready_for_review);
+        assert_eq!(fake.proposal_calls(), 2);
+        assert_eq!(fake.critique_calls(), 2);
+
+        drop(app);
+        fs::remove_file(path).expect("remove project");
+    }
+
+    #[tokio::test]
+    async fn proposal_rejects_critique_references_outside_the_draft() {
+        let path = project_path("ai-critic-unknown-operation");
+        let seeded = seed_world(&path);
+        let world = WorldStore::open(&path)
+            .expect("open store")
+            .load_world()
+            .expect("load world");
+        let draft = draft_for_new_faction(
+            &world,
+            ObjectRef::Entity(seeded.mara.id()),
+            "Guardia del Faro",
+            "guardia-del-faro",
+        );
+        let rule_uri = format!("nirmata://rule/{}", seeded.rule.id())
+            .try_into()
+            .expect("rule uri");
+        let report = CritiqueReport {
+            issues: vec![nirmata_ai::contracts::CritiqueIssue {
+                issue_id: "unknown-operation".to_owned().try_into().expect("issue id"),
+                summary: nirmata_ai::contracts::ReferencedMarkdown {
+                    markdown: "La propuesta contradice la regla del puerto.".to_owned(),
+                    content_references: vec![rule_uri],
+                },
+                affected_operation_ids: vec![ChangeOperationId::new()],
+                related_object_uris: vec![rule_uri],
+                evidence: vec![nirmata_ai::contracts::CritiqueEvidence {
+                    source_uri: rule_uri,
+                    excerpt_md: seeded.rule.statement_md().to_owned(),
+                }],
+                severity: nirmata_core::validation::ValidationSeverity::Conflict,
+                category: nirmata_ai::contracts::CritiqueCategory::UniverseRule,
+                attack_type: Some(nirmata_ai::contracts::CritiqueAttackType::Rebuts),
+                target_claim_id: None,
+                confidence: 0.9,
+                suggested_resolution: None,
+            }],
+        };
+        let fake = FakeClient::new(advisory_response(vec![]), draft).with_critique_report(report);
+        let app = open_app(&path);
+
+        let error = app
+            .execute_ai_proposal_with(
+                &fake,
+                "Crea una nueva guardia para el faro.".to_owned(),
+                &context_request(ObjectRef::Entity(seeded.mara.id())),
+                AiRequestOptions::default(),
+                |_| {},
+            )
+            .await
+            .expect_err("unknown operation reference must fail");
+
+        assert!(error.to_string().contains("outside the draft"));
+        assert_eq!(fake.critique_calls(), 1);
         drop(app);
         fs::remove_file(path).expect("remove project");
     }

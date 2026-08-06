@@ -5,10 +5,10 @@ mod manual_review;
 mod search_use_cases;
 
 pub use ai::{
-    AiContextSnapshot, AiCritiqueInput, AiMode, AiProposalAction, AiProposalDraftResponse,
-    AiProposalInput, AiProposalOperationPreview, AiProposalProgress, AiProposalResponse,
-    AiProviderConfig, AiQueryCitation, AiQueryInput, AiQueryItem, AiQueryProgress, AiQueryResponse,
-    AiRequestOptions, IntentBrief,
+    AiAffectedSubgraphSnapshot, AiContextSnapshot, AiCritiqueInput, AiMode, AiParsingFailure,
+    AiProposalAction, AiProposalDraftResponse, AiProposalInput, AiProposalOperationPreview,
+    AiProposalProgress, AiProposalResponse, AiProviderConfig, AiQueryCitation, AiQueryInput,
+    AiQueryItem, AiQueryProgress, AiQueryResponse, AiRequestOptions, IntentBrief,
 };
 pub use context_bundle::{
     ContextBudget, ContextBudgetUsage, ContextBundle, ContextBundleRequest, ContextEntry,

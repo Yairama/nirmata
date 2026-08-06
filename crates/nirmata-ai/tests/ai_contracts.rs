@@ -1,5 +1,5 @@
 use nirmata_ai::contracts::{
-    AdvisoryClassification, StructuredOutputErrorKind, parse_advisory_response,
+    AdvisoryClassification, CritiqueCategory, StructuredOutputErrorKind, parse_advisory_response,
     parse_change_set_draft, parse_critique_report,
 };
 
@@ -83,4 +83,47 @@ fn rejects_critique_fixture_with_invalid_uri() {
     .expect_err("invalid uri must fail");
 
     assert_eq!(error.kind(), StructuredOutputErrorKind::InvalidShape);
+}
+
+#[test]
+fn accepts_empty_critique_when_no_issue_is_supported() {
+    let report = parse_critique_report(include_str!("fixtures/ai_contracts/critique_empty.json"))
+        .expect("empty critique is valid");
+
+    assert!(report.issues.is_empty());
+}
+
+#[test]
+fn parses_required_semantic_critique_fixtures() {
+    let fixtures = [
+        (
+            include_str!("fixtures/ai_contracts/critique_semantic_rule.json"),
+            CritiqueCategory::UniverseRule,
+        ),
+        (
+            include_str!("fixtures/ai_contracts/critique_impossible_knowledge.json"),
+            CritiqueCategory::ImpossibleKnowledge,
+        ),
+        (
+            include_str!("fixtures/ai_contracts/critique_missing_consequence.json"),
+            CritiqueCategory::MissingConsequence,
+        ),
+    ];
+
+    for (fixture, expected_category) in fixtures {
+        let report = parse_critique_report(fixture).expect("semantic critique fixture");
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(report.issues[0].category, expected_category);
+        assert_eq!(report.issues[0].affected_operation_ids.len(), 1);
+        assert!(!report.issues[0].evidence.is_empty());
+    }
+}
+
+#[test]
+fn rejects_hard_errors_from_the_semantic_critic() {
+    let payload = include_str!("fixtures/ai_contracts/critique_semantic_rule.json")
+        .replace("\"severity\": \"conflict\"", "\"severity\": \"error\"");
+    let error = parse_critique_report(&payload).expect_err("LLM cannot declare a hard error");
+
+    assert_eq!(error.kind(), StructuredOutputErrorKind::InvalidContent);
 }

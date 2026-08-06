@@ -20,57 +20,26 @@ const ENV_PROVIDER_API_KEY: &str = "PROVIDER_API_KEY";
 type SendFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ChatRole {
-    System,
-    User,
-    Assistant,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub role: ChatRole,
-    pub content: String,
-}
-
-impl ChatMessage {
-    pub fn system(content: impl Into<String>) -> Self {
-        Self {
-            role: ChatRole::System,
-            content: content.into(),
-        }
-    }
-
-    pub fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: ChatRole::User,
-            content: content.into(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ChatCompletionRequest {
+pub struct ResponseRequest {
     pub model: String,
-    pub messages: Vec<ChatMessage>,
-    pub temperature: Option<serde_json::Number>,
+    pub instructions: String,
+    pub input: String,
     pub max_output_tokens: Option<u32>,
 }
 
-impl ChatCompletionRequest {
-    pub fn new(model: impl Into<String>, messages: Vec<ChatMessage>) -> Self {
+impl ResponseRequest {
+    pub fn new(
+        model: impl Into<String>,
+        instructions: impl Into<String>,
+        input: impl Into<String>,
+    ) -> Self {
         Self {
             model: model.into(),
-            messages,
-            temperature: None,
+            instructions: instructions.into(),
+            input: input.into(),
             max_output_tokens: None,
         }
-    }
-
-    pub fn with_temperature(mut self, value: f64) -> Self {
-        self.temperature = serde_json::Number::from_f64(value);
-        self
     }
 
     pub fn with_max_output_tokens(mut self, value: u32) -> Self {
@@ -81,19 +50,20 @@ impl ChatCompletionRequest {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ChatCompletionResponse {
+pub struct ResponseResult {
     pub request_id: Option<String>,
     pub model: Option<String>,
-    pub finish_reason: Option<String>,
-    pub usage: Option<ChatCompletionUsage>,
+    pub status: Option<String>,
+    pub incomplete_reason: Option<String>,
+    pub usage: Option<ResponseUsage>,
     pub output_text: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ChatCompletionUsage {
-    pub prompt_tokens: Option<u32>,
-    pub completion_tokens: Option<u32>,
+pub struct ResponseUsage {
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
     pub total_tokens: Option<u32>,
 }
 
@@ -265,27 +235,27 @@ impl AzureFoundryClient {
         })
     }
 
-    pub async fn complete_chat(
+    pub async fn create_response(
         &self,
         api_key: &str,
-        request: ChatCompletionRequest,
+        request: ResponseRequest,
         options: RequestOptions,
-    ) -> Result<ChatCompletionResponse, AiError> {
-        self.inner.complete_chat(api_key, request, options).await
+    ) -> Result<ResponseResult, AiError> {
+        self.inner.create_response(api_key, request, options).await
     }
 
-    pub async fn stream_chat<F>(
+    pub async fn stream_response<F>(
         &self,
         api_key: &str,
-        request: ChatCompletionRequest,
+        request: ResponseRequest,
         options: RequestOptions,
         on_delta: F,
-    ) -> Result<ChatCompletionResponse, AiError>
+    ) -> Result<ResponseResult, AiError>
     where
         F: FnMut(StreamDelta) + Send,
     {
         self.inner
-            .stream_chat(api_key, request, options, on_delta)
+            .stream_response(api_key, request, options, on_delta)
             .await
     }
 }
@@ -578,21 +548,21 @@ where
         }
     }
 
-    async fn complete_chat(
+    async fn create_response(
         &self,
         api_key: &str,
-        request: ChatCompletionRequest,
+        request: ResponseRequest,
         options: RequestOptions,
-    ) -> Result<ChatCompletionResponse, AiError> {
+    ) -> Result<ResponseResult, AiError> {
         validate_request(api_key, &request)?;
         let api_key = api_key.to_owned();
         run_with_request_controls(options, async {
             let response = self
                 .transport
                 .send(TransportRequest {
-                    url: self.endpoint("chat/completions")?,
+                    url: self.endpoint("responses")?,
                     api_key: api_key.clone(),
-                    body: chat_request_body(&request, false),
+                    body: response_request_body(&request, false),
                     stream: false,
                 })
                 .await
@@ -604,18 +574,18 @@ where
             }
 
             let body = read_body(response.body, &api_key).await?;
-            parse_chat_completion_response(&body, request_id, &api_key)
+            parse_response_result(&body, request_id, &api_key)
         })
         .await
     }
 
-    async fn stream_chat<F>(
+    async fn stream_response<F>(
         &self,
         api_key: &str,
-        request: ChatCompletionRequest,
+        request: ResponseRequest,
         options: RequestOptions,
         mut on_delta: F,
-    ) -> Result<ChatCompletionResponse, AiError>
+    ) -> Result<ResponseResult, AiError>
     where
         F: FnMut(StreamDelta) + Send,
     {
@@ -625,9 +595,9 @@ where
             let response = self
                 .transport
                 .send(TransportRequest {
-                    url: self.endpoint("chat/completions")?,
+                    url: self.endpoint("responses")?,
                     api_key: api_key.clone(),
-                    body: chat_request_body(&request, true),
+                    body: response_request_body(&request, true),
                     stream: true,
                 })
                 .await
@@ -642,7 +612,9 @@ where
             let mut buffer = String::new();
             let mut aggregated = String::new();
             let mut model = None;
-            let mut finish_reason = None;
+            let mut status = None;
+            let mut incomplete_reason = None;
+            let mut usage = None;
             let mut saw_done = false;
 
             while let Some(chunk) = body.next().await {
@@ -673,32 +645,44 @@ where
                     let value: Value = serde_json::from_str(payload).map_err(|error| {
                         AiError::InvalidResponse(redact_secret(&error.to_string(), &api_key))
                     })?;
-                    if model.is_none() {
-                        model = value
-                            .get("model")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned);
-                    }
-                    if let Some(choices) = value.get("choices").and_then(Value::as_array) {
-                        for choice in choices {
-                            if finish_reason.is_none() {
-                                finish_reason = choice
-                                    .get("finish_reason")
-                                    .and_then(Value::as_str)
-                                    .map(str::to_owned);
-                            }
-                            let delta = choice
+                    match value.get("type").and_then(Value::as_str) {
+                        Some("response.output_text.delta") => {
+                            let delta = value
                                 .get("delta")
-                                .and_then(|delta| delta.get("content"))
-                                .map(extract_text)
+                                .and_then(Value::as_str)
                                 .unwrap_or_default();
                             if !delta.is_empty() {
-                                aggregated.push_str(&delta);
+                                aggregated.push_str(delta);
                                 on_delta(StreamDelta {
-                                    delta: delta.clone(),
+                                    delta: delta.to_owned(),
                                 });
                             }
                         }
+                        Some("response.completed") | Some("response.incomplete") => {
+                            if let Some(final_response) = value.get("response") {
+                                model = final_response
+                                    .get("model")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned);
+                                status = final_response
+                                    .get("status")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned);
+                                incomplete_reason = parse_incomplete_reason(final_response);
+                                usage = parse_usage(final_response.get("usage"));
+                            }
+                            saw_done = true;
+                            break;
+                        }
+                        Some("error") => {
+                            let message = value
+                                .get("error")
+                                .and_then(|error| error.get("message"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("the response stream failed");
+                            return Err(AiError::InvalidResponse(redact_secret(message, &api_key)));
+                        }
+                        _ => {}
                     }
                 }
 
@@ -711,11 +695,12 @@ where
                 return Err(AiError::StreamInterrupted);
             }
 
-            Ok(ChatCompletionResponse {
+            Ok(ResponseResult {
                 request_id,
                 model,
-                finish_reason,
-                usage: None,
+                status,
+                incomplete_reason,
+                usage,
                 output_text: aggregated,
             })
         })
@@ -725,7 +710,8 @@ where
     fn endpoint(&self, suffix: &str) -> Result<Url, AiError> {
         self.base_url.join(suffix).map_err(|_| {
             AiError::InvalidBaseUrl(
-                "BASE_URL could not be combined with the Azure Foundry chat endpoint.".to_owned(),
+                "BASE_URL could not be combined with the Azure Foundry responses endpoint."
+                    .to_owned(),
             )
         })
     }
@@ -786,7 +772,7 @@ impl Transport for ReqwestTransport {
             let mut builder = self
                 .client
                 .post(request.url)
-                .header("api-key", request.api_key)
+                .bearer_auth(request.api_key)
                 .header("content-type", "application/json");
             if request.stream {
                 builder = builder.header("accept", "text/event-stream");
@@ -859,34 +845,33 @@ fn normalize_api_key(value: Option<&str>) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
-fn validate_request(api_key: &str, request: &ChatCompletionRequest) -> Result<(), AiError> {
+fn validate_request(api_key: &str, request: &ResponseRequest) -> Result<(), AiError> {
     if normalize_api_key(Some(api_key)).is_none() {
         return Err(AiError::MissingProviderApiKey);
     }
     if request.model.trim().is_empty() {
         return Err(AiError::InvalidResponse(
-            "the chat request requires a deployment name".to_owned(),
+            "the responses request requires a model or deployment name".to_owned(),
         ));
     }
-    if request.messages.is_empty() {
+    if request.input.trim().is_empty() {
         return Err(AiError::InvalidResponse(
-            "the chat request requires at least one message".to_owned(),
+            "the responses request requires non-empty input".to_owned(),
         ));
     }
     Ok(())
 }
 
-fn chat_request_body(request: &ChatCompletionRequest, stream: bool) -> Value {
+fn response_request_body(request: &ResponseRequest, stream: bool) -> Value {
     let mut body = json!({
         "model": request.model,
-        "messages": request.messages,
+        "instructions": request.instructions,
+        "input": request.input,
         "stream": stream,
+        "store": false,
     });
-    if let Some(temperature) = request.temperature.clone() {
-        body["temperature"] = Value::Number(temperature);
-    }
     if let Some(max_output_tokens) = request.max_output_tokens {
-        body["max_completion_tokens"] = Value::Number(max_output_tokens.into());
+        body["max_output_tokens"] = Value::Number(max_output_tokens.into());
     }
     body
 }
@@ -955,81 +940,78 @@ fn extract_http_error_message(body: &str) -> String {
     trimmed.to_owned()
 }
 
-fn parse_chat_completion_response(
+fn parse_response_result(
     body: &str,
     request_id: Option<String>,
     api_key: &str,
-) -> Result<ChatCompletionResponse, AiError> {
+) -> Result<ResponseResult, AiError> {
     let value: Value = serde_json::from_str(body)
         .map_err(|error| AiError::InvalidResponse(redact_secret(&error.to_string(), api_key)))?;
     let model = value
         .get("model")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let Some(choice) = value
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-    else {
-        return Err(AiError::InvalidResponse(
-            "the response did not include any choices".to_owned(),
-        ));
-    };
-
-    let finish_reason = choice
-        .get("finish_reason")
+    let status = value
+        .get("status")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let incomplete_reason = parse_incomplete_reason(&value);
     let usage = parse_usage(value.get("usage"));
-    let output_text = choice
-        .get("message")
-        .and_then(|message| message.get("content"))
-        .map(extract_text)
+    let output_text = value
+        .get("output_text")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| extract_response_output_text(&value))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            AiError::InvalidResponse(
-                "the response did not include assistant message content".to_owned(),
-            )
+            AiError::InvalidResponse("the response did not include output text".to_owned())
         })?;
 
-    Ok(ChatCompletionResponse {
+    Ok(ResponseResult {
         request_id,
         model,
-        finish_reason,
+        status,
+        incomplete_reason,
         usage,
         output_text,
     })
 }
 
-fn parse_usage(value: Option<&Value>) -> Option<ChatCompletionUsage> {
+fn parse_usage(value: Option<&Value>) -> Option<ResponseUsage> {
     let value = value?;
-    Some(ChatCompletionUsage {
-        prompt_tokens: parse_usage_field(value.get("prompt_tokens")),
-        completion_tokens: parse_usage_field(value.get("completion_tokens")),
+    Some(ResponseUsage {
+        input_tokens: parse_usage_field(value.get("input_tokens")),
+        output_tokens: parse_usage_field(value.get("output_tokens")),
         total_tokens: parse_usage_field(value.get("total_tokens")),
     })
+}
+
+fn parse_incomplete_reason(value: &Value) -> Option<String> {
+    value
+        .get("incomplete_details")
+        .and_then(|details| details.get("reason"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+fn extract_response_output_text(value: &Value) -> Option<String> {
+    let text = value
+        .get("output")?
+        .as_array()?
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+        .filter_map(|item| item.get("content").and_then(Value::as_array))
+        .flatten()
+        .filter(|content| content.get("type").and_then(Value::as_str) == Some("output_text"))
+        .filter_map(|content| content.get("text").and_then(Value::as_str))
+        .collect::<String>();
+    (!text.is_empty()).then_some(text)
 }
 
 fn parse_usage_field(value: Option<&Value>) -> Option<u32> {
     value
         .and_then(Value::as_u64)
         .and_then(|value| u32::try_from(value).ok())
-}
-
-fn extract_text(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Array(items) => items
-            .iter()
-            .filter_map(|item| {
-                item.get("text")
-                    .and_then(Value::as_str)
-                    .or_else(|| item.get("content").and_then(Value::as_str))
-            })
-            .collect::<Vec<_>>()
-            .join(""),
-        _ => String::new(),
-    }
 }
 
 fn request_id(headers: &[(String, String)]) -> Option<String> {
@@ -1147,15 +1129,9 @@ mod tests {
         }
     }
 
-    fn test_request() -> ChatCompletionRequest {
-        ChatCompletionRequest::new(
-            "deployment-name",
-            vec![
-                ChatMessage::system("You are concise."),
-                ChatMessage::user("Say hello."),
-            ],
-        )
-        .with_max_output_tokens(32)
+    fn test_request() -> ResponseRequest {
+        ResponseRequest::new("deployment-name", "You are concise.", "Say hello.")
+            .with_max_output_tokens(32)
     }
 
     fn test_client(transport: SimulatedTransport) -> AzureFoundryClientInner<SimulatedTransport> {
@@ -1256,69 +1232,77 @@ mod tests {
         }));
 
         let error = client
-            .complete_chat("", test_request(), RequestOptions::default())
+            .create_response("", test_request(), RequestOptions::default())
             .await
             .expect_err("missing key must fail");
         assert!(matches!(error, AiError::MissingProviderApiKey));
     }
 
     #[tokio::test]
-    async fn completes_chat_successfully() {
+    async fn creates_response_successfully() {
         let client = test_client(SimulatedTransport::new(|request| async move {
             assert!(!request.stream);
-            assert!(
-                request
-                    .url
-                    .as_str()
-                    .ends_with("/openai/v1/chat/completions")
-            );
+            assert!(request.url.as_str().ends_with("/openai/v1/responses"));
+            assert_eq!(request.body["instructions"], "You are concise.");
+            assert_eq!(request.body["input"], "Say hello.");
+            assert_eq!(request.body["max_output_tokens"], 32);
+            assert_eq!(request.body["store"], false);
             Ok(json_response(
                 200,
                 json!({
                     "model": "gpt-5.6-terra",
-                    "choices": [
-                        {
-                            "finish_reason": "stop",
-                            "message": { "content": "Hello from Azure Foundry." }
-                        }
-                    ]
+                    "status": "completed",
+                    "usage": { "input_tokens": 7, "output_tokens": 5, "total_tokens": 12 },
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "Hello from Azure Foundry."
+                        }]
+                    }]
                 }),
             ))
         }));
 
         let response = client
-            .complete_chat(
+            .create_response(
                 "super-secret-key",
                 test_request(),
                 RequestOptions::new(Duration::from_secs(1)),
             )
             .await
-            .expect("chat completion succeeds");
+            .expect("response succeeds");
 
         assert_eq!(response.request_id.as_deref(), Some("req-123"));
         assert_eq!(response.model.as_deref(), Some("gpt-5.6-terra"));
-        assert_eq!(response.finish_reason.as_deref(), Some("stop"));
+        assert_eq!(response.status.as_deref(), Some("completed"));
         assert_eq!(response.output_text, "Hello from Azure Foundry.");
+        assert_eq!(
+            response.usage,
+            Some(ResponseUsage {
+                input_tokens: Some(7),
+                output_tokens: Some(5),
+                total_tokens: Some(12),
+            })
+        );
     }
 
     #[tokio::test]
-    async fn streams_chat_successfully() {
+    async fn streams_response_successfully() {
         let client = test_client(SimulatedTransport::new(|request| async move {
             assert!(request.stream);
             Ok(sse_response(vec![
+                Ok("data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n"),
+                Ok("data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n"),
                 Ok(
-                    "data: {\"model\":\"gpt-5.6-terra\",\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+                    "data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.6-terra\",\"status\":\"completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":2,\"total_tokens\":9}}}\n\n",
                 ),
-                Ok(
-                    "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\n",
-                ),
-                Ok("data: [DONE]\n\n"),
             ]))
         }));
 
         let mut deltas = Vec::new();
         let response = client
-            .stream_chat(
+            .stream_response(
                 "super-secret-key",
                 test_request(),
                 RequestOptions::new(Duration::from_secs(1)),
@@ -1330,18 +1314,19 @@ mod tests {
         assert_eq!(deltas, vec!["Hello".to_owned(), " world".to_owned()]);
         assert_eq!(response.output_text, "Hello world");
         assert_eq!(response.model.as_deref(), Some("gpt-5.6-terra"));
-        assert_eq!(response.finish_reason.as_deref(), Some("stop"));
+        assert_eq!(response.status.as_deref(), Some("completed"));
+        assert_eq!(response.usage.expect("stream usage").total_tokens, Some(9));
     }
 
     #[tokio::test]
     async fn times_out_requests() {
         let client = test_client(SimulatedTransport::new(|_| async {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            Ok(json_response(200, json!({ "choices": [] })))
+            Ok(json_response(200, json!({ "output": [] })))
         }));
 
         let error = client
-            .complete_chat(
+            .create_response(
                 "super-secret-key",
                 test_request(),
                 RequestOptions::new(Duration::from_millis(10)),
@@ -1363,11 +1348,11 @@ mod tests {
 
         let client = test_client(SimulatedTransport::new(|_| async {
             tokio::time::sleep(Duration::from_millis(60)).await;
-            Ok(json_response(200, json!({ "choices": [] })))
+            Ok(json_response(200, json!({ "output": [] })))
         }));
 
         let error = client
-            .complete_chat(
+            .create_response(
                 "super-secret-key",
                 test_request(),
                 RequestOptions::new(Duration::from_secs(1)).with_cancellation(cancellation),
@@ -1392,7 +1377,7 @@ mod tests {
         }));
 
         let error = client
-            .complete_chat(secret, test_request(), RequestOptions::default())
+            .create_response(secret, test_request(), RequestOptions::default())
             .await
             .expect_err("HTTP error must fail");
         assert!(matches!(
@@ -1407,12 +1392,12 @@ mod tests {
         let secret = "super-secret-key";
         let client = test_client(SimulatedTransport::new(|_| async {
             Ok(sse_response(vec![Ok(
-                "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
             )]))
         }));
 
         let error = client
-            .stream_chat(secret, test_request(), RequestOptions::default(), |_| {})
+            .stream_response(secret, test_request(), RequestOptions::default(), |_| {})
             .await
             .expect_err("interrupted stream must fail");
         assert!(matches!(error, AiError::StreamInterrupted));
@@ -1420,24 +1405,23 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires BASE_URL, PROVIDER_API_KEY and AZURE_FOUNDRY_MODEL"]
+    #[ignore = "requires BASE_URL, PROVIDER_API_KEY and a model environment variable"]
     async fn live_smoke_test() {
         let base_url = env::var("BASE_URL").expect("BASE_URL");
         let api_key = env::var("PROVIDER_API_KEY").expect("PROVIDER_API_KEY");
-        let model = env::var("AZURE_FOUNDRY_MODEL").expect("AZURE_FOUNDRY_MODEL");
+        let model = env::var("AZURE_FOUNDRY_MODEL")
+            .or_else(|_| env::var("GPT-5.6-SOL"))
+            .expect("AZURE_FOUNDRY_MODEL or GPT-5.6-SOL");
 
         let client = AzureFoundryClient::new(&base_url).expect("create live client");
         let response = client
-            .complete_chat(
+            .create_response(
                 &api_key,
-                ChatCompletionRequest::new(
+                ResponseRequest::new(
                     model,
-                    vec![
-                        ChatMessage::system("Reply in one short sentence."),
-                        ChatMessage::user("Say hello in English."),
-                    ],
+                    "Reply in one short sentence.",
+                    "Say hello in English.",
                 )
-                .with_temperature(0.0)
                 .with_max_output_tokens(32),
                 RequestOptions::new(Duration::from_secs(60)),
             )
@@ -1449,5 +1433,23 @@ mod tests {
             response.model.as_deref().unwrap_or("unknown")
         );
         assert!(!response.output_text.trim().is_empty());
+
+        let mut deltas = Vec::new();
+        let streamed = client
+            .stream_response(
+                &api_key,
+                ResponseRequest::new(
+                    response.model.as_deref().unwrap_or("gpt-5.6-sol"),
+                    "Reply with exactly one short word.",
+                    "Say hello in English.",
+                )
+                .with_max_output_tokens(32),
+                RequestOptions::new(Duration::from_secs(60)),
+                |delta| deltas.push(delta.delta),
+            )
+            .await
+            .expect("live stream succeeds");
+        assert!(!streamed.output_text.trim().is_empty());
+        assert_eq!(deltas.concat(), streamed.output_text);
     }
 }

@@ -85,9 +85,8 @@ draft -> validar -> criticar -> reparar -> validar -> criticar
 
 Limites:
 
-- una reparacion de esquema;
-- una reparacion de dominio/semantica;
-- dos revisiones semanticas como maximo;
+- una unica reparacion total, ya provenga de esquema, dominio o semantica;
+- dos propuestas y dos revisiones semanticas como maximo;
 - despues del segundo fallo se muestra el conflicto al usuario.
 
 Los contadores viven en Rust. No son instrucciones dentro de un prompt.

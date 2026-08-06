@@ -1,6 +1,6 @@
 use crate::{
-    AiError, AzureFoundryClientInner, ChatCompletionRequest, ChatCompletionUsage, ChatMessage,
-    RequestOptions, ReqwestTransport, Transport,
+    AiError, AzureFoundryClientInner, RequestOptions, ReqwestTransport, ResponseRequest,
+    ResponseUsage, Transport,
     contracts::{
         AdvisoryResponse, CritiqueReport, StructuredOutputError, parse_advisory_response,
         parse_change_set_draft, parse_critique_report,
@@ -11,8 +11,8 @@ use serde::Serialize;
 use std::{error::Error, fmt};
 
 pub const QUERY_PROMPT_VERSION: &str = "query_v1";
-pub const PROPOSE_PROMPT_VERSION: &str = "propose_v1";
-pub const CRITIC_PROMPT_VERSION: &str = "critic_v1";
+pub const PROPOSE_PROMPT_VERSION: &str = "propose_v2";
+pub const CRITIC_PROMPT_VERSION: &str = "critic_v2";
 
 const QUERY_SYSTEM_PROMPT: &str = concat!(
     "Modo query de Nirmata. ",
@@ -26,14 +26,19 @@ const PROPOSE_SYSTEM_PROMPT: &str = concat!(
     "Modo propose de Nirmata. ",
     "Responde solo con un objeto JSON change_set_draft. ",
     "Usa la revision base y las fuentes del contexto entregado. ",
-    "No respondas con otros contratos ni texto libre."
+    "No respondas con otros contratos ni texto libre. ",
+    "Si existe repairReport, usa el failedDraft completo y ese reporte estructurado para producir un reemplazo completo. ",
+    "Nunca devuelvas un patch, una lista parcial de operaciones, comentarios ni un critique_report; conserva worldId y baseRevision del snapshot."
 );
 
 const CRITIC_SYSTEM_PROMPT: &str = concat!(
     "Modo critic de Nirmata. ",
     "Responde solo con JSON critique_report. ",
-    "Evalua el draft recibido contra el snapshot y las fuentes. ",
-    "No edites el draft ni propongas un replacement draft."
+    "Evalua solo el draft, reporte determinista, reglas semanticas, subgrafo y fuentes recibidos. ",
+    "Busca leyes del universo ignoradas, conocimiento imposible y consecuencias omitidas; la ausencia de datos significa desconocido. ",
+    "Cada issue debe citar affectedOperationIds y evidencia nirmata:// del contexto, y distinguir rebuts de undercuts cuando aplique. ",
+    "Usa solo severidad conflict, warning o info; un hallazgo del modelo nunca es error duro. ",
+    "No edites operaciones, no produzcas un draft alternativo y devuelve {\"issues\":[]} si no hay evidencia de problemas."
 );
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -52,7 +57,7 @@ pub struct InvocationMetadata {
     pub prompt_version: String,
     pub context_object_ids: Vec<String>,
     pub status: InvocationStatus,
-    pub usage: Option<ChatCompletionUsage>,
+    pub usage: Option<ResponseUsage>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -294,17 +299,10 @@ where
             .map_err(|error| CapabilityError::Serialization(error.to_string()))?;
         let response = self
             .client
-            .complete_chat(
+            .create_response(
                 &self.api_key,
-                ChatCompletionRequest::new(
-                    self.model.clone(),
-                    vec![
-                        ChatMessage::system(system_prompt),
-                        ChatMessage::user(user_payload),
-                    ],
-                )
-                .with_temperature(0.0)
-                .with_max_output_tokens(max_output_tokens),
+                ResponseRequest::new(self.model.clone(), system_prompt, user_payload)
+                    .with_max_output_tokens(max_output_tokens),
                 options,
             )
             .await
@@ -313,7 +311,10 @@ where
             model: response.model.clone().unwrap_or_else(|| self.model.clone()),
             prompt_version: prompt_version.to_owned(),
             context_object_ids,
-            status: status_from_finish_reason(response.finish_reason.as_deref()),
+            status: status_from_response(
+                response.status.as_deref(),
+                response.incomplete_reason.as_deref(),
+            ),
             usage: response.usage.clone(),
         };
         let output =
@@ -340,17 +341,10 @@ where
             .map_err(|error| CapabilityError::Serialization(error.to_string()))?;
         let response = self
             .client
-            .stream_chat(
+            .stream_response(
                 &self.api_key,
-                ChatCompletionRequest::new(
-                    self.model.clone(),
-                    vec![
-                        ChatMessage::system(system_prompt),
-                        ChatMessage::user(user_payload),
-                    ],
-                )
-                .with_temperature(0.0)
-                .with_max_output_tokens(max_output_tokens),
+                ResponseRequest::new(self.model.clone(), system_prompt, user_payload)
+                    .with_max_output_tokens(max_output_tokens),
                 options,
                 on_delta,
             )
@@ -360,7 +354,10 @@ where
             model: response.model.clone().unwrap_or_else(|| self.model.clone()),
             prompt_version: prompt_version.to_owned(),
             context_object_ids,
-            status: status_from_finish_reason(response.finish_reason.as_deref()),
+            status: status_from_response(
+                response.status.as_deref(),
+                response.incomplete_reason.as_deref(),
+            ),
             usage: response.usage.clone(),
         };
         let output =
@@ -369,11 +366,11 @@ where
     }
 }
 
-fn status_from_finish_reason(reason: Option<&str>) -> InvocationStatus {
-    match reason {
-        Some("stop") => InvocationStatus::Completed,
-        Some("length") => InvocationStatus::Truncated,
-        Some("content_filter") => InvocationStatus::ContentFiltered,
+fn status_from_response(status: Option<&str>, incomplete_reason: Option<&str>) -> InvocationStatus {
+    match (status, incomplete_reason) {
+        (Some("completed"), _) => InvocationStatus::Completed,
+        (Some("incomplete"), Some("max_output_tokens")) => InvocationStatus::Truncated,
+        (Some("incomplete"), Some("content_filter")) => InvocationStatus::ContentFiltered,
         _ => InvocationStatus::Unknown,
     }
 }
@@ -462,12 +459,14 @@ mod tests {
         let client = test_client(SimulatedTransport::new(|_| async {
             Ok(json_response(json!({
                 "model": "gpt-5.6-terra",
-                "usage": { "prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30 },
-                "choices": [{
-                    "finish_reason": "stop",
-                    "message": {
-                        "content": include_str!("../tests/fixtures/ai_contracts/change_set_valid.json")
-                    }
+                "status": "completed",
+                "usage": { "input_tokens": 10, "output_tokens": 20, "total_tokens": 30 },
+                "output": [{
+                    "type": "message",
+                    "content": [{
+                        "type": "output_text",
+                        "text": include_str!("../tests/fixtures/ai_contracts/change_set_valid.json")
+                    }]
                 }]
             })))
         }));
@@ -506,32 +505,34 @@ mod tests {
                     Ok(Bytes::from(format!(
                         "data: {}\n\n",
                         json!({
-                            "model": "gpt-5.6-terra",
-                            "choices": [{
-                                "delta": { "content": "{\"items\":[" },
-                                "finish_reason": null
-                            }]
+                            "type": "response.output_text.delta",
+                            "delta": "{\"items\":["
                         })
                     ))),
                     Ok(Bytes::from(format!(
                         "data: {}\n\n",
                         json!({
-                            "choices": [{
-                                "delta": { "content": second_content },
-                                "finish_reason": null
-                            }]
+                            "type": "response.output_text.delta",
+                            "delta": second_content
                         })
                     ))),
                     Ok(Bytes::from(format!(
                         "data: {}\n\n",
                         json!({
-                            "choices": [{
-                                "delta": { "content": "]}" },
-                                "finish_reason": "stop"
-                            }]
+                            "type": "response.output_text.delta",
+                            "delta": "]}"
                         })
                     ))),
-                    Ok(Bytes::from("data: [DONE]\n\n")),
+                    Ok(Bytes::from(format!(
+                        "data: {}\n\n",
+                        json!({
+                            "type": "response.completed",
+                            "response": {
+                                "model": "gpt-5.6-terra",
+                                "status": "completed"
+                            }
+                        })
+                    ))),
                 ])
                 .boxed(),
             })
@@ -573,12 +574,14 @@ mod tests {
                 *sink.lock().expect("capture lock") = Some(request.body.clone());
                 Ok(json_response(json!({
                     "model": "gpt-5.6-terra",
-                    "usage": { "prompt_tokens": 12, "completion_tokens": 24, "total_tokens": 36 },
-                    "choices": [{
-                        "finish_reason": "stop",
-                        "message": {
-                            "content": include_str!("../tests/fixtures/ai_contracts/change_set_valid.json")
-                        }
+                    "status": "completed",
+                    "usage": { "input_tokens": 12, "output_tokens": 24, "total_tokens": 36 },
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": include_str!("../tests/fixtures/ai_contracts/change_set_valid.json")
+                        }]
                     }]
                 })))
             }
@@ -605,27 +608,33 @@ mod tests {
             .expect("captured request body");
         assert!(body.get("tools").is_none());
         assert!(body.get("functions").is_none());
-        let messages = body["messages"].as_array().expect("messages array");
-        assert_eq!(messages.len(), 2);
         assert!(
-            messages[0]["content"]
+            body["instructions"]
                 .as_str()
                 .expect("system prompt")
                 .contains("change_set_draft")
         );
         assert!(
-            !messages[0]["content"]
+            body["instructions"]
                 .as_str()
                 .expect("system prompt")
-                .contains("critique_report")
+                .contains("reemplazo completo")
         );
+        assert!(
+            body["instructions"]
+                .as_str()
+                .expect("system prompt")
+                .contains("Nunca devuelvas un patch")
+        );
+        assert!(body["input"].as_str().expect("input").contains("propose"));
+        assert_eq!(body["store"], false);
         assert_eq!(result.metadata.prompt_version, PROPOSE_PROMPT_VERSION);
         assert_eq!(result.metadata.status, InvocationStatus::Completed);
         assert_eq!(
             result.metadata.usage,
-            Some(ChatCompletionUsage {
-                prompt_tokens: Some(12),
-                completion_tokens: Some(24),
+            Some(ResponseUsage {
+                input_tokens: Some(12),
+                output_tokens: Some(24),
                 total_tokens: Some(36),
             })
         );
@@ -641,11 +650,13 @@ mod tests {
                 *sink.lock().expect("capture lock") = Some(request.body.clone());
                 Ok(json_response(json!({
                     "model": "gpt-5.6-terra",
-                    "choices": [{
-                        "finish_reason": "stop",
-                        "message": {
-                            "content": include_str!("../tests/fixtures/ai_contracts/critique_valid.json")
-                        }
+                    "status": "completed",
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": include_str!("../tests/fixtures/ai_contracts/critique_valid.json")
+                        }]
                     }]
                 })))
             }
@@ -670,15 +681,14 @@ mod tests {
             .expect("capture lock")
             .clone()
             .expect("captured request body");
-        let messages = body["messages"].as_array().expect("messages array");
         assert!(
-            messages[0]["content"]
+            body["instructions"]
                 .as_str()
                 .expect("system prompt")
                 .contains("critique_report")
         );
         assert!(
-            !messages[0]["content"]
+            !body["instructions"]
                 .as_str()
                 .expect("system prompt")
                 .contains("change_set_draft")

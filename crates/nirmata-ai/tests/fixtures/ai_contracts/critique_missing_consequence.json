@@ -1,0 +1,38 @@
+{
+  "issues": [
+    {
+      "issueId": "political-consequence-missing",
+      "summary": {
+        "markdown": "La caída de la ciudad omite la consecuencia política declarada por la regla.",
+        "contentReferences": [
+          "nirmata://rule/55555555-5555-5555-5555-555555555555",
+          "nirmata://event/66666666-6666-6666-6666-666666666666"
+        ]
+      },
+      "affectedOperationIds": [
+        "77777777-7777-7777-7777-777777777777"
+      ],
+      "relatedObjectUris": [
+        "nirmata://rule/55555555-5555-5555-5555-555555555555",
+        "nirmata://event/66666666-6666-6666-6666-666666666666"
+      ],
+      "evidence": [
+        {
+          "sourceUri": "nirmata://rule/55555555-5555-5555-5555-555555555555",
+          "excerptMd": "La pérdida de una capital obliga a convocar un consejo de sucesión."
+        }
+      ],
+      "severity": "warning",
+      "category": "missing_consequence",
+      "attackType": "undercuts",
+      "targetClaimId": null,
+      "confidence": 0.84,
+      "suggestedResolution": {
+        "markdown": "Declara el consejo posterior o explica por qué la regla no aplica.",
+        "contentReferences": [
+          "nirmata://rule/55555555-5555-5555-5555-555555555555"
+        ]
+      }
+    }
+  ]
+}

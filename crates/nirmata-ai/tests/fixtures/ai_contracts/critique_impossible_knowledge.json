@@ -1,0 +1,36 @@
+{
+  "issues": [
+    {
+      "issueId": "secret-access-missing",
+      "summary": {
+        "markdown": "La perspectiva conoce un secreto sin una fuente de acceso compatible.",
+        "contentReferences": [
+          "nirmata://claim/33333333-3333-3333-3333-333333333333"
+        ]
+      },
+      "affectedOperationIds": [
+        "44444444-4444-4444-4444-444444444444"
+      ],
+      "relatedObjectUris": [
+        "nirmata://claim/33333333-3333-3333-3333-333333333333"
+      ],
+      "evidence": [
+        {
+          "sourceUri": "nirmata://claim/33333333-3333-3333-3333-333333333333",
+          "excerptMd": "El pacto solo es conocido por el consejo interior."
+        }
+      ],
+      "severity": "warning",
+      "category": "impossible_knowledge",
+      "attackType": "undercuts",
+      "targetClaimId": "33333333-3333-3333-3333-333333333333",
+      "confidence": 0.88,
+      "suggestedResolution": {
+        "markdown": "Añade una fuente de acceso o presenta el contenido como sospecha.",
+        "contentReferences": [
+          "nirmata://claim/33333333-3333-3333-3333-333333333333"
+        ]
+      }
+    }
+  ]
+}

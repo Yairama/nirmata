@@ -83,9 +83,11 @@ cargo run -p nirmata-desktop
 En la ventana, crea un `.nirmata`, cierralo y abre el mismo archivo. La revision
 mostrada debe conservarse.
 
-Para desarrollo con Azure AI Foundry, `.env` usa `BASE_URL` y
-`PROVIDER_API_KEY`. El recurso debe tener un deployment invocable; el nombre del
-modelo/deployment se selecciona al realizar la solicitud.
+Para desarrollo con Azure AI Foundry, configura en el proceso `BASE_URL`,
+`PROVIDER_API_KEY` y `AZURE_FOUNDRY_MODEL` (el test también acepta
+`GPT-5.6-SOL`). El repositorio ignora `.env`, pero no lo carga automáticamente.
+El cliente usa `POST /openai/v1/responses`, autenticación Bearer y `store: false`;
+el nombre del modelo/deployment se envía en cada solicitud.
 
 Principio rector:
 
