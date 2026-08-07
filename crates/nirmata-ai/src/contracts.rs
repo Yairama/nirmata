@@ -18,6 +18,7 @@ pub const MAX_CRITIQUE_EVIDENCE_ITEMS: usize = 8;
 pub const MAX_RELATED_OBJECT_URIS: usize = 16;
 pub const MAX_RESOLUTION_CHARS: usize = 1_000;
 pub const MAX_CONTRACT_ID_CHARS: usize = 64;
+pub const MAX_PROPOSAL_DECISION_POINTS: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -440,6 +441,15 @@ pub fn parse_change_set_draft(
     let validated = reconstruct_change_set_draft(raw_draft).map_err(|error| {
         StructuredOutputError::invalid_content("change_set_draft", payload, error.to_string())
     })?;
+    if validated.decisions().len() > MAX_PROPOSAL_DECISION_POINTS {
+        return Err(StructuredOutputError::invalid_content(
+            "change_set_draft",
+            payload,
+            format!(
+                "AI proposals cannot include more than {MAX_PROPOSAL_DECISION_POINTS} decision points"
+            ),
+        ));
+    }
     validate_document_content_references(&validated).map_err(|error| {
         StructuredOutputError::invalid_content("change_set_draft", payload, error)
     })?;

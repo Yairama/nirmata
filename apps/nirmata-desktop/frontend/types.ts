@@ -385,6 +385,7 @@ export type ManualReviewSnapshot = {
 export type ManualReviewActionRequest =
   | { kind: "accept"; operationId: string }
   | { kind: "record_judgment"; operationId: string; judgment: string }
+  | { kind: "resolve_decision"; decisionPointId: string; alternative: string }
   | { kind: "reject"; operationId: string }
   | { kind: "add_waiver"; operationId: string; issueCode: string; rationale: string };
 
@@ -453,6 +454,71 @@ export type TauriApi = {
     open(options: { multiple: false; directory: false; filters: DialogFilter[] }): Promise<string | null>;
     save(options: { defaultPath: string; filters: DialogFilter[] }): Promise<string | null>;
   };
+  event: {
+    listen<T>(event: string, handler: (event: { payload: T }) => void): Promise<() => void>;
+  };
+};
+
+export type ProviderCredentialStatus = {
+  configured: boolean;
+  source: "missing" | "system_secure_store" | "session_environment" | "session_memory";
+  persistence: "none" | "system_secure_store" | "session";
+  secureStoreAvailable: boolean;
+  limitation: string | null;
+};
+
+export type AiQueryItem = {
+  itemId: string;
+  classification: "fact" | "perspective" | "inference" | "no_evidence" | "unspecified";
+  markdown: string;
+  contentReferences: SearchResult[];
+  citations: Array<{ quoteMd: string; source: SearchResult }>;
+};
+
+export type AiQueryResponse = {
+  request: string;
+  items: AiQueryItem[];
+};
+
+export type AiRunSnapshot = {
+  id: string;
+  baseRevision: string;
+  request: string;
+  status:
+    | "running"
+    | "intent_brief_ready"
+    | "awaiting_review"
+    | "awaiting_final_critique"
+    | "ready_to_commit"
+    | "committed"
+    | "failed"
+    | "cancelled";
+  draft: {
+    objective: string;
+    assumptions: string[];
+    operations: unknown[];
+  } | null;
+  validationReport: ValidationReport | null;
+  critiqueReport: {
+    issues: Array<{
+      issueId: string;
+      summary: { markdown: string };
+      severity: ValidationSeverity;
+      affectedOperationIds: string[];
+      evidence: Array<{ sourceUri: string; excerptMd: string }>;
+    }>;
+  } | null;
+  repairCount: number;
+  reviewKey: string | null;
+  intentBrief: {
+    userRequest: string;
+    objective: string;
+    scope: string;
+    entities: SearchResult[];
+    restrictions: string[];
+    reason: string;
+  } | null;
+  error: string | null;
 };
 
 export type EditorControl = "text" | "textarea" | "number" | "select";
@@ -519,6 +585,7 @@ export type PendingDraftRecord = {
   preview: ManualDraftPreview;
   review: ManualReviewSnapshot;
   editor: EditorMode;
+  aiRunId?: string;
 };
 
 export type WorkspaceNotice = {

@@ -121,6 +121,51 @@
           </div>
         </section>
 
+        <section id="assistant-panel" class="assistant-panel" aria-labelledby="assistant-title">
+          <div class="assistant-heading">
+            <div>
+              <p class="panel-eyebrow">Microsoft Foundry · lectura controlada</p>
+              <h3 id="assistant-title">Asistente del canon</h3>
+            </div>
+            <div id="assistant-credential" class="credential-status">Comprobando credencial…</div>
+          </div>
+          <div class="assistant-controls">
+            <div class="mode-switch" role="group" aria-label="Modo del asistente">
+              <button id="assistant-query-mode" type="button" aria-pressed="true">Consultar</button>
+              <button id="assistant-propose-mode" type="button" class="secondary" aria-pressed="false">Proponer</button>
+            </div>
+            <p id="assistant-context" class="muted">Sin selección: se usará contexto general acotado.</p>
+          </div>
+          <form id="assistant-form" class="assistant-form">
+            <label>
+              Solicitud
+              <textarea id="assistant-input" rows="3" placeholder="Pregunta por el canon o solicita una propuesta revisable."></textarea>
+            </label>
+            <div class="pending-actions">
+              <button id="assistant-submit" type="submit">Consultar</button>
+              <button id="assistant-cancel" type="button" class="secondary" disabled>Cancelar</button>
+              <button id="assistant-final-critique" type="button" class="secondary" hidden>Revalidar crítica final</button>
+            </div>
+          </form>
+          <div id="assistant-progress" class="assistant-progress" aria-live="polite"></div>
+          <div id="assistant-transcript" class="assistant-transcript" aria-live="polite">
+            <p class="empty-state">Las consultas aparecen aquí y nunca se confunden con cambios pendientes.</p>
+          </div>
+          <details class="credential-settings">
+            <summary>Credencial del proveedor</summary>
+            <form id="assistant-key-form" class="compact-form">
+              <label>
+                Reemplazar clave
+                <input id="assistant-key" type="password" autocomplete="off" />
+              </label>
+              <div class="pending-actions">
+                <button type="submit">Guardar en almacén seguro</button>
+                <button id="assistant-key-clear" type="button" class="ghost">Borrar clave</button>
+              </div>
+            </form>
+          </details>
+        </section>
+
         <div id="workspace-shell" class="workspace-shell">
           <section id="navigation-panel" class="panel" aria-labelledby="navigation-title">
             <div class="panel-header">

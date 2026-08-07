@@ -1,4 +1,7 @@
-use super::{CommandError, parse_object_uri, parse_project_path, parse_revision_id};
+use super::{
+    CommandError, dotenv_value, parse_ai_run_id, parse_object_uri, parse_project_path,
+    parse_revision_id,
+};
 use nirmata_app::{AiError, AppError};
 use std::path::Path;
 use std::time::Duration;
@@ -32,4 +35,20 @@ fn provider_errors_map_to_stable_command_codes() {
 
     let cancelled = CommandError::from(AppError::Ai(AiError::RequestCancelled));
     assert_eq!(cancelled.code, "provider_cancelled");
+}
+
+#[test]
+fn development_env_parser_reads_only_the_requested_value() {
+    let contents = "# local config\nBASE_URL='https://example.test'\nPROVIDER_API_KEY=secret\n";
+    assert_eq!(
+        dotenv_value(contents, "BASE_URL").as_deref(),
+        Some("https://example.test")
+    );
+    assert_eq!(dotenv_value(contents, "MISSING"), None);
+}
+
+#[test]
+fn invalid_ai_run_ids_are_rejected_before_dispatch() {
+    let error = parse_ai_run_id("not-a-run-id").expect_err("run ids must be UUIDs");
+    assert_eq!(error.code, "invalid_ai_run_id");
 }

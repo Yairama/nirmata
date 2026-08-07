@@ -407,6 +407,10 @@ pub enum ManualReviewAction {
         operation_id: ChangeOperationId,
         judgment: String,
     },
+    ResolveDecision {
+        decision_point_id: DecisionPointId,
+        alternative: String,
+    },
     Reject {
         operation_id: ChangeOperationId,
     },
@@ -426,6 +430,10 @@ pub enum ManualReviewActionRequest {
     RecordJudgment {
         operation_id: String,
         judgment: String,
+    },
+    ResolveDecision {
+        decision_point_id: String,
+        alternative: String,
     },
     Reject {
         operation_id: String,
@@ -449,6 +457,13 @@ impl ManualReviewActionRequest {
             } => ManualReviewAction::RecordJudgment {
                 operation_id: parse_operation_id(&operation_id)?,
                 judgment,
+            },
+            Self::ResolveDecision {
+                decision_point_id,
+                alternative,
+            } => ManualReviewAction::ResolveDecision {
+                decision_point_id: parse_decision_point_id(&decision_point_id)?,
+                alternative,
             },
             Self::Reject { operation_id } => ManualReviewAction::Reject {
                 operation_id: parse_operation_id(&operation_id)?,
@@ -610,6 +625,7 @@ pub struct ManualReviewSession {
     original_draft: ChangeSetDraft,
     draft: ChangeSetDraft,
     operations: Vec<ManualReviewOperation>,
+    decisions: Vec<DecisionPoint>,
     validation_report: ValidationReport,
     effective_report: ValidationReport,
     waivers: Vec<ChangeSetWaiver>,
@@ -636,7 +652,7 @@ impl ManualReviewSession {
             input.sources,
             input.assumptions,
             operations,
-            decisions,
+            decisions.clone(),
         )?;
         let reviewed_operations = original_draft
             .operations()
@@ -649,7 +665,32 @@ impl ManualReviewSession {
                 judgment: None,
             })
             .collect();
-        Self::rebuild(original_draft, reviewed_operations, vec![], store)
+        Self::rebuild(
+            original_draft,
+            reviewed_operations,
+            decisions,
+            vec![],
+            store,
+        )
+    }
+
+    pub(crate) fn from_draft(
+        draft: ChangeSetDraft,
+        store: &WorldStore,
+    ) -> Result<Self, AppError> {
+        let operations = draft
+            .operations()
+            .iter()
+            .cloned()
+            .map(|operation| ManualReviewOperation {
+                original: operation.clone(),
+                current: operation,
+                decision: OperationDecision::Accept,
+                judgment: None,
+            })
+            .collect();
+        let decisions = draft.decisions().to_vec();
+        Self::rebuild(draft, operations, decisions, vec![], store)
     }
 
     pub(crate) fn apply_action(
@@ -659,6 +700,7 @@ impl ManualReviewSession {
         store: &WorldStore,
     ) -> Result<Self, AppError> {
         let mut operations = self.operations.clone();
+        let mut decisions = self.decisions.clone();
         let mut waivers = self.waivers.clone();
 
         match action {
@@ -682,6 +724,30 @@ impl ManualReviewSession {
             } => {
                 let operation = find_operation_mut(&mut operations, operation_id)?;
                 operation.judgment = Some(judgment.trim().to_owned());
+            }
+            ManualReviewAction::ResolveDecision {
+                decision_point_id,
+                alternative,
+            } => {
+                let decision = decisions
+                    .iter_mut()
+                    .find(|decision| decision.decision_point_id() == decision_point_id)
+                    .ok_or(AppError::UnknownReviewDecision(decision_point_id))?;
+                if !decision.alternatives().iter().any(|value| value == &alternative) {
+                    return Err(AppError::InvalidReviewDecisionAlternative {
+                        decision_point_id,
+                        alternative,
+                    });
+                }
+                *decision = DecisionPoint::restore(
+                    decision.decision_point_id(),
+                    decision.operation_ids().to_vec(),
+                    decision.prompt().to_owned(),
+                    decision.alternatives().to_vec(),
+                    decision.replacement_target(),
+                    decision.reason().map(str::to_owned),
+                    Some(alternative),
+                )?;
             }
             ManualReviewAction::Reject { operation_id } => {
                 let operation = find_operation_mut(&mut operations, operation_id)?;
@@ -718,7 +784,13 @@ impl ManualReviewSession {
             }
         }
 
-        Self::rebuild(self.original_draft.clone(), operations, waivers, store)
+        Self::rebuild(
+            self.original_draft.clone(),
+            operations,
+            decisions,
+            waivers,
+            store,
+        )
     }
 
     pub fn original_draft(&self) -> &ChangeSetDraft {
@@ -761,6 +833,7 @@ impl ManualReviewSession {
         Self::rebuild(
             rebase_draft_revision(&self.original_draft, base_revision)?,
             self.operations.clone(),
+            self.decisions.clone(),
             self.waivers.clone(),
             store,
         )
@@ -810,10 +883,11 @@ impl ManualReviewSession {
     fn rebuild(
         original_draft: ChangeSetDraft,
         operations: Vec<ManualReviewOperation>,
+        decisions: Vec<DecisionPoint>,
         waivers: Vec<ChangeSetWaiver>,
         store: &WorldStore,
     ) -> Result<Self, AppError> {
-        let draft = rebuilt_draft(&original_draft, &operations)?;
+        let draft = rebuilt_draft(&original_draft, &operations, &decisions)?;
         let mut validation_report = store.validate_change_set_draft(&draft)?;
         validation_report.extend(broken_dependency_issues(&operations));
         annotate_report_with_operations(&mut validation_report, &operations);
@@ -825,6 +899,7 @@ impl ManualReviewSession {
             original_draft,
             draft,
             operations,
+            decisions,
             validation_report,
             effective_report,
             waivers,
@@ -860,16 +935,19 @@ fn default_replacement_decision(operation: &ChangeOperation) -> Result<DecisionP
         _ => operation.primary_ref(),
     };
 
-    DecisionPoint::new_replacement(
+    DecisionPoint::restore(
+        DecisionPointId::new(),
         vec![operation.operation_id()],
         format!("Should {target} replace the current canon?"),
         vec![
             DEFAULT_REPLACEMENT_KEEP.to_owned(),
             DEFAULT_REPLACEMENT_APPLY.to_owned(),
         ],
-        target,
-        format!("Manual review confirmed replacing {target}."),
-        DEFAULT_REPLACEMENT_APPLY,
+        Some(target),
+        Some(format!(
+            "Apply only after the reviewer selects an alternative for {target}."
+        )),
+        None,
     )
     .map_err(Into::into)
 }

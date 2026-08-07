@@ -1,4 +1,5 @@
 import { buildCreateEditor } from "./editor-create.js";
+import "./assistant.js";
 import { currentWorldUri } from "./editor-model.js";
 import {
   clearError,

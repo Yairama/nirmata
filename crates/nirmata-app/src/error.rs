@@ -39,7 +39,13 @@ pub enum AppError {
         id: String,
     },
     ReviewSessionNotFound(String),
+    ReviewSessionConflict(String),
     UnknownReviewOperation(nirmata_core::ChangeOperationId),
+    UnknownReviewDecision(nirmata_core::DecisionPointId),
+    InvalidReviewDecisionAlternative {
+        decision_point_id: nirmata_core::DecisionPointId,
+        alternative: String,
+    },
     ReviewIssueNotFound {
         operation_id: nirmata_core::ChangeOperationId,
         issue_code: String,
@@ -51,6 +57,16 @@ pub enum AppError {
     AiBaseRevisionMismatch {
         draft_base_revision: RevisionId,
         current_revision: RevisionId,
+    },
+    AiRunNotFound(String),
+    AiCritiqueIssueNotFound {
+        run_id: String,
+        issue_id: String,
+    },
+    InvalidAiRunTransition {
+        run_id: String,
+        status: &'static str,
+        action: &'static str,
     },
     Ai(AiError),
     Domain(DomainError),
@@ -137,12 +153,27 @@ impl fmt::Display for AppError {
             Self::ReviewSessionNotFound(review_key) => {
                 write!(formatter, "manual review {review_key} was not found")
             }
+            Self::ReviewSessionConflict(review_key) => write!(
+                formatter,
+                "another pending review already targets {review_key}; finish or discard it first"
+            ),
             Self::UnknownReviewOperation(operation_id) => {
                 write!(
                     formatter,
                     "manual review operation {operation_id} was not found"
                 )
             }
+            Self::UnknownReviewDecision(decision_point_id) => write!(
+                formatter,
+                "manual review decision {decision_point_id} was not found"
+            ),
+            Self::InvalidReviewDecisionAlternative {
+                decision_point_id,
+                alternative,
+            } => write!(
+                formatter,
+                "{alternative} is not an alternative for manual review decision {decision_point_id}"
+            ),
             Self::ReviewIssueNotFound {
                 operation_id,
                 issue_code,
@@ -163,6 +194,19 @@ impl fmt::Display for AppError {
             } => write!(
                 formatter,
                 "AI request is stale: base revision {draft_base_revision} is behind current head {current_revision}"
+            ),
+            Self::AiRunNotFound(run_id) => write!(formatter, "AI run {run_id} was not found"),
+            Self::AiCritiqueIssueNotFound { run_id, issue_id } => write!(
+                formatter,
+                "final critique issue {issue_id} was not found for AI run {run_id}"
+            ),
+            Self::InvalidAiRunTransition {
+                run_id,
+                status,
+                action,
+            } => write!(
+                formatter,
+                "AI run {run_id} cannot {action} while its status is {status}"
             ),
             Self::Ai(error) => error.fmt(formatter),
             Self::Domain(error) => error.fmt(formatter),

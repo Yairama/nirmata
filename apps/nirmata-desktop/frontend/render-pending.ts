@@ -556,9 +556,22 @@ function renderPending(): void {
               ]
                 .filter(Boolean)
                 .join(" · ");
-          const alternatives = document.createElement("p");
-          alternatives.className = "muted";
-          alternatives.textContent = decision.alternatives.join(" · ");
+          const alternatives = block("pending-actions");
+          for (const alternative of decision.alternatives) {
+            const alternativeButton = button(
+              alternative,
+              decision.resolvedAlternative === alternative ? "secondary" : "ghost",
+            );
+            alternativeButton.disabled = decision.suggestionHidden;
+            alternativeButton.addEventListener("click", () => {
+              void updateReviewAction(record, {
+                kind: "resolve_decision",
+                decisionPointId: decision.decisionPointId,
+                alternative,
+              });
+            });
+            alternatives.append(alternativeButton);
+          }
           decisionCard.append(decisionHeading, detail, alternatives);
           decisionList.append(decisionCard);
         }
@@ -680,7 +693,10 @@ function renderPending(): void {
     });
     actions.append(confirm);
     const discard = button("Descartar", "secondary");
-    discard.addEventListener("click", () => {
+    discard.addEventListener("click", async () => {
+      if (record.aiRunId) {
+        await invoke("discard_ai_run", { runId: record.aiRunId });
+      }
       state.pendingDrafts.delete(record.preview.draftKey);
       if (state.editorMode?.targetUri === record.preview.draftKey) {
         state.editorMode.issues = [];

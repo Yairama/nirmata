@@ -72,6 +72,11 @@ impl FakeClient {
         self
     }
 
+    fn with_proposal_delay(mut self, delay: Duration) -> Self {
+        self.proposal_delay = delay;
+        self
+    }
+
     fn with_critique_report(mut self, report: CritiqueReport) -> Self {
         self.critique_reports = Arc::new(Mutex::new(VecDeque::from([report])));
         self
@@ -1211,6 +1216,266 @@ async fn proposal_can_resume_from_an_intent_brief() {
     assert_eq!(
         response.sources[0].uri,
         format!("nirmata://entity/{}", seeded.mara.id())
+    );
+
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn ai_run_requires_fresh_final_critique_before_commit_and_persists_summary() {
+    let path = project_path("ai-run-review-commit");
+    let seeded = seed_world(&path);
+    let world = WorldStore::open(&path)
+        .expect("open store")
+        .load_world()
+        .expect("load world");
+    let draft = draft_for_new_faction(
+        &world,
+        ObjectRef::Entity(seeded.mara.id()),
+        "Vigías del Estuario",
+        "vigias-del-estuario",
+    );
+    let operation_id = draft.operations()[0].operation_id();
+    let fake = FakeClient::new(advisory_response(vec![]), draft.clone());
+    let context = context_request(ObjectRef::Entity(seeded.mara.id()));
+    let mut app = open_app(&path);
+
+    let response = app
+        .execute_ai_proposal_with(
+            &fake,
+            "Crea una guardia menor para el estuario.".to_owned(),
+            &context,
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect("proposal response");
+    let prepared = app
+        .prepare_ai_proposal("Crea una guardia menor para el estuario.", &context)
+        .expect("prepare run");
+    let run = AiRun::running(prepared.request, prepared.snapshot);
+    let run_id = run.id;
+    app.ai_runs.insert(run_id, run);
+    app.complete_ai_proposal_run(run_id, response)
+        .expect("complete run");
+
+    let initial = app.read_ai_run(run_id).expect("read initial run");
+    assert_eq!(initial.status, AiRunStatus::AwaitingReview);
+    assert_eq!(
+        initial.draft.as_ref().expect("run draft").operations()[0].operation_id(),
+        operation_id
+    );
+    let review_key = initial.review_key.expect("review key");
+    let error = app
+        .confirm_stored_manual_review(&review_key)
+        .expect_err("initial critique must not authorize commit");
+    assert!(matches!(error, AppError::InvalidAiRunTransition { .. }));
+    let error = app
+        .revalidate_ai_run_with(run_id, &fake, &context, AiRequestOptions::default(), |_| {})
+        .await
+        .expect_err("final critique requires a human review action");
+    assert!(matches!(error, AppError::InvalidAiRunTransition { .. }));
+
+    app.apply_stored_manual_review_action(
+        &review_key,
+        crate::ManualReviewActionRequest::Accept {
+            operation_id: operation_id.to_string(),
+        },
+    )
+    .expect("record human acceptance");
+    assert_eq!(
+        app.read_ai_run(run_id).expect("read changed run").status,
+        AiRunStatus::AwaitingFinalCritique
+    );
+
+    let ready = app
+        .revalidate_ai_run_with(run_id, &fake, &context, AiRequestOptions::default(), |_| {})
+        .await
+        .expect("final critique");
+    assert_eq!(ready.status, AiRunStatus::ReadyToCommit);
+    assert_eq!(fake.critique_calls(), 2);
+
+    let session = app
+        .confirm_stored_manual_review(&review_key)
+        .expect("commit reviewed AI run");
+    assert_eq!(
+        app.read_ai_run(run_id).expect("read committed run").status,
+        AiRunStatus::Committed
+    );
+    drop(app);
+
+    let store = WorldStore::open(&path).expect("reopen store");
+    let revision = store
+        .get_revision(session.current_revision)
+        .expect("load revision")
+        .expect("committed revision");
+    let record = store
+        .get_committed_change_set(revision.change_set_id().expect("change set id"))
+        .expect("load change set")
+        .expect("committed change set");
+    assert_eq!(
+        record
+            .deterministic_report()
+            .and_then(|report| report.get("kind"))
+            .and_then(Value::as_str),
+        Some("ai_run_summary")
+    );
+    drop(store);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn cancelled_ai_run_records_terminal_state_without_changing_canon() {
+    let path = project_path("ai-run-cancelled");
+    let seeded = seed_world(&path);
+    let world = WorldStore::open(&path)
+        .expect("open store")
+        .load_world()
+        .expect("load world");
+    let fake = FakeClient::new(
+        advisory_response(vec![]),
+        draft_for_new_faction(
+            &world,
+            ObjectRef::Entity(seeded.mara.id()),
+            "Guardia Cancelada",
+            "guardia-cancelada",
+        ),
+    )
+    .with_proposal_delay(Duration::from_secs(5));
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let mut app = open_app(&path);
+
+    let error = app
+        .execute_ai_proposal_run_with(
+            &fake,
+            "Crea una guardia cancelada.".to_owned(),
+            &context_request(ObjectRef::Entity(seeded.mara.id())),
+            AiRequestOptions::default().with_cancellation(cancellation),
+            |_| {},
+        )
+        .await
+        .expect_err("cancelled run");
+    assert!(matches!(error, AppError::Ai(AiError::RequestCancelled)));
+    let run = app
+        .ai_runs
+        .values()
+        .next()
+        .expect("recorded run")
+        .snapshot();
+    assert_eq!(run.status, AiRunStatus::Cancelled);
+    assert!(
+        run.error
+            .as_deref()
+            .is_some_and(|value| value.contains("cancel"))
+    );
+    drop(app);
+
+    let store = WorldStore::open(&path).expect("reopen store");
+    assert_eq!(
+        store.load_world().expect("world").current_revision(),
+        world.current_revision()
+    );
+    assert_eq!(store.list_entities().expect("entities").len(), 2);
+    drop(store);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn final_critic_conflict_requires_judgment_for_that_recorded_issue() {
+    let path = project_path("ai-run-final-critic-judgment");
+    let seeded = seed_world(&path);
+    let world = WorldStore::open(&path)
+        .expect("open store")
+        .load_world()
+        .expect("load world");
+    let draft = draft_for_new_faction(
+        &world,
+        ObjectRef::Entity(seeded.mara.id()),
+        "Custodios del Faro",
+        "custodios-del-faro",
+    );
+    let operation_id = draft.operations()[0].operation_id();
+    let conflict = grounded_rule_critique(&draft, &seeded.rule, ValidationSeverity::Conflict);
+    let fake = FakeClient::new(advisory_response(vec![]), draft).with_critique_reports(vec![
+        CritiqueReport { issues: vec![] },
+        conflict.clone(),
+        conflict,
+    ]);
+    let context = context_request(ObjectRef::Entity(seeded.mara.id()));
+    let mut app = open_app(&path);
+    let response = app
+        .execute_ai_proposal_with(
+            &fake,
+            "Crea custodios para el faro.".to_owned(),
+            &context,
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect("initial proposal");
+    let prepared = app
+        .prepare_ai_proposal("Crea custodios para el faro.", &context)
+        .expect("prepare run");
+    let run = AiRun::running(prepared.request, prepared.snapshot);
+    let run_id = run.id;
+    app.ai_runs.insert(run_id, run);
+    app.complete_ai_proposal_run(run_id, response)
+        .expect("complete run");
+    let review_key = app
+        .read_ai_run(run_id)
+        .expect("run")
+        .review_key
+        .expect("review key");
+    app.apply_stored_manual_review_action(
+        &review_key,
+        crate::ManualReviewActionRequest::Accept {
+            operation_id: operation_id.to_string(),
+        },
+    )
+    .expect("human review action");
+
+    let blocked = app
+        .revalidate_ai_run_with(run_id, &fake, &context, AiRequestOptions::default(), |_| {})
+        .await
+        .expect("blocking final critique");
+    assert_eq!(blocked.status, AiRunStatus::AwaitingReview);
+    assert_eq!(
+        blocked
+            .critique_report
+            .as_ref()
+            .expect("final critique visible")
+            .issues[0]
+            .issue_id
+            .as_str(),
+        "rule-conflict"
+    );
+
+    let ready = app
+        .acknowledge_ai_critique(
+            run_id,
+            "rule-conflict",
+            "Acepto esta excepción semántica para esta propuesta concreta.".to_owned(),
+        )
+        .expect("acknowledge recorded final critique");
+    assert_eq!(ready.status, AiRunStatus::ReadyToCommit);
+    let trace = app
+        .ai_runs
+        .get(&run_id)
+        .expect("run")
+        .commit_trace(
+            &review_key,
+            app.manual_reviews
+                .get(&review_key)
+                .expect("stored review")
+                .review
+                .draft(),
+        )
+        .expect("commit trace");
+    assert_eq!(
+        trace["critiqueAcknowledgements"]["rule-conflict"].as_str(),
+        Some("Acepto esta excepción semántica para esta propuesta concreta.")
     );
 
     drop(app);

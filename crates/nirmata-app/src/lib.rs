@@ -10,7 +10,8 @@ pub use ai::{
     AiAffectedSubgraphSnapshot, AiContextSnapshot, AiCritiqueInput, AiMode, AiParsingFailure,
     AiProposalAction, AiProposalDraftResponse, AiProposalInput, AiProposalOperationPreview,
     AiProposalProgress, AiProposalResponse, AiProviderConfig, AiQueryCitation, AiQueryInput,
-    AiQueryItem, AiQueryProgress, AiQueryResponse, AiRequestOptions, IntentBrief,
+    AiQueryItem, AiQueryProgress, AiQueryResponse, AiRequestOptions, AiRunId, AiRunSnapshot,
+    AiRunStatus, IntentBrief,
 };
 pub use app::*;
 pub use context_bundle::{

@@ -43,7 +43,7 @@ pub(crate) fn create_undo_review(
         committed.change_set().sources().to_vec(),
         vec![],
         operations,
-        decisions,
+        decisions.clone(),
     )?;
     let reviewed_operations = original_draft
         .operations()
@@ -56,12 +56,19 @@ pub(crate) fn create_undo_review(
             judgment: Some("Undo requested from revision history.".to_owned()),
         })
         .collect();
-    ManualReviewSession::rebuild(original_draft, reviewed_operations, vec![], store)
+    ManualReviewSession::rebuild(
+        original_draft,
+        reviewed_operations,
+        decisions,
+        vec![],
+        store,
+    )
 }
 
 fn rebuilt_draft(
     original_draft: &ChangeSetDraft,
     operations: &[ManualReviewOperation],
+    decisions: &[DecisionPoint],
 ) -> Result<ChangeSetDraft, AppError> {
     let selected_operation_ids: HashSet<_> = operations
         .iter()
@@ -74,8 +81,7 @@ fn rebuilt_draft(
         .map(|operation| operation.current.clone())
         .collect();
 
-    let decisions = original_draft
-        .decisions()
+    let decisions = decisions
         .iter()
         .filter_map(|decision| {
             let operation_ids: Vec<_> = decision
@@ -410,4 +416,12 @@ fn first_issue_message(report: &ValidationReport) -> String {
         .next()
         .map(|issue| issue.message.clone())
         .unwrap_or_else(|| "La revisión requiere otra validación.".to_owned())
+}
+
+fn parse_decision_point_id(value: &str) -> Result<DecisionPointId, AppError> {
+    DecisionPointId::from_str(value).map_err(|_| {
+        AppError::Storage(StoreError::InvalidChangeSet(format!(
+            "invalid manual review decision point id: {value}"
+        )))
+    })
 }

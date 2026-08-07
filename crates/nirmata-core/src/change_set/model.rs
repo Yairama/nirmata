@@ -969,6 +969,7 @@ impl ChangeSetDraft {
             &self.operations,
             &self.decisions,
             snapshot,
+            false,
         )
     }
 }
@@ -1081,6 +1082,7 @@ impl ChangeSet {
             &self.operations,
             &self.decisions,
             snapshot,
+            true,
         )
     }
 }

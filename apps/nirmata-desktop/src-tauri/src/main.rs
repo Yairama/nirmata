@@ -1,20 +1,29 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use nirmata_app::{
-    AiError, AppError, ContextBudget, ContextBundleRequest, ContextIntent, CreateWorldInput,
-    EmptySearchClassification, LogicalVfsDirectory, ManualDraftRequest, ManualDraftResponse,
-    ManualReviewActionRequest, ManualReviewSnapshot, NirmataApp, ObjectRef, OpenUriResponse,
-    ProviderCredentialStatus, RelatedContextRequest, RelatedContextResponse,
+    AiError, AiProviderConfig, AiQueryResponse, AiRequestOptions, AiRunId, AiRunSnapshot, AppError,
+    CancellationToken, ContextBudget, ContextBundleRequest, ContextIntent, CreateWorldInput,
+    EmptySearchClassification, IntentBrief, LogicalVfsDirectory, ManualDraftRequest,
+    ManualDraftResponse, ManualReviewActionRequest, ManualReviewSnapshot, NirmataApp, ObjectRef,
+    OpenUriResponse, ProviderCredentialStatus, RelatedContextRequest, RelatedContextResponse,
     RevisionHistorySnapshot, RevisionId, SearchWorldRequest, SearchWorldResponse, StoreError,
     StructuredSearchKind, TimelineOverview, WorldSession,
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
+    env, fs,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Mutex, MutexGuard},
+    sync::{
+        Arc, Mutex, MutexGuard, TryLockError,
+        atomic::{AtomicBool, Ordering},
+    },
 };
-use tauri::State;
+use tauri::{Emitter, State};
+
+struct AiCancellations(Mutex<HashMap<String, CancellationToken>>);
+static AI_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Deserialize)]
 struct CreateWorldRequest {
@@ -71,6 +80,50 @@ struct ManualReviewEditCommand {
     request: ManualDraftRequest,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiRequestCommand {
+    request_id: String,
+    request: String,
+    anchor_uri: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiRunCommand {
+    request_id: String,
+    run_id: String,
+    anchor_uri: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiIntentBriefCommand {
+    request_id: String,
+    user_request: String,
+    objective: String,
+    scope: String,
+    entity_uris: Vec<String>,
+    restrictions: Vec<String>,
+    reason: String,
+    anchor_uri: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiCritiqueDecisionCommand {
+    run_id: String,
+    issue_id: String,
+    judgment: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiProgressEvent<T> {
+    request_id: String,
+    progress: T,
+}
+
 #[derive(Serialize)]
 struct CommandError {
     code: &'static str,
@@ -98,7 +151,12 @@ impl From<AppError> for CommandError {
             AppError::InvalidObjectUri(_) => "invalid_object_uri",
             AppError::ObjectNotFound { .. } => "object_not_found",
             AppError::ReviewSessionNotFound(_) => "review_not_found",
+            AppError::ReviewSessionConflict(_) => "review_conflict",
             AppError::UnknownReviewOperation(_) => "unknown_review_operation",
+            AppError::UnknownReviewDecision(_) => "unknown_review_decision",
+            AppError::InvalidReviewDecisionAlternative { .. } => {
+                "invalid_review_decision_alternative"
+            }
             AppError::ReviewIssueNotFound { .. } => "review_issue_not_found",
             AppError::CannotWaiveHardIssue { .. } => "cannot_waive_hard_issue",
             AppError::Ai(AiError::InvalidBaseUrl(_)) => "invalid_provider_base_url",
@@ -114,6 +172,9 @@ impl From<AppError> for CommandError {
                 "provider_response_error"
             }
             AppError::AiBaseRevisionMismatch { .. } => "ai_context_stale",
+            AppError::AiRunNotFound(_) => "ai_run_not_found",
+            AppError::AiCritiqueIssueNotFound { .. } => "ai_critique_issue_not_found",
+            AppError::InvalidAiRunTransition { .. } => "invalid_ai_run_transition",
             AppError::Domain(_) => "invalid_world",
             AppError::Storage(StoreError::StaleVersion { .. })
             | AppError::Storage(StoreError::StaleRevision { .. })
@@ -137,18 +198,27 @@ impl From<AppError> for CommandError {
 }
 
 fn lock_app<'a>(
-    state: &'a State<'_, Mutex<NirmataApp>>,
+    state: &'a State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<MutexGuard<'a, NirmataApp>, CommandError> {
-    state.inner().lock().map_err(|_| CommandError {
-        code: "internal_error",
-        message: "Nirmata could not access the current session; restart the app".to_owned(),
-    })
+    if !AI_ACTIVE.load(Ordering::Acquire) {
+        return state.inner().lock().map_err(|_| internal_error());
+    }
+    match state.inner().try_lock() {
+        Ok(app) => Ok(app),
+        Err(TryLockError::WouldBlock) => Err(CommandError {
+            code: "app_busy",
+            message:
+                "Nirmata is processing an AI request; cancel it or wait before changing the world."
+                    .to_owned(),
+        }),
+        Err(TryLockError::Poisoned(_)) => Err(internal_error()),
+    }
 }
 
 #[tauri::command]
 fn create_world(
     input: CreateWorldRequest,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<WorldSession, CommandError> {
     let path = parse_project_path(&input.path)?;
     lock_app(&state)?
@@ -164,7 +234,7 @@ fn create_world(
 #[tauri::command]
 fn open_world(
     path: PathBuf,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<WorldSession, CommandError> {
     lock_app(&state)?
         .open_world(parse_project_path(&path)?)
@@ -173,7 +243,7 @@ fn open_world(
 
 #[tauri::command]
 fn get_current_world(
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<Option<WorldSession>, CommandError> {
     lock_app(&state)?.get_current_world().map_err(Into::into)
 }
@@ -181,7 +251,7 @@ fn get_current_world(
 #[tauri::command]
 fn search_world(
     input: SearchWorldCommand,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<SearchWorldResponse, CommandError> {
     let mut request = SearchWorldRequest::new(Default::default());
     request.empty = EmptySearchClassification::NoEvidence;
@@ -194,7 +264,7 @@ fn search_world(
 #[tauri::command]
 fn open_uri(
     uri: String,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<OpenUriResponse, CommandError> {
     lock_app(&state)?
         .open_uri(parse_object_uri(&uri)?)
@@ -204,7 +274,7 @@ fn open_uri(
 #[tauri::command]
 fn get_related_context(
     input: RelatedContextCommand,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<RelatedContextResponse, CommandError> {
     let uri = parse_object_uri(&input.uri)?;
     let resolved = lock_app(&state)?
@@ -226,14 +296,14 @@ fn get_related_context(
 
 #[tauri::command]
 fn read_logical_vfs(
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<LogicalVfsDirectory, CommandError> {
     lock_app(&state)?.read_logical_vfs().map_err(Into::into)
 }
 
 #[tauri::command]
 fn get_provider_credential_status(
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ProviderCredentialStatus, CommandError> {
     Ok(lock_app(&state)?.get_provider_credential_status())
 }
@@ -241,7 +311,7 @@ fn get_provider_credential_status(
 #[tauri::command]
 fn set_provider_api_key(
     api_key: String,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ProviderCredentialStatus, CommandError> {
     lock_app(&state)?
         .set_provider_api_key(api_key)
@@ -250,17 +320,242 @@ fn set_provider_api_key(
 
 #[tauri::command]
 fn clear_provider_api_key(
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ProviderCredentialStatus, CommandError> {
     lock_app(&state)?
         .clear_provider_api_key()
         .map_err(Into::into)
 }
 
+fn internal_error() -> CommandError {
+    CommandError {
+        code: "internal_error",
+        message: "Nirmata could not access the current session; restart the app".to_owned(),
+    }
+}
+
+#[tauri::command]
+async fn execute_ai_query(
+    input: AiRequestCommand,
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<AiQueryResponse, CommandError> {
+    let provider = provider_config()?;
+    let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::EntityQuery)?;
+    let token = register_cancellation(&cancellations, &input.request_id)?;
+    let request_id = input.request_id.clone();
+    let cleanup_id = input.request_id.clone();
+    let app_state = Arc::clone(state.inner());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let app = app_state.lock().map_err(|_| internal_error())?;
+        tauri::async_runtime::block_on(app.execute_ai_query(
+            &provider,
+            input.request,
+            &context,
+            AiRequestOptions::default().with_cancellation(token),
+            move |progress| {
+                let _ = app_handle.emit(
+                    "ai-query-progress",
+                    AiProgressEvent {
+                        request_id: request_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        ))
+        .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| internal_error())?;
+    remove_cancellation(&cancellations, &cleanup_id);
+    result
+}
+
+#[tauri::command]
+async fn execute_ai_proposal(
+    input: AiRequestCommand,
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<AiRunSnapshot, CommandError> {
+    let provider = provider_config()?;
+    let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::ImpactAnalysis)?;
+    let token = register_cancellation(&cancellations, &input.request_id)?;
+    let request_id = input.request_id.clone();
+    let cleanup_id = input.request_id.clone();
+    let app_state = Arc::clone(state.inner());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut app = app_state.lock().map_err(|_| internal_error())?;
+        tauri::async_runtime::block_on(app.execute_ai_proposal_run(
+            &provider,
+            input.request,
+            &context,
+            AiRequestOptions::default().with_cancellation(token),
+            move |progress| {
+                let _ = app_handle.emit(
+                    "ai-proposal-progress",
+                    AiProgressEvent {
+                        request_id: request_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        ))
+        .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| internal_error())?;
+    remove_cancellation(&cancellations, &cleanup_id);
+    result
+}
+
+#[tauri::command]
+async fn execute_ai_proposal_from_brief(
+    input: AiIntentBriefCommand,
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<AiRunSnapshot, CommandError> {
+    let provider = provider_config()?;
+    let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::ImpactAnalysis)?;
+    let token = register_cancellation(&cancellations, &input.request_id)?;
+    let request_id = input.request_id.clone();
+    let cleanup_id = input.request_id.clone();
+    let app_state = Arc::clone(state.inner());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut app = app_state.lock().map_err(|_| internal_error())?;
+        let entities = input
+            .entity_uris
+            .iter()
+            .map(|uri| {
+                app.open_uri(parse_object_uri(uri)?)
+                    .map(|response| response.result)
+                    .map_err(CommandError::from)
+            })
+            .collect::<Result<Vec<_>, CommandError>>()?;
+        let brief = IntentBrief {
+            user_request: input.user_request,
+            objective: input.objective,
+            scope: input.scope,
+            entities,
+            restrictions: input.restrictions,
+            reason: input.reason,
+        };
+        tauri::async_runtime::block_on(app.execute_ai_proposal_run_from_intent_brief(
+            &provider,
+            &brief,
+            &context,
+            AiRequestOptions::default().with_cancellation(token),
+            move |progress| {
+                let _ = app_handle.emit(
+                    "ai-proposal-progress",
+                    AiProgressEvent {
+                        request_id: request_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        ))
+        .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| internal_error())?;
+    remove_cancellation(&cancellations, &cleanup_id);
+    result
+}
+
+#[tauri::command]
+async fn revalidate_ai_run(
+    input: AiRunCommand,
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<AiRunSnapshot, CommandError> {
+    let provider = provider_config()?;
+    let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::ImpactAnalysis)?;
+    let run_id = parse_ai_run_id(&input.run_id)?;
+    let token = register_cancellation(&cancellations, &input.request_id)?;
+    let request_id = input.request_id.clone();
+    let cleanup_id = input.request_id.clone();
+    let app_state = Arc::clone(state.inner());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut app = app_state.lock().map_err(|_| internal_error())?;
+        tauri::async_runtime::block_on(app.revalidate_ai_run(
+            run_id,
+            &provider,
+            &context,
+            AiRequestOptions::default().with_cancellation(token),
+            move |progress| {
+                let _ = app_handle.emit(
+                    "ai-proposal-progress",
+                    AiProgressEvent {
+                        request_id: request_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        ))
+        .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| internal_error())?;
+    remove_cancellation(&cancellations, &cleanup_id);
+    result
+}
+
+#[tauri::command]
+fn read_ai_run(
+    run_id: String,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<AiRunSnapshot, CommandError> {
+    lock_app(&state)?
+        .read_ai_run(parse_ai_run_id(&run_id)?)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn discard_ai_run(
+    run_id: String,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<AiRunSnapshot, CommandError> {
+    lock_app(&state)?
+        .discard_ai_run(parse_ai_run_id(&run_id)?)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn acknowledge_ai_critique(
+    input: AiCritiqueDecisionCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<AiRunSnapshot, CommandError> {
+    lock_app(&state)?
+        .acknowledge_ai_critique(
+            parse_ai_run_id(&input.run_id)?,
+            input.issue_id.trim(),
+            input.judgment,
+        )
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn cancel_ai_request(
+    request_id: String,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<(), CommandError> {
+    let cancellations = cancellations.0.lock().map_err(|_| internal_error())?;
+    let token = cancellations.get(request_id.trim()).ok_or(CommandError {
+        code: "ai_request_not_found",
+        message: "The AI request already finished or does not exist.".to_owned(),
+    })?;
+    token.cancel();
+    Ok(())
+}
+
 #[tauri::command]
 fn preview_manual_draft(
     input: ManualDraftRequest,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ManualDraftResponse, CommandError> {
     lock_app(&state)?
         .preview_manual_draft(input)
@@ -270,7 +565,7 @@ fn preview_manual_draft(
 #[tauri::command]
 fn apply_manual_review_action(
     input: ManualReviewActionCommand,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ManualReviewSnapshot, CommandError> {
     lock_app(&state)?
         .apply_stored_manual_review_action(parse_review_key(&input.review_key)?, input.action)
@@ -280,7 +575,7 @@ fn apply_manual_review_action(
 #[tauri::command]
 fn confirm_manual_review(
     input: ReviewKeyCommand,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<WorldSession, CommandError> {
     lock_app(&state)?
         .confirm_stored_manual_review(parse_review_key(&input.review_key)?)
@@ -290,7 +585,7 @@ fn confirm_manual_review(
 #[tauri::command]
 fn read_manual_review(
     input: ReviewKeyCommand,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ManualReviewSnapshot, CommandError> {
     lock_app(&state)?
         .read_stored_manual_review(parse_review_key(&input.review_key)?)
@@ -300,7 +595,7 @@ fn read_manual_review(
 #[tauri::command]
 fn begin_manual_review_edit(
     input: ReviewOperationCommand,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ManualDraftRequest, CommandError> {
     lock_app(&state)?
         .begin_stored_manual_review_edit(
@@ -313,7 +608,7 @@ fn begin_manual_review_edit(
 #[tauri::command]
 fn apply_manual_review_edit(
     input: ManualReviewEditCommand,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ManualDraftResponse, CommandError> {
     lock_app(&state)?
         .apply_stored_manual_review_edit(
@@ -327,7 +622,7 @@ fn apply_manual_review_edit(
 #[tauri::command]
 fn revalidate_manual_review(
     input: ReviewKeyCommand,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ManualReviewSnapshot, CommandError> {
     lock_app(&state)?
         .revalidate_stored_manual_review(parse_review_key(&input.review_key)?)
@@ -336,14 +631,14 @@ fn revalidate_manual_review(
 
 #[tauri::command]
 fn list_timeline_events(
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<TimelineOverview, CommandError> {
     lock_app(&state)?.list_timeline_events().map_err(Into::into)
 }
 
 #[tauri::command]
 fn list_revision_history(
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<RevisionHistorySnapshot, CommandError> {
     lock_app(&state)?
         .list_revision_history()
@@ -353,7 +648,7 @@ fn list_revision_history(
 #[tauri::command]
 fn undo_revision(
     input: RevisionCommand,
-    state: State<'_, Mutex<NirmataApp>>,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<WorldSession, CommandError> {
     lock_app(&state)?
         .undo_revision(parse_revision_id(&input.revision_id)?)
@@ -361,7 +656,7 @@ fn undo_revision(
 }
 
 #[tauri::command]
-fn close_world(state: State<'_, Mutex<NirmataApp>>) -> Result<(), CommandError> {
+fn close_world(state: State<'_, Arc<Mutex<NirmataApp>>>) -> Result<(), CommandError> {
     lock_app(&state)?.close_world().map_err(Into::into)
 }
 
@@ -406,10 +701,127 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
     (!trimmed.is_empty()).then_some(trimmed)
 }
 
+fn ai_context_request(
+    anchor_uri: Option<&str>,
+    intent: ContextIntent,
+) -> Result<ContextBundleRequest, CommandError> {
+    let mut request = ContextBundleRequest::new(intent);
+    if let Some(anchor_uri) = anchor_uri.map(str::trim).filter(|value| !value.is_empty()) {
+        request.anchors =
+            vec![
+                ObjectRef::from_str(parse_object_uri(anchor_uri)?).map_err(|_| CommandError {
+                    code: "invalid_object_uri",
+                    message: format!("invalid nirmata URI {anchor_uri}"),
+                })?,
+            ];
+    }
+    request.include_perspectives = true;
+    request.relation_limit = 8;
+    request.budget = ContextBudget {
+        max_objects: 32,
+        max_chars: 8_000,
+    };
+    Ok(request)
+}
+
+fn register_cancellation(
+    cancellations: &State<'_, AiCancellations>,
+    request_id: &str,
+) -> Result<CancellationToken, CommandError> {
+    let request_id = request_id.trim();
+    if request_id.is_empty() {
+        return Err(CommandError {
+            code: "invalid_ai_request_id",
+            message: "AI request id cannot be empty.".to_owned(),
+        });
+    }
+    let token = CancellationToken::new();
+    cancellations
+        .0
+        .lock()
+        .map_err(|_| internal_error())?
+        .insert(request_id.to_owned(), token.clone());
+    AI_ACTIVE.store(true, Ordering::Release);
+    Ok(token)
+}
+
+fn remove_cancellation(cancellations: &State<'_, AiCancellations>, request_id: &str) {
+    if let Ok(mut values) = cancellations.0.lock() {
+        values.remove(request_id.trim());
+        if values.is_empty() {
+            AI_ACTIVE.store(false, Ordering::Release);
+        }
+    }
+}
+
+fn provider_config() -> Result<AiProviderConfig, CommandError> {
+    let base_url = development_config_value("BASE_URL").ok_or(CommandError {
+        code: "provider_config_missing",
+        message: "BASE_URL is not configured for Microsoft Foundry.".to_owned(),
+    })?;
+    if !base_url.to_ascii_lowercase().starts_with("https://") {
+        return Err(CommandError {
+            code: "invalid_provider_base_url",
+            message: "Microsoft Foundry BASE_URL must use HTTPS.".to_owned(),
+        });
+    }
+    let model = development_config_value("AZURE_FOUNDRY_MODEL")
+        .or_else(|| development_config_value("GPT-5.6-SOL"))
+        .ok_or(CommandError {
+            code: "provider_config_missing",
+            message: "AZURE_FOUNDRY_MODEL is not configured for Microsoft Foundry.".to_owned(),
+        })?;
+    Ok(AiProviderConfig::new(base_url, model))
+}
+
+fn development_config_value(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .and_then(non_empty_config_value)
+        .or_else(|| {
+            dotenv_paths().into_iter().find_map(|path| {
+                fs::read_to_string(path)
+                    .ok()
+                    .and_then(|contents| dotenv_value(&contents, name))
+            })
+        })
+}
+
+fn dotenv_paths() -> [PathBuf; 1] {
+    [Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.env")]
+}
+
+fn dotenv_value(contents: &str, name: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let (key, value) = line.split_once('=')?;
+        if key.trim() != name {
+            return None;
+        }
+        non_empty_config_value(value.trim().trim_matches(['\'', '"']).to_owned())
+    })
+}
+
+fn non_empty_config_value(value: String) -> Option<String> {
+    let value = value.trim().to_owned();
+    (!value.is_empty()).then_some(value)
+}
+
 fn parse_operation_id(value: &str) -> Result<nirmata_app::ChangeOperationId, CommandError> {
     nirmata_app::ChangeOperationId::from_str(value).map_err(|_| CommandError {
         code: "invalid_review_operation",
         message: format!("invalid manual review operation id: {value}"),
+    })
+}
+
+fn parse_ai_run_id(value: &str) -> Result<AiRunId, CommandError> {
+    AiRunId::from_str(value.trim()).map_err(|_| CommandError {
+        code: "invalid_ai_run_id",
+        message: format!("invalid AI run id: {value}"),
     })
 }
 
@@ -464,9 +876,16 @@ fn context_intent_for_uri(response: &OpenUriResponse) -> ContextIntent {
 }
 
 fn main() {
+    let mut app = NirmataApp::default();
+    if !app.get_provider_credential_status().configured
+        && let Some(api_key) = development_config_value("PROVIDER_API_KEY")
+    {
+        let _ = app.set_session_provider_api_key(api_key);
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(Mutex::new(NirmataApp::default()))
+        .manage(Arc::new(Mutex::new(app)))
+        .manage(AiCancellations(Mutex::new(HashMap::new())))
         .invoke_handler(tauri::generate_handler![
             create_world,
             open_world,
@@ -478,6 +897,14 @@ fn main() {
             get_provider_credential_status,
             set_provider_api_key,
             clear_provider_api_key,
+            execute_ai_query,
+            execute_ai_proposal,
+            execute_ai_proposal_from_brief,
+            revalidate_ai_run,
+            read_ai_run,
+            discard_ai_run,
+            acknowledge_ai_critique,
+            cancel_ai_request,
             preview_manual_draft,
             apply_manual_review_action,
             read_manual_review,

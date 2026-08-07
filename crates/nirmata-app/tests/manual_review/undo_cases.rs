@@ -112,15 +112,18 @@ fn complete_manual_workflow_covers_replacement_stale_commit_rollback_audit_and_u
             .iter()
             .any(|issue| issue.code == "claim.source_document_missing")
     );
-    let replacement_decision = review
-        .draft()
-        .decisions()
-        .first()
-        .expect("replacement decision");
-    assert_eq!(
-        replacement_decision.replacement_target(),
-        Some(ObjectRef::Event(collapse.id()))
-    );
+    let replacement_decision_id = {
+        let replacement_decision = review
+            .draft()
+            .decisions()
+            .first()
+            .expect("replacement decision");
+        assert_eq!(
+            replacement_decision.replacement_target(),
+            Some(ObjectRef::Event(collapse.id()))
+        );
+        replacement_decision.decision_point_id()
+    };
 
     let reject_document_id = review.operations()[1].operation_id();
     app.apply_manual_review_action(
@@ -155,6 +158,15 @@ fn complete_manual_workflow_covers_replacement_stale_commit_rollback_audit_and_u
         },
     )
     .expect("record replacement judgment");
+    assert!(!review.ready_to_confirm());
+    app.apply_manual_review_action(
+        &mut review,
+        ManualReviewAction::ResolveDecision {
+            decision_point_id: replacement_decision_id,
+            alternative: "Apply replacement".to_owned(),
+        },
+    )
+    .expect("resolve replacement decision");
     assert!(review.ready_to_confirm());
 
     let external_event = Event::restore(
@@ -309,6 +321,15 @@ fn complete_manual_workflow_covers_replacement_stale_commit_rollback_audit_and_u
         },
     )
     .expect("record retry replacement judgment");
+    let retry_decision_id = retry_review.draft().decisions()[0].decision_point_id();
+    app.apply_manual_review_action(
+        &mut retry_review,
+        ManualReviewAction::ResolveDecision {
+            decision_point_id: retry_decision_id,
+            alternative: "Apply replacement".to_owned(),
+        },
+    )
+    .expect("resolve retry replacement decision");
     assert!(retry_review.ready_to_confirm());
 
     let committed_session = app

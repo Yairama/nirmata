@@ -363,6 +363,26 @@ fn opposite_canonical_claims_in_same_context_block_validation() {
             .any(|issue| issue.code == "claim.canonical_opposition")
     );
 
+    let change_set = ChangeSet::new(
+        draft.world_id(),
+        draft.base_revision(),
+        draft.objective(),
+        draft.sources().to_vec(),
+        draft.assumptions().to_vec(),
+        draft.operations().to_vec(),
+        draft.decisions().to_vec(),
+    )
+    .expect("change set");
+    let final_report = store
+        .validate_change_set(&change_set)
+        .expect("validate final change set");
+    assert!(
+        final_report
+            .errors
+            .iter()
+            .any(|issue| issue.code == "claim.canonical_opposition")
+    );
+
     drop(store);
     fs::remove_file(path).expect("remove project");
 }

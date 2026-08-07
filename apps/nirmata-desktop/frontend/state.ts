@@ -2,6 +2,7 @@ import type { AppState, SearchKind, SearchObjectKind } from "./types.js";
 
 export const { invoke } = window.__TAURI__.core;
 export const dialog = window.__TAURI__.dialog;
+export const listen = window.__TAURI__.event.listen;
 export const filter = [{ name: "Proyecto Nirmata", extensions: ["nirmata"] }];
 export const kinds: Array<{ value: SearchKind; label: string }> = [
   { value: "all", label: "Todo" },
@@ -97,3 +98,17 @@ export const contextContent = document.querySelector<HTMLElement>("#context-cont
 export const pendingSummary = document.querySelector<HTMLElement>("#pending-summary")!;
 export const pendingEmpty = document.querySelector<HTMLElement>("#pending-empty")!;
 export const pendingContent = document.querySelector<HTMLElement>("#pending-content")!;
+export const assistantQueryMode = document.querySelector<HTMLButtonElement>("#assistant-query-mode")!;
+export const assistantProposeMode = document.querySelector<HTMLButtonElement>("#assistant-propose-mode")!;
+export const assistantContext = document.querySelector<HTMLElement>("#assistant-context")!;
+export const assistantForm = document.querySelector<HTMLFormElement>("#assistant-form")!;
+export const assistantInput = document.querySelector<HTMLTextAreaElement>("#assistant-input")!;
+export const assistantSubmit = document.querySelector<HTMLButtonElement>("#assistant-submit")!;
+export const assistantCancel = document.querySelector<HTMLButtonElement>("#assistant-cancel")!;
+export const assistantFinalCritique = document.querySelector<HTMLButtonElement>("#assistant-final-critique")!;
+export const assistantProgress = document.querySelector<HTMLElement>("#assistant-progress")!;
+export const assistantTranscript = document.querySelector<HTMLElement>("#assistant-transcript")!;
+export const assistantCredential = document.querySelector<HTMLElement>("#assistant-credential")!;
+export const assistantKeyForm = document.querySelector<HTMLFormElement>("#assistant-key-form")!;
+export const assistantKey = document.querySelector<HTMLInputElement>("#assistant-key")!;
+export const assistantKeyClear = document.querySelector<HTMLButtonElement>("#assistant-key-clear")!;

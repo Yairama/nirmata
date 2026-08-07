@@ -7,6 +7,7 @@ fn validate_change_set_parts(
     operations: &[ChangeOperation],
     decisions: &[DecisionPoint],
     snapshot: &ChangeSetValidationSnapshot<'_>,
+    final_state: bool,
 ) -> ValidationReport {
     let mut report = ValidationReport::new();
 
@@ -342,7 +343,15 @@ fn validate_change_set_parts(
         }
     }
 
-    report.extend(validate_resulting_state(&state, &resulting_state_scope));
+    let resulting_issues = validate_resulting_state(&state, &resulting_state_scope)
+        .into_iter()
+        .map(|mut issue| {
+            if final_state && issue.code == "claim.canonical_opposition" {
+                issue.severity = ValidationSeverity::Error;
+            }
+            issue
+        });
+    report.extend(resulting_issues);
 
     for source in sources {
         if !state.contains(*source) {

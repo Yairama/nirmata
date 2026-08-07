@@ -482,7 +482,7 @@ fn editing_an_operation_revalidates_and_updates_the_report() {
 }
 
 #[test]
-fn waiving_a_conflict_can_leave_a_valid_set_ready_to_confirm() {
+fn final_revalidation_blocks_waived_canonical_opposition() {
     let path = project_path("manual-review-waiver-conflict");
     let world = base_world(&path);
     let gate = person(&world, "North Gate", "north-gate", 2);
@@ -536,13 +536,21 @@ fn waiving_a_conflict_can_leave_a_valid_set_ready_to_confirm() {
             .iter()
             .any(|issue| issue.code == "claim.canonical_opposition")
     );
+    let error = app
+        .confirm_manual_review(&review)
+        .expect_err("canonical opposition cannot survive final validation");
+    assert!(matches!(error, AppError::ManualReviewRevalidationFailed));
+
+    let store = WorldStore::open(&path).expect("reopen store");
+    assert_eq!(store.list_claims().expect("list claims"), vec![existing]);
+    drop(store);
 
     app.close_world().expect("close world");
     fs::remove_file(path).expect("remove project");
 }
 
 #[test]
-fn revision_history_exposes_before_after_waivers_and_visible_undo() {
+fn revision_history_exposes_before_after_and_visible_undo() {
     let path = project_path("manual-review-history");
     let world = base_world(&path);
     let gate = person(&world, "North Gate", "north-gate", 2);
@@ -607,22 +615,17 @@ fn revision_history_exposes_before_after_waivers_and_visible_undo() {
     .expect("record claim judgment");
     assert!(review.ready_to_confirm());
 
-    let committed = app.confirm_manual_review(&review).expect("confirm review");
-    let committed_id = committed.current_revision.to_string();
+    let error = app
+        .confirm_manual_review(&review)
+        .expect_err("opposing canonical claims cannot be committed");
+    assert!(matches!(error, AppError::ManualReviewRevalidationFailed));
+
     let renamed_id = renamed.current_revision.to_string();
     let history = app.list_revision_history().expect("list revision history");
     assert_eq!(
         history.undo_target_revision_id.as_deref(),
-        Some(committed_id.as_str())
+        Some(renamed_id.as_str())
     );
-    let committed_entry = history
-        .revisions
-        .iter()
-        .find(|entry| entry.revision_id == committed_id)
-        .expect("committed entry");
-    assert!(committed_entry.is_current_undo_target);
-    assert_eq!(committed_entry.operations.len(), 1);
-    assert_eq!(committed_entry.waivers.len(), 1);
     let updated_gate = history
         .revisions
         .iter()
@@ -634,20 +637,9 @@ fn revision_history_exposes_before_after_waivers_and_visible_undo() {
         .expect("entity audit");
     assert!(updated_gate.before.is_some());
     assert!(updated_gate.after.is_some());
-    let waived_claim = committed_entry
-        .operations
-        .iter()
-        .find(|operation| {
-            operation
-                .waivers
-                .iter()
-                .any(|waiver| waiver.issue_code == "claim.canonical_opposition")
-        })
-        .expect("claim waiver audit");
-    assert_eq!(waived_claim.waivers.len(), 1);
 
     let undone = app
-        .undo_revision(committed.current_revision)
+        .undo_revision(renamed.current_revision)
         .expect("undo visible revision");
     let undo_id = undone.current_revision.to_string();
     let after_undo = app
@@ -660,7 +652,7 @@ fn revision_history_exposes_before_after_waivers_and_visible_undo() {
         .expect("undo entry");
     assert_eq!(
         undo_entry.undone_revision_id.as_deref(),
-        Some(committed_id.as_str())
+        Some(renamed_id.as_str())
     );
     assert!(undo_entry.is_current_head);
 

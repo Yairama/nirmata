@@ -125,6 +125,13 @@ impl ProviderCredentialStore {
         self.inner.set_provider_api_key(api_key)
     }
 
+    pub fn set_session_provider_api_key(
+        &mut self,
+        api_key: String,
+    ) -> Result<ProviderCredentialStatus, AiError> {
+        self.inner.set_session_provider_api_key(api_key)
+    }
+
     pub fn clear_provider_api_key(&mut self) -> Result<ProviderCredentialStatus, AiError> {
         self.inner.clear_provider_api_key()
     }
@@ -276,6 +283,21 @@ where
             value: api_key,
             source: CredentialSource::SessionMemory,
         });
+        Ok(self.status())
+    }
+
+    fn set_session_provider_api_key(
+        &mut self,
+        api_key: String,
+    ) -> Result<ProviderCredentialStatus, AiError> {
+        let api_key =
+            normalize_api_key(Some(api_key.as_str())).ok_or(AiError::EmptyProviderApiKey)?;
+        if self.persisted_key.is_none() {
+            self.session_key = Some(SessionCredential {
+                value: api_key,
+                source: CredentialSource::SessionEnvironment,
+            });
+        }
         Ok(self.status())
     }
 

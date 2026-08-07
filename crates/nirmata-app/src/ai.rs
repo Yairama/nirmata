@@ -17,7 +17,7 @@ use nirmata_ai::{
     },
 };
 use nirmata_core::{
-    RevisionId, WorldId,
+    ChangeSetId, RevisionId, WorldId,
     change_set::{ChangeOperation, ChangeSetDraft},
     claim::Claim,
     document::{ContentReference, Document, ObjectRef},
@@ -30,7 +30,14 @@ use nirmata_core::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use std::{collections::BTreeSet, future::Future, pin::Pin, str::FromStr, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    future::Future,
+    pin::Pin,
+    str::FromStr,
+    time::Duration,
+};
 
 type ClientFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -40,6 +47,30 @@ pub enum AiMode {
     Query,
     Propose,
     Critic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct AiRunId(ChangeSetId);
+
+impl AiRunId {
+    fn new() -> Self {
+        Self(ChangeSetId::new())
+    }
+}
+
+impl fmt::Display for AiRunId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl FromStr for AiRunId {
+    type Err = <ChangeSetId as FromStr>::Err;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        ChangeSetId::from_str(value).map(Self)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -348,6 +379,360 @@ pub enum AiProposalResponse {
     Draft(AiProposalDraftResponse),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiRunStatus {
+    Running,
+    IntentBriefReady,
+    AwaitingReview,
+    AwaitingFinalCritique,
+    ReadyToCommit,
+    Committed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRunSnapshot {
+    pub id: AiRunId,
+    pub world_id: WorldId,
+    pub base_revision: RevisionId,
+    pub mode: AiMode,
+    pub request: String,
+    pub context: AiContextSnapshot,
+    pub status: AiRunStatus,
+    pub draft: Option<ChangeSetDraft>,
+    pub validation_report: Option<ValidationReport>,
+    pub critique_report: Option<CritiqueReport>,
+    pub generator_metadata: Option<InvocationMetadata>,
+    pub critique_metadata: Option<InvocationMetadata>,
+    pub repair_count: u8,
+    pub review_key: Option<String>,
+    pub intent_brief: Option<IntentBrief>,
+    pub committed_revision: Option<RevisionId>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AiRun {
+    id: AiRunId,
+    world_id: WorldId,
+    base_revision: RevisionId,
+    mode: AiMode,
+    request: String,
+    context: AiContextSnapshot,
+    critique_acknowledgements: BTreeMap<String, String>,
+    state: AiRunState,
+}
+
+#[derive(Clone, Debug)]
+enum AiRunState {
+    Running,
+    IntentBriefReady(IntentBrief),
+    AwaitingReview(AiRunReview),
+    AwaitingFinalCritique(AiRunReview),
+    ReadyToCommit {
+        review: AiRunReview,
+        reviewed_draft: ChangeSetDraft,
+        validation_report: ValidationReport,
+        critique_report: CritiqueReport,
+        critique_metadata: InvocationMetadata,
+    },
+    FinalCritiqueBlocked {
+        review: AiRunReview,
+        reviewed_draft: ChangeSetDraft,
+        validation_report: ValidationReport,
+        critique_report: CritiqueReport,
+        critique_metadata: InvocationMetadata,
+        base_ready: bool,
+    },
+    Committed {
+        review: AiRunReview,
+        revision: RevisionId,
+    },
+    FinalCritiqueFailed {
+        review: AiRunReview,
+        error: String,
+    },
+    FinalCritiqueCancelled {
+        review: AiRunReview,
+        error: String,
+    },
+    Failed(String),
+    Cancelled(String),
+}
+
+#[derive(Clone, Debug)]
+struct AiRunReview {
+    proposal: AiProposalDraftResponse,
+    review_key: String,
+}
+
+impl AiRun {
+    fn running(request: String, context: AiContextSnapshot) -> Self {
+        Self {
+            id: AiRunId::new(),
+            world_id: context.world_id,
+            base_revision: context.base_revision,
+            mode: AiMode::Propose,
+            request,
+            context,
+            critique_acknowledgements: BTreeMap::new(),
+            state: AiRunState::Running,
+        }
+    }
+
+    pub(crate) fn status(&self) -> AiRunStatus {
+        match &self.state {
+            AiRunState::Running => AiRunStatus::Running,
+            AiRunState::IntentBriefReady(_) => AiRunStatus::IntentBriefReady,
+            AiRunState::AwaitingReview(_) => AiRunStatus::AwaitingReview,
+            AiRunState::AwaitingFinalCritique(_) => AiRunStatus::AwaitingFinalCritique,
+            AiRunState::ReadyToCommit { .. } => AiRunStatus::ReadyToCommit,
+            AiRunState::FinalCritiqueBlocked { .. } => AiRunStatus::AwaitingReview,
+            AiRunState::Committed { .. } => AiRunStatus::Committed,
+            AiRunState::FinalCritiqueFailed { .. } | AiRunState::Failed(_) => AiRunStatus::Failed,
+            AiRunState::FinalCritiqueCancelled { .. } | AiRunState::Cancelled(_) => {
+                AiRunStatus::Cancelled
+            }
+        }
+    }
+
+    fn review(&self) -> Option<&AiRunReview> {
+        match &self.state {
+            AiRunState::AwaitingReview(review)
+            | AiRunState::AwaitingFinalCritique(review)
+            | AiRunState::ReadyToCommit { review, .. }
+            | AiRunState::FinalCritiqueBlocked { review, .. }
+            | AiRunState::Committed { review, .. }
+            | AiRunState::FinalCritiqueFailed { review, .. }
+            | AiRunState::FinalCritiqueCancelled { review, .. } => Some(review),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn mark_review_changed(&mut self) {
+        self.critique_acknowledgements.clear();
+        if let Some(review) = self.review().cloned() {
+            self.state = AiRunState::AwaitingFinalCritique(review);
+        }
+    }
+
+    fn acknowledge_critique(
+        &mut self,
+        issue_id: &str,
+        judgment: &str,
+    ) -> Result<Vec<nirmata_core::ChangeOperationId>, AppError> {
+        let AiRunState::FinalCritiqueBlocked {
+            review,
+            reviewed_draft,
+            validation_report,
+            critique_report,
+            critique_metadata,
+            base_ready,
+        } = &self.state
+        else {
+            return Err(AppError::InvalidAiRunTransition {
+                run_id: self.id.to_string(),
+                status: self.status_label(),
+                action: "acknowledge a final critique issue",
+            });
+        };
+        let issue = critique_report
+            .issues
+            .iter()
+            .find(|issue| {
+                issue.issue_id.as_str() == issue_id
+                    && issue.severity == ValidationSeverity::Conflict
+            })
+            .ok_or_else(|| AppError::AiCritiqueIssueNotFound {
+                run_id: self.id.to_string(),
+                issue_id: issue_id.to_owned(),
+            })?;
+        let operation_ids = issue.affected_operation_ids.clone();
+        self.critique_acknowledgements
+            .insert(issue_id.to_owned(), judgment.to_owned());
+        let all_approved = critique_report
+            .issues
+            .iter()
+            .filter(|issue| issue.severity == ValidationSeverity::Conflict)
+            .all(|issue| {
+                self.critique_acknowledgements
+                    .contains_key(issue.issue_id.as_str())
+            });
+        if *base_ready && all_approved {
+            self.state = AiRunState::ReadyToCommit {
+                review: review.clone(),
+                reviewed_draft: reviewed_draft.clone(),
+                validation_report: validation_report.clone(),
+                critique_report: critique_report.clone(),
+                critique_metadata: critique_metadata.clone(),
+            };
+        }
+        Ok(operation_ids)
+    }
+
+    fn critique_operation_ids(
+        &self,
+        issue_id: &str,
+    ) -> Result<Vec<nirmata_core::ChangeOperationId>, AppError> {
+        let AiRunState::FinalCritiqueBlocked {
+            critique_report, ..
+        } = &self.state
+        else {
+            return Err(AppError::InvalidAiRunTransition {
+                run_id: self.id.to_string(),
+                status: self.status_label(),
+                action: "acknowledge a final critique issue",
+            });
+        };
+        critique_report
+            .issues
+            .iter()
+            .find(|issue| {
+                issue.issue_id.as_str() == issue_id
+                    && issue.severity == ValidationSeverity::Conflict
+            })
+            .map(|issue| issue.affected_operation_ids.clone())
+            .ok_or_else(|| AppError::AiCritiqueIssueNotFound {
+                run_id: self.id.to_string(),
+                issue_id: issue_id.to_owned(),
+            })
+    }
+
+    pub(crate) fn commit_trace(
+        &self,
+        review_key: &str,
+        draft: &ChangeSetDraft,
+    ) -> Result<Value, AppError> {
+        let AiRunState::ReadyToCommit {
+            review,
+            reviewed_draft,
+            validation_report,
+            critique_report,
+            critique_metadata,
+        } = &self.state
+        else {
+            return Err(AppError::InvalidAiRunTransition {
+                run_id: self.id.to_string(),
+                status: self.status_label(),
+                action: "commit",
+            });
+        };
+        if review.review_key != review_key || reviewed_draft != draft {
+            return Err(AppError::InvalidAiRunTransition {
+                run_id: self.id.to_string(),
+                status: self.status_label(),
+                action: "commit a review changed after final critique",
+            });
+        }
+        serde_json::to_value(serde_json::json!({
+            "kind": "ai_run_summary",
+            "runId": self.id,
+            "baseRevision": self.base_revision,
+            "request": self.request,
+            "generator": review.proposal.metadata,
+            "initialCritic": review.proposal.critique_metadata,
+            "finalCritic": critique_metadata,
+            "deterministicReport": validation_report,
+            "critiqueReport": critique_report,
+            "critiqueAcknowledgements": self.critique_acknowledgements,
+            "repairCount": review.proposal.repair_count,
+        }))
+        .map_err(|error| AppError::Ai(AiError::InvalidResponse(error.to_string())))
+    }
+
+    pub(crate) fn mark_committed(&mut self, revision: RevisionId) -> Result<(), AppError> {
+        let AiRunState::ReadyToCommit { review, .. } = &self.state else {
+            return Err(AppError::InvalidAiRunTransition {
+                run_id: self.id.to_string(),
+                status: self.status_label(),
+                action: "mark committed",
+            });
+        };
+        self.state = AiRunState::Committed {
+            review: review.clone(),
+            revision,
+        };
+        Ok(())
+    }
+
+    fn status_label(&self) -> &'static str {
+        match self.status() {
+            AiRunStatus::Running => "running",
+            AiRunStatus::IntentBriefReady => "intent_brief_ready",
+            AiRunStatus::AwaitingReview => "awaiting_review",
+            AiRunStatus::AwaitingFinalCritique => "awaiting_final_critique",
+            AiRunStatus::ReadyToCommit => "ready_to_commit",
+            AiRunStatus::Committed => "committed",
+            AiRunStatus::Failed => "failed",
+            AiRunStatus::Cancelled => "cancelled",
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> AiRunSnapshot {
+        let review = self.review();
+        let (validation_report, critique_report, critique_metadata) = match &self.state {
+            AiRunState::ReadyToCommit {
+                validation_report,
+                critique_report,
+                critique_metadata,
+                ..
+            } => (
+                Some(validation_report.clone()),
+                Some(critique_report.clone()),
+                Some(critique_metadata.clone()),
+            ),
+            AiRunState::FinalCritiqueBlocked {
+                validation_report,
+                critique_report,
+                critique_metadata,
+                ..
+            } => (
+                Some(validation_report.clone()),
+                Some(critique_report.clone()),
+                Some(critique_metadata.clone()),
+            ),
+            _ => (
+                review.map(|value| value.proposal.validation_report.clone()),
+                review.map(|value| value.proposal.critique_report.clone()),
+                review.map(|value| value.proposal.critique_metadata.clone()),
+            ),
+        };
+        AiRunSnapshot {
+            id: self.id,
+            world_id: self.world_id,
+            base_revision: self.base_revision,
+            mode: self.mode,
+            request: self.request.clone(),
+            context: self.context.clone(),
+            status: self.status(),
+            draft: review.map(|value| value.proposal.draft.clone()),
+            validation_report,
+            critique_report,
+            generator_metadata: review.map(|value| value.proposal.metadata.clone()),
+            critique_metadata,
+            repair_count: review.map_or(0, |value| value.proposal.repair_count),
+            review_key: review.map(|value| value.review_key.clone()),
+            intent_brief: match &self.state {
+                AiRunState::IntentBriefReady(brief) => Some(brief.clone()),
+                _ => None,
+            },
+            committed_revision: match &self.state {
+                AiRunState::Committed { revision, .. } => Some(*revision),
+                _ => None,
+            },
+            error: match &self.state {
+                AiRunState::Failed(error) | AiRunState::Cancelled(error) => Some(error.clone()),
+                AiRunState::FinalCritiqueFailed { error, .. }
+                | AiRunState::FinalCritiqueCancelled { error, .. } => Some(error.clone()),
+                _ => None,
+            },
+        }
+    }
+}
+
 trait AiModeClient {
     fn run_query<'a, F>(
         &'a self,
@@ -411,6 +796,448 @@ impl AiModeClient for AzureFoundryCapabilityClient {
 }
 
 impl crate::NirmataApp {
+    pub fn read_ai_run(&self, run_id: AiRunId) -> Result<AiRunSnapshot, AppError> {
+        self.ai_runs
+            .get(&run_id)
+            .map(AiRun::snapshot)
+            .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))
+    }
+
+    pub fn discard_ai_run(&mut self, run_id: AiRunId) -> Result<AiRunSnapshot, AppError> {
+        let review_key = {
+            let run = self
+                .ai_runs
+                .get(&run_id)
+                .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+            if run.status() == AiRunStatus::Committed {
+                return Err(AppError::InvalidAiRunTransition {
+                    run_id: run_id.to_string(),
+                    status: "committed",
+                    action: "discard",
+                });
+            }
+            run.review().map(|review| review.review_key.clone())
+        };
+        if let Some(review_key) = review_key {
+            if self
+                .manual_reviews
+                .get(&review_key)
+                .is_some_and(|stored| stored.ai_run_id == Some(run_id))
+            {
+                self.manual_reviews.remove(&review_key);
+            }
+        }
+        let run = self
+            .ai_runs
+            .get_mut(&run_id)
+            .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+        run.state = AiRunState::Cancelled("Discarded by the user before commit.".to_owned());
+        Ok(run.snapshot())
+    }
+
+    pub fn acknowledge_ai_critique(
+        &mut self,
+        run_id: AiRunId,
+        issue_id: &str,
+        judgment: String,
+    ) -> Result<AiRunSnapshot, AppError> {
+        if judgment.trim().is_empty() {
+            return Err(AppError::InvalidAiRunTransition {
+                run_id: run_id.to_string(),
+                status: "awaiting_review",
+                action: "record an empty critique judgment",
+            });
+        }
+        let (review_key, operation_ids) = {
+            let run = self
+                .ai_runs
+                .get(&run_id)
+                .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+            let review_key = run
+                .review()
+                .ok_or(AppError::InvalidAiRunTransition {
+                    run_id: run_id.to_string(),
+                    status: run.status_label(),
+                    action: "acknowledge a final critique issue",
+                })?
+                .review_key
+                .clone();
+            (review_key, run.critique_operation_ids(issue_id)?)
+        };
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let stored = self
+            .manual_reviews
+            .get(&review_key)
+            .cloned()
+            .ok_or_else(|| AppError::ReviewSessionNotFound(review_key.clone()))?;
+        let mut review = stored.review;
+        for operation_id in operation_ids {
+            review = review.apply_action(
+                crate::manual_review::ManualReviewAction::RecordJudgment {
+                    operation_id,
+                    judgment: judgment.trim().to_owned(),
+                },
+                0,
+                &active.store,
+            )?;
+        }
+        self.manual_reviews.insert(
+            review_key,
+            crate::app::StoredManualReview::from_ai(review, run_id),
+        );
+        let run = self
+            .ai_runs
+            .get_mut(&run_id)
+            .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+        run.acknowledge_critique(issue_id, judgment.trim())?;
+        Ok(run.snapshot())
+    }
+
+    pub async fn execute_ai_proposal_run<F>(
+        &mut self,
+        provider: &AiProviderConfig,
+        request: impl Into<String>,
+        context_request: &ContextBundleRequest,
+        options: AiRequestOptions,
+        on_progress: F,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        let client = self.provider_client(provider)?;
+        self.execute_ai_proposal_run_with(
+            &client,
+            request.into(),
+            context_request,
+            options,
+            on_progress,
+        )
+        .await
+    }
+
+    pub async fn execute_ai_proposal_run_from_intent_brief<F>(
+        &mut self,
+        provider: &AiProviderConfig,
+        brief: &IntentBrief,
+        context_request: &ContextBundleRequest,
+        options: AiRequestOptions,
+        on_progress: F,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        let request = brief.render_request();
+        let prepared = self.prepare_ai_proposal(request.clone(), context_request)?;
+        let run = AiRun::running(request, prepared.snapshot);
+        let run_id = run.id;
+        self.ai_runs.insert(run_id, run);
+        let result = self
+            .execute_ai_proposal_from_intent_brief(
+                provider,
+                brief,
+                context_request,
+                options,
+                on_progress,
+            )
+            .await;
+        match result {
+            Ok(response) => {
+                self.complete_ai_proposal_run(run_id, AiProposalResponse::Draft(response))?
+            }
+            Err(error) => {
+                let run = self
+                    .ai_runs
+                    .get_mut(&run_id)
+                    .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+                let message = error.to_string();
+                run.state = if matches!(error, AppError::Ai(AiError::RequestCancelled)) {
+                    AiRunState::Cancelled(message)
+                } else {
+                    AiRunState::Failed(message)
+                };
+                return Err(error);
+            }
+        }
+        self.read_ai_run(run_id)
+    }
+
+    async fn execute_ai_proposal_run_with<C, F>(
+        &mut self,
+        client: &C,
+        request: String,
+        context_request: &ContextBundleRequest,
+        options: AiRequestOptions,
+        on_progress: F,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        C: AiModeClient,
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        let prepared = self.prepare_ai_proposal(request.clone(), context_request)?;
+        let run = AiRun::running(request.clone(), prepared.snapshot);
+        let run_id = run.id;
+        self.ai_runs.insert(run_id, run);
+
+        let result = self
+            .execute_ai_proposal_with(client, request, context_request, options, on_progress)
+            .await;
+        match result {
+            Ok(response) => self.complete_ai_proposal_run(run_id, response)?,
+            Err(error) => {
+                let run = self
+                    .ai_runs
+                    .get_mut(&run_id)
+                    .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+                let message = error.to_string();
+                run.state = if matches!(error, AppError::Ai(AiError::RequestCancelled)) {
+                    AiRunState::Cancelled(message)
+                } else {
+                    AiRunState::Failed(message)
+                };
+                return Err(error);
+            }
+        }
+        self.read_ai_run(run_id)
+    }
+
+    pub async fn revalidate_ai_run<F>(
+        &mut self,
+        run_id: AiRunId,
+        provider: &AiProviderConfig,
+        context_request: &ContextBundleRequest,
+        options: AiRequestOptions,
+        on_progress: F,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        let client = self.provider_client(provider)?;
+        self.revalidate_ai_run_with(run_id, &client, context_request, options, on_progress)
+            .await
+    }
+
+    async fn revalidate_ai_run_with<C, F>(
+        &mut self,
+        run_id: AiRunId,
+        client: &C,
+        context_request: &ContextBundleRequest,
+        options: AiRequestOptions,
+        mut on_progress: F,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        C: AiModeClient,
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        let (request, review) = {
+            let run = self
+                .ai_runs
+                .get(&run_id)
+                .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+            if !matches!(
+                &run.state,
+                AiRunState::AwaitingFinalCritique(_)
+                    | AiRunState::FinalCritiqueFailed { .. }
+                    | AiRunState::FinalCritiqueCancelled { .. }
+            ) {
+                return Err(AppError::InvalidAiRunTransition {
+                    run_id: run_id.to_string(),
+                    status: run.status_label(),
+                    action: "run final critique before a human review action",
+                });
+            }
+            let review = run.review().cloned().expect("review state checked above");
+            (run.request.clone(), review)
+        };
+
+        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        let world = active.store.load_world()?;
+        active.session.world_id = world.id();
+        active.session.current_revision = world.current_revision();
+        active.session.world = world;
+        let live_head = active.session.current_revision;
+        let stored = self
+            .manual_reviews
+            .get(&review.review_key)
+            .cloned()
+            .ok_or_else(|| AppError::ReviewSessionNotFound(review.review_key.clone()))?;
+        if stored.ai_run_id != Some(run_id) {
+            return Err(AppError::InvalidAiRunTransition {
+                run_id: run_id.to_string(),
+                status: "review_mismatch",
+                action: "run final critique",
+            });
+        }
+        let refreshed = stored
+            .review
+            .revalidate_at_revision(live_head, &active.store)?;
+        let reviewed_draft = refreshed.draft().clone();
+
+        if let Some(run) = self.ai_runs.get_mut(&run_id) {
+            run.state = AiRunState::AwaitingFinalCritique(review.clone());
+        }
+        on_progress(AiProposalProgress::Validating);
+        let critique_input =
+            self.prepare_ai_critique(&request, &reviewed_draft, context_request)?;
+        let payload = serialize_payload(&critique_input, "final critique")?;
+        on_progress(AiProposalProgress::CallingCritic);
+        let critique_result = client
+            .run_critic(
+                payload,
+                critique_input.context_object_ids.clone(),
+                options.into_request_options(),
+            )
+            .await
+            .map_err(map_capability_error);
+        let critique = match critique_result {
+            Ok(critique) => critique,
+            Err(error) => {
+                let run = self
+                    .ai_runs
+                    .get_mut(&run_id)
+                    .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+                let message = error.to_string();
+                run.state = if matches!(error, AppError::Ai(AiError::RequestCancelled)) {
+                    AiRunState::FinalCritiqueCancelled {
+                        review,
+                        error: message,
+                    }
+                } else {
+                    AiRunState::FinalCritiqueFailed {
+                        review,
+                        error: message,
+                    }
+                };
+                return Err(error);
+            }
+        };
+        validate_critique_references(&critique_input, &critique.output)?;
+
+        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        let current_world = active.store.load_world()?;
+        if current_world.current_revision() != live_head {
+            let stored = self
+                .manual_reviews
+                .get_mut(&review.review_key)
+                .ok_or_else(|| AppError::ReviewSessionNotFound(review.review_key.clone()))?;
+            stored.freshness = crate::app::StoredManualReviewFreshness::RefreshRestartRequired {
+                current_revision: current_world.current_revision(),
+            };
+            return Err(AppError::AiBaseRevisionMismatch {
+                draft_base_revision: live_head,
+                current_revision: current_world.current_revision(),
+            });
+        }
+
+        let change_set = nirmata_core::change_set::ChangeSet::new(
+            reviewed_draft.world_id(),
+            reviewed_draft.base_revision(),
+            reviewed_draft.objective().to_owned(),
+            reviewed_draft.sources().to_vec(),
+            reviewed_draft.assumptions().to_vec(),
+            reviewed_draft.operations().to_vec(),
+            reviewed_draft.decisions().to_vec(),
+        )?;
+        let mut final_report = active.store.validate_change_set(&change_set)?;
+        annotate_report_with_change_operations(&mut final_report, change_set.operations());
+        let effective_final_report =
+            crate::app::apply_review_waivers(&final_report, refreshed.waivers());
+        let unresolved_critique = critique.output.issues.iter().any(|issue| {
+            issue.severity == ValidationSeverity::Conflict
+                && !self.ai_runs.get(&run_id).is_some_and(|run| {
+                    run.critique_acknowledgements
+                        .contains_key(issue.issue_id.as_str())
+                })
+        });
+        let base_ready = refreshed.ready_to_confirm() && effective_final_report.is_ok();
+        let ready = base_ready && !unresolved_critique;
+        self.manual_reviews.insert(
+            review.review_key.clone(),
+            crate::app::StoredManualReview::from_ai(refreshed, run_id),
+        );
+        let run = self
+            .ai_runs
+            .get_mut(&run_id)
+            .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+        run.base_revision = live_head;
+        run.context = critique_input.snapshot;
+        run.state = if ready {
+            AiRunState::ReadyToCommit {
+                review,
+                reviewed_draft,
+                validation_report: final_report,
+                critique_report: critique.output,
+                critique_metadata: critique.metadata,
+            }
+        } else {
+            AiRunState::FinalCritiqueBlocked {
+                review,
+                reviewed_draft,
+                validation_report: final_report,
+                critique_report: critique.output,
+                critique_metadata: critique.metadata,
+                base_ready,
+            }
+        };
+        on_progress(AiProposalProgress::Completed);
+        Ok(run.snapshot())
+    }
+
+    fn complete_ai_proposal_run(
+        &mut self,
+        run_id: AiRunId,
+        response: AiProposalResponse,
+    ) -> Result<(), AppError> {
+        match response {
+            AiProposalResponse::IntentBrief { snapshot, brief } => {
+                let run = self
+                    .ai_runs
+                    .get_mut(&run_id)
+                    .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+                run.base_revision = snapshot.base_revision;
+                run.context = snapshot;
+                run.state = AiRunState::IntentBriefReady(brief);
+            }
+            AiProposalResponse::Draft(proposal) => {
+                let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+                let review = crate::manual_review::ManualReviewSession::from_draft(
+                    proposal.draft.clone(),
+                    &active.store,
+                )?;
+                let review_key = proposal
+                    .draft
+                    .operations()
+                    .first()
+                    .map(|operation| operation.primary_ref().to_string())
+                    .unwrap_or_else(|| ObjectRef::World(proposal.draft.world_id()).to_string());
+                if self.manual_reviews.contains_key(&review_key) {
+                    let run = self
+                        .ai_runs
+                        .get_mut(&run_id)
+                        .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+                    run.state = AiRunState::Failed(format!(
+                        "another pending review already targets {review_key}"
+                    ));
+                    return Err(AppError::ReviewSessionConflict(review_key));
+                }
+                self.manual_reviews.insert(
+                    review_key.clone(),
+                    crate::app::StoredManualReview::from_ai(review, run_id),
+                );
+                let run = self
+                    .ai_runs
+                    .get_mut(&run_id)
+                    .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+                run.base_revision = proposal.snapshot.base_revision;
+                run.context = proposal.snapshot.clone();
+                run.state = AiRunState::AwaitingReview(AiRunReview {
+                    proposal,
+                    review_key,
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub fn prepare_ai_query(
         &self,
         request: impl Into<String>,
@@ -953,7 +1780,7 @@ fn build_proposal_draft_response(
         .map(|source| resolve_search_result(store, source.to_string()))
         .collect::<Result<Vec<_>, AppError>>()?;
 
-    let ready_for_review = validation_report.is_ok()
+    let ready_for_review = !deterministic_blocks_review(&validation_report)
         && !critique_blocks_review(&critique_report)
         && repair_output_failure.is_none();
     Ok(AiProposalDraftResponse {
@@ -1297,6 +2124,14 @@ fn evaluation_needs_repair(
         .chain(deterministic_report.conflicts.iter())
         .any(|issue| issue.code != "change_set.replacement_decision_unresolved")
         || critique_blocks_review(critique_report)
+}
+
+fn deterministic_blocks_review(report: &ValidationReport) -> bool {
+    report
+        .errors
+        .iter()
+        .chain(report.conflicts.iter())
+        .any(|issue| issue.code != "change_set.replacement_decision_unresolved")
 }
 
 fn critique_blocks_review(report: &CritiqueReport) -> bool {
