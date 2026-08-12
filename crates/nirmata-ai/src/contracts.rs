@@ -29,6 +29,9 @@ pub const MAX_FINDING_ASSUMPTIONS: usize = 8;
 pub const MAX_FINDING_QUESTIONS: usize = 8;
 pub const MAX_IMPORT_CANDIDATES: usize = 64;
 pub const MAX_IMPORT_CITATIONS: usize = 8;
+pub const MAX_INTERNAL_DOCUMENT_TITLE_CHARS: usize = 200;
+pub const MAX_INTERNAL_DOCUMENT_BODY_CHARS: usize = 20_000;
+pub const MAX_INTERNAL_DOCUMENT_REFERENCES: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -197,6 +200,69 @@ pub enum SpecialistRole {
     RulesAuditor,
     CausalAuditor,
     PerspectivesAuditor,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InternalDocumentKind {
+    Chronicle,
+    Letter,
+    Report,
+    Myth,
+    ShortStory,
+}
+
+impl InternalDocumentKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Chronicle => "chronicle",
+            Self::Letter => "letter",
+            Self::Report => "report",
+            Self::Myth => "myth",
+            Self::ShortStory => "short_story",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InternalDocumentDraft {
+    pub document_kind: InternalDocumentKind,
+    pub title: String,
+    pub body_markdown: String,
+    pub content_reference_uris: Vec<ContentUri>,
+}
+
+impl InternalDocumentDraft {
+    fn validate(&self) -> Result<(), String> {
+        validate_required_text("internal_document.title", &self.title)?;
+        validate_max_chars(
+            "internal_document.title",
+            &self.title,
+            MAX_INTERNAL_DOCUMENT_TITLE_CHARS,
+        )?;
+        validate_required_text("internal_document.body_markdown", &self.body_markdown)?;
+        validate_max_chars(
+            "internal_document.body_markdown",
+            &self.body_markdown,
+            MAX_INTERNAL_DOCUMENT_BODY_CHARS,
+        )?;
+        validate_max_items(
+            "internal_document.content_reference_uris",
+            self.content_reference_uris.len(),
+            MAX_INTERNAL_DOCUMENT_REFERENCES,
+        )?;
+        if self.content_reference_uris.is_empty() {
+            return Err(
+                "internal_document.content_reference_uris must include at least one reference"
+                    .to_owned(),
+            );
+        }
+        validate_unique_items(
+            "internal_document.content_reference_uris",
+            self.content_reference_uris.iter().copied(),
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -879,6 +945,16 @@ pub fn parse_deep_synthesis(payload: &str) -> Result<DeepSynthesis, StructuredOu
 
 pub fn parse_import_extraction(payload: &str) -> Result<ImportExtraction, StructuredOutputError> {
     parse_contract(payload, "import_extraction", ImportExtraction::validate)
+}
+
+pub fn parse_internal_document(
+    payload: &str,
+) -> Result<InternalDocumentDraft, StructuredOutputError> {
+    parse_contract(
+        payload,
+        "internal_document",
+        InternalDocumentDraft::validate,
+    )
 }
 
 pub fn parse_change_set_draft(

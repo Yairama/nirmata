@@ -1,3 +1,4 @@
+import { buildCreateEditor } from "./editor-create.js";
 import { cloneEditorMode } from "./editor-model.js";
 import {
   badge,
@@ -8,6 +9,7 @@ import {
   formatTimestamp,
   humanize,
   labelForUri,
+  objectKindFromUri,
   selectedRevisionEntry,
   setStatus,
   shortId,
@@ -24,9 +26,12 @@ import type {
   ManualReviewObjectSnapshot,
   ManualReviewOperationSnapshot,
   ManualReviewSnapshot,
+  ObjectKind,
   PendingDraftRecord,
   RevisionAuditOperationSnapshot,
   RevisionHistoryEntrySnapshot,
+  SearchObjectKind,
+  AiRunSnapshot,
   ValidationIssue,
   ValidationReport,
   WorldSession,
@@ -52,11 +57,55 @@ function issueEntries(report: ValidationReport): Array<[string, ValidationIssue[
 }
 
 export {
+  attachAiReview,
   openPendingDraft,
   readPendingDraft,
   renderPending,
   syncPendingReviewRecord,
 };
+
+function fallbackAiEditor(targetUri: string) {
+  const kind = objectKindFromUri(targetUri) as ObjectKind;
+  if (state.editorMode) {
+    return cloneEditorMode(state.editorMode);
+  }
+  return buildCreateEditor((kind === "world" ? "entity" : kind) as SearchObjectKind);
+}
+
+async function attachAiReview(run: AiRunSnapshot, title = "Propuesta de IA"): Promise<void> {
+  if (!run.reviewKey || !run.draft) {
+    return;
+  }
+  const review = await invoke<ManualReviewSnapshot>("read_manual_review", {
+    input: { reviewKey: run.reviewKey },
+  });
+  review.readyToConfirm = run.status === "ready_to_commit" && review.readyToConfirm;
+  const targetUri = review.operations[0]?.targetUri ?? run.reviewKey;
+  const kind = objectKindFromUri(targetUri) as ObjectKind;
+  state.pendingDrafts.set(run.reviewKey, {
+    preview: {
+      draftKey: run.reviewKey,
+      targetUri,
+      objectType: kind,
+      mode: state.selectedUri === targetUri ? "update" : "create",
+      title,
+      objective: review.objective,
+      sourceUris: review.sources,
+      assumptions: review.assumptions,
+      logicalPath: targetUri,
+      validationReport: review.validationReport,
+      readyToConfirm: review.readyToConfirm,
+    },
+    review,
+    editor: fallbackAiEditor(targetUri),
+    aiRunId: run.id,
+  });
+  state.panels.bottomCollapsed = false;
+  renderWorkspace();
+  window.dispatchEvent(new CustomEvent<AiRunSnapshot>("nirmata:ai-review-attached", {
+    detail: run,
+  }));
+}
 
 function syncPendingReviewRecord(record: PendingDraftRecord, review: ManualReviewSnapshot): void {
   record.review = review;

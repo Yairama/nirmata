@@ -61,6 +61,7 @@ code,
 .world-header,
 .layout-toolbar,
 .assistant-panel,
+.narrative-panel,
 .panel {
   border: 1px solid rgb(71 85 105 / 0.72);
   border-radius: 0.9rem;
@@ -95,6 +96,94 @@ code,
     rgb(15 23 42 / 0.92);
   display: grid;
   gap: 1rem;
+}
+
+.narrative-panel {
+  padding: 1rem;
+  display: grid;
+  gap: 1rem;
+  border-left: 0.35rem solid #a78bfa;
+  background:
+    linear-gradient(120deg, rgb(76 29 149 / 0.2), transparent 48%),
+    rgb(15 23 42 / 0.92);
+}
+
+.narrative-eyebrow {
+  color: #c4b5fd;
+}
+
+.narrative-filters,
+.narrative-document-form,
+.narrative-columns {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.narrative-filters label:nth-child(2) {
+  grid-column: span 2;
+}
+
+.narrative-filters textarea {
+  min-height: 3rem;
+  font-family: ui-monospace, monospace;
+}
+
+.narrative-document-form {
+  padding: 0.85rem;
+  border: 1px solid #5b4b8a;
+  border-radius: 0.75rem;
+  background: rgb(2 6 23 / 0.48);
+}
+
+.narrative-document-form h4,
+.narrative-document-form label:nth-of-type(3),
+.narrative-document-form button {
+  grid-column: 1 / -1;
+}
+
+.narrative-document-form h4,
+.narrative-result h4,
+.narrative-item h5,
+.narrative-alternative h5 {
+  margin: 0;
+}
+
+.narrative-results,
+.narrative-result,
+.narrative-item,
+.narrative-alternative,
+.narrative-sources {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.narrative-result,
+.narrative-item,
+.narrative-alternative {
+  padding: 0.8rem;
+  border: 1px solid #475569;
+  border-radius: 0.65rem;
+  background: rgb(2 6 23 / 0.5);
+}
+
+.narrative-item,
+.narrative-alternative {
+  border-left: 0.2rem solid #8b5cf6;
+}
+
+.narrative-item p,
+.narrative-alternative p {
+  margin: 0;
+}
+
+.narrative-sources {
+  grid-template-columns: repeat(auto-fit, minmax(12rem, max-content));
+}
+
+.narrative-sources button {
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .simulation-eyebrow {
@@ -169,6 +258,19 @@ code,
   .simulation-actions {
     grid-column: 1;
     grid-template-columns: 1fr;
+  }
+
+  .narrative-filters,
+  .narrative-document-form,
+  .narrative-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .narrative-filters label:nth-child(2),
+  .narrative-document-form h4,
+  .narrative-document-form label:nth-of-type(3),
+  .narrative-document-form button {
+    grid-column: 1;
   }
 }
 

@@ -6,6 +6,7 @@ use nirmata_core::{
     claim::{Claim, ClaimAuthentication, ClaimModality, ClaimObject, ClaimPolarity},
     document::ObjectRef,
     entity::{Entity, EntityKind},
+    goal::{Goal, GoalStatus, GoalVisibility},
     rule::{Rule, RuleKind, RuleSeverity},
 };
 use nirmata_store::WorldStore;
@@ -24,13 +25,21 @@ enum FakeProposalReply {
 }
 
 #[derive(Clone)]
+enum FakeDocumentReply {
+    Draft(InternalDocumentDraft),
+    Failure,
+}
+
+#[derive(Clone)]
 struct FakeClient {
     query_response: AdvisoryResponse,
     query_deltas: Vec<String>,
     query_delay: Duration,
     proposal_replies: Arc<Mutex<VecDeque<FakeProposalReply>>>,
+    document_replies: Arc<Mutex<VecDeque<FakeDocumentReply>>>,
     critique_reports: Arc<Mutex<VecDeque<CritiqueReport>>>,
     proposal_delay: Duration,
+    document_delay: Duration,
     query_calls: Arc<Mutex<usize>>,
     proposal_calls: Arc<Mutex<usize>>,
     critique_calls: Arc<Mutex<usize>>,
@@ -49,11 +58,13 @@ impl FakeClient {
             query_deltas: vec![],
             query_delay: Duration::ZERO,
             proposal_replies: Arc::new(Mutex::new(proposal_replies)),
+            document_replies: Arc::new(Mutex::new(VecDeque::new())),
             critique_reports: Arc::new(Mutex::new(VecDeque::from([
                 CritiqueReport { issues: vec![] },
                 CritiqueReport { issues: vec![] },
             ]))),
             proposal_delay: Duration::ZERO,
+            document_delay: Duration::ZERO,
             query_calls: Arc::new(Mutex::new(0)),
             proposal_calls: Arc::new(Mutex::new(0)),
             critique_calls: Arc::new(Mutex::new(0)),
@@ -74,6 +85,16 @@ impl FakeClient {
 
     fn with_proposal_delay(mut self, delay: Duration) -> Self {
         self.proposal_delay = delay;
+        self
+    }
+
+    fn with_document_replies(mut self, replies: Vec<FakeDocumentReply>) -> Self {
+        self.document_replies = Arc::new(Mutex::new(replies.into()));
+        self
+    }
+
+    fn with_document_delay(mut self, delay: Duration) -> Self {
+        self.document_delay = delay;
         self
     }
 
@@ -201,11 +222,38 @@ impl AiModeClient for FakeClient {
             })
         })
     }
+
+    fn run_internal_document<'a>(
+        &'a self,
+        _payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<InternalDocumentDraft>, CapabilityError>>
+    {
+        Box::pin(async move {
+            sleep_or_cancel(self.document_delay, options.cancellation.clone()).await?;
+            match self
+                .document_replies
+                .lock()
+                .expect("document replies lock")
+                .pop_front()
+                .expect("queued document reply")
+            {
+                FakeDocumentReply::Draft(output) => Ok(CapabilityInvocation {
+                    output,
+                    metadata: test_metadata("internal_document_test", context_object_ids),
+                }),
+                FakeDocumentReply::Failure => Err(CapabilityError::Ai(AiError::InvalidResponse(
+                    "document generation failed".to_owned(),
+                ))),
+            }
+        })
+    }
 }
 
 struct SeededWorld {
     mara: Entity,
-    _sera: Entity,
+    sera: Entity,
     rumor: Claim,
     rule: Rule,
 }
@@ -338,7 +386,7 @@ fn seed_world(path: &Path) -> SeededWorld {
 
     SeededWorld {
         mara,
-        _sera: sera,
+        sera,
         rumor,
         rule,
     }
@@ -389,6 +437,23 @@ fn draft_for_new_faction(
         vec![],
     )
     .expect("proposal draft")
+}
+
+fn internal_document_draft(
+    kind: InternalDocumentKind,
+    title: &str,
+    body: &str,
+    references: Vec<ObjectRef>,
+) -> InternalDocumentDraft {
+    InternalDocumentDraft {
+        document_kind: kind,
+        title: title.to_owned(),
+        body_markdown: body.to_owned(),
+        content_reference_uris: references
+            .into_iter()
+            .map(|reference| reference.to_string().try_into().expect("valid content URI"))
+            .collect(),
+    }
 }
 
 fn invalid_additive_delete_draft(world: &World, entity: &Entity) -> ChangeSetDraft {
@@ -1694,6 +1759,347 @@ async fn final_critic_conflict_requires_judgment_for_that_recorded_issue() {
     assert_eq!(
         trace["critiqueAcknowledgements"]["rule-conflict"].as_str(),
         Some("Acepto esta excepción semántica para esta propuesta concreta.")
+    );
+
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn internal_document_is_perspective_scoped_referenced_and_stored_only_for_review() {
+    let path = project_path("internal-document-review");
+    let seeded = seed_world(&path);
+    let mut store = WorldStore::open(&path).expect("open store");
+    let world = store.load_world().expect("world");
+    let secret = Goal::new(
+        world.id(),
+        seeded.sera.id(),
+        "Sera plans to poison the harbor well.",
+        10,
+        GoalStatus::Active,
+        None,
+        GoalVisibility::Secret,
+        None,
+    )
+    .expect("secret goal");
+    store.insert_goal(&secret).expect("insert secret goal");
+    drop(store);
+
+    let mut app = open_app(&path);
+    let request = InternalDocumentRequest {
+        instructions: "Record the ships that Mara can see.".to_owned(),
+        document_kind: InternalDocumentKind::Chronicle,
+        perspective_entity_id: seeded.mara.id(),
+        tick: 12,
+        anchors: vec![
+            ObjectRef::Entity(seeded.mara.id()),
+            ObjectRef::Goal(secret.id()),
+        ],
+    };
+    let (prepared, _) = app
+        .prepare_internal_document(&request)
+        .expect("prepare document context");
+    assert!(
+        prepared
+            .snapshot
+            .context
+            .contains(ObjectRef::Entity(seeded.mara.id()))
+    );
+    assert!(
+        !prepared
+            .snapshot
+            .context
+            .contains(ObjectRef::Goal(secret.id()))
+    );
+    assert!(
+        !serde_json::to_string(&prepared)
+            .expect("serialize input")
+            .contains(secret.desired_state_md())
+    );
+
+    let fake = FakeClient::new(
+        advisory_response(vec![]),
+        draft_for_new_faction(
+            &world,
+            ObjectRef::Entity(seeded.mara.id()),
+            "Unused",
+            "unused-document",
+        ),
+    )
+    .with_document_replies(vec![FakeDocumentReply::Draft(internal_document_draft(
+        InternalDocumentKind::Chronicle,
+        "Harbor Chronicle",
+        "Mara records the ships visible from the quay.",
+        vec![ObjectRef::Entity(seeded.mara.id())],
+    ))]);
+    let run = app
+        .generate_internal_document_with(&fake, request, AiRequestOptions::default(), |_| {})
+        .await
+        .expect("document reaches standard review");
+
+    assert_eq!(run.status, AiRunStatus::AwaitingReview);
+    let draft = run.draft.as_ref().expect("document draft");
+    assert_eq!(draft.sources(), &[ObjectRef::Entity(seeded.mara.id())]);
+    let ChangeOperation::CreateDocument { after, .. } = &draft.operations()[0] else {
+        panic!("expected CreateDocument");
+    };
+    assert_eq!(after.object().kind(), "chronicle");
+    assert_eq!(
+        after.object().perspective_entity_id(),
+        Some(seeded.mara.id())
+    );
+    assert_eq!(after.references().len(), 1);
+    assert_eq!(
+        after.references()[0].target(),
+        ObjectRef::Entity(seeded.mara.id())
+    );
+    let review_key = run.review_key.expect("stored review key");
+    assert!(app.manual_reviews.contains_key(&review_key));
+    assert!(
+        app.active
+            .as_ref()
+            .expect("active world")
+            .store
+            .list_documents()
+            .expect("documents")
+            .is_empty(),
+        "review must not write the document"
+    );
+    assert_eq!(
+        app.active
+            .as_ref()
+            .expect("active world")
+            .store
+            .load_world()
+            .expect("world")
+            .current_revision(),
+        world.current_revision()
+    );
+
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn internal_document_failure_or_cancellation_creates_no_review_or_document() {
+    let path = project_path("internal-document-failure");
+    let seeded = seed_world(&path);
+    let world = WorldStore::open(&path)
+        .expect("open store")
+        .load_world()
+        .expect("world");
+    let mut app = open_app(&path);
+    let request = InternalDocumentRequest {
+        instructions: "Write a letter.".to_owned(),
+        document_kind: InternalDocumentKind::Letter,
+        perspective_entity_id: seeded.mara.id(),
+        tick: 12,
+        anchors: vec![ObjectRef::Entity(seeded.mara.id())],
+    };
+    let unused = draft_for_new_faction(
+        &world,
+        ObjectRef::Entity(seeded.mara.id()),
+        "Unused",
+        "unused-failure",
+    );
+    let outside_context = ObjectRef::Entity(nirmata_core::EntityId::new());
+    let ungrounded = FakeClient::new(advisory_response(vec![]), unused.clone())
+        .with_document_replies(vec![FakeDocumentReply::Draft(internal_document_draft(
+            InternalDocumentKind::Letter,
+            "Ungrounded Letter",
+            "This reference was not available to Mara.",
+            vec![outside_context],
+        ))]);
+    let error = app
+        .generate_internal_document_with(
+            &ungrounded,
+            request.clone(),
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect_err("reference outside context must fail");
+    assert!(matches!(error, AppError::InvalidInternalDocument(_)));
+    assert!(app.manual_reviews.is_empty());
+
+    let failed = FakeClient::new(advisory_response(vec![]), unused.clone())
+        .with_document_replies(vec![FakeDocumentReply::Failure]);
+    assert!(
+        app.generate_internal_document_with(
+            &failed,
+            request.clone(),
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .is_err()
+    );
+    assert!(app.manual_reviews.is_empty());
+
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let cancelled = FakeClient::new(advisory_response(vec![]), unused)
+        .with_document_replies(vec![FakeDocumentReply::Draft(internal_document_draft(
+            InternalDocumentKind::Letter,
+            "Cancelled Letter",
+            "This must never become a draft.",
+            vec![ObjectRef::Entity(seeded.mara.id())],
+        ))])
+        .with_document_delay(Duration::from_secs(1));
+    let error = app
+        .generate_internal_document_with(
+            &cancelled,
+            request,
+            AiRequestOptions::default().with_cancellation(cancellation),
+            |_| {},
+        )
+        .await
+        .expect_err("cancel document generation");
+    assert!(matches!(error, AppError::Ai(AiError::RequestCancelled)));
+    assert!(app.manual_reviews.is_empty());
+    assert!(app.ai_runs.is_empty());
+    assert!(
+        app.active
+            .as_ref()
+            .expect("active world")
+            .store
+            .list_documents()
+            .expect("documents")
+            .is_empty()
+    );
+    assert_eq!(
+        app.active
+            .as_ref()
+            .expect("active world")
+            .store
+            .load_world()
+            .expect("world")
+            .current_revision(),
+        world.current_revision()
+    );
+
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn narrative_continuity_is_read_only_then_preserves_alternatives_and_sources_in_standard_review()
+ {
+    let path = project_path("narrative-continuity");
+    let seeded = seed_world(&path);
+    let mut store = WorldStore::open(&path).expect("open store");
+    let world = store.load_world().expect("world");
+    let goal = Goal::new(
+        world.id(),
+        seeded.mara.id(),
+        "Recover the missing harbor ledger.",
+        8,
+        GoalStatus::Active,
+        None,
+        GoalVisibility::Public,
+        None,
+    )
+    .expect("active goal");
+    store.insert_goal(&goal).expect("insert goal");
+    drop(store);
+    let mut app = open_app(&path);
+    let selection = crate::NarrativeContinuitySelection::LooseEnd {
+        code: "active_goal_without_resolution".to_owned(),
+        object_ref: ObjectRef::Goal(goal.id()),
+    };
+
+    let exploration = app
+        .explore_narrative_continuity(None, selection.clone())
+        .expect("continuity exploration");
+    assert!(!exploration.question.is_empty());
+    assert_eq!(exploration.alternatives.len(), 3);
+    assert!(
+        exploration
+            .source_uris
+            .contains(&ObjectRef::Goal(goal.id()).to_string())
+    );
+    assert_eq!(
+        app.active
+            .as_ref()
+            .expect("active world")
+            .store
+            .load_world()
+            .expect("world")
+            .current_revision(),
+        world.current_revision(),
+        "exploration must be read-only"
+    );
+
+    let generated = draft_for_new_faction(
+        &world,
+        ObjectRef::Entity(seeded.mara.id()),
+        "Ledger Seekers",
+        "ledger-seekers",
+    );
+    let fake = FakeClient::new(advisory_response(vec![]), generated);
+    let proposal = app
+        .propose_narrative_continuity_with(
+            &fake,
+            None,
+            selection,
+            "complicate_goal",
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect("continuity proposal");
+
+    assert_eq!(proposal.run.status, AiRunStatus::AwaitingReview);
+    assert_eq!(proposal.exploration.alternatives.len(), 3);
+    assert!(
+        proposal
+            .intent_brief
+            .restrictions
+            .iter()
+            .any(|restriction| restriction.contains("DecisionPoint"))
+    );
+    let draft = proposal.run.draft.as_ref().expect("review draft");
+    assert!(draft.sources().contains(&ObjectRef::Goal(goal.id())));
+    let decision = draft.decisions().last().expect("continuity decision");
+    assert_eq!(decision.alternatives().len(), 3);
+    assert_eq!(
+        decision.resolved_alternative(),
+        Some("Complicar el objetivo")
+    );
+    let critique_payload = fake.last_critique_payload();
+    let serialized_goal =
+        serde_json::to_value(ObjectRef::Goal(goal.id())).expect("serialize goal source");
+    assert!(
+        critique_payload["draft"]["sources"]
+            .as_array()
+            .expect("draft sources")
+            .iter()
+            .any(|source| source == &serialized_goal)
+    );
+    let review = app
+        .read_stored_manual_review(
+            proposal
+                .run
+                .review_key
+                .as_deref()
+                .expect("standard review key"),
+        )
+        .expect("stored standard review");
+    assert_eq!(review.operations[0].decision_points.len(), 1);
+    assert_eq!(
+        review.operations[0].decision_points[0].alternatives.len(),
+        3
+    );
+    assert_eq!(
+        app.active
+            .as_ref()
+            .expect("active world")
+            .store
+            .load_world()
+            .expect("world")
+            .current_revision(),
+        world.current_revision(),
+        "proposal review must not write canon"
     );
 
     drop(app);

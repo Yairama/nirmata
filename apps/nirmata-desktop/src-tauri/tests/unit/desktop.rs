@@ -1,10 +1,14 @@
 use super::{
-    CommandError, SimulationScenarioCommand, apply_manual_review_action, apply_manual_review_edit,
-    begin_manual_review_edit, close_world, confirm_manual_review, create_world, dotenv_value,
-    get_current_world, get_provider_credential_status, get_related_context, list_revision_history,
-    list_simulation_scenarios, list_timeline_events, open_uri, open_world, parse_ai_run_id,
-    parse_deep_review_mode, parse_object_uri, parse_project_path, parse_revision_id,
-    parse_simulation_scenario_id, parse_snapshot_directory, parse_snapshot_name,
+    CommandError, DeriveCausalThreadsCommand, DeriveNarrativeTimelineCommand,
+    GenerateInternalDocumentCommand, NarrativeContinuitySelectionCommand,
+    ProposeNarrativeContinuityCommand, SimulationScenarioCommand, apply_manual_review_action,
+    apply_manual_review_edit, begin_manual_review_edit, close_world, confirm_manual_review,
+    create_world, derive_causal_threads, derive_loose_ends, derive_narrative_timeline,
+    dotenv_value, explore_narrative_continuity, get_current_world, get_provider_credential_status,
+    get_related_context, list_revision_history, list_simulation_scenarios, list_timeline_events,
+    open_uri, open_world, parse_ai_run_id, parse_deep_review_mode, parse_entity_id, parse_event_id,
+    parse_internal_document_kind, parse_narrative_scope, parse_object_uri, parse_project_path,
+    parse_revision_id, parse_simulation_scenario_id, parse_snapshot_directory, parse_snapshot_name,
     parse_snapshot_parent, preview_manual_draft, read_logical_vfs, read_manual_review,
     revalidate_manual_review, run_simulation_scenario, search_world, undo_revision,
 };
@@ -150,6 +154,125 @@ fn simulation_scenario_ids_and_command_dtos_are_strict() {
 }
 
 #[test]
+fn narrative_ids_scopes_kinds_and_command_dtos_are_strict() {
+    let id = "1f2c8be0-093a-4f31-b6b4-c8db7c1fa2da";
+    assert_eq!(
+        parse_event_id(id)
+            .unwrap_or_else(|_| panic!("valid event id"))
+            .to_string(),
+        id
+    );
+    assert_eq!(
+        parse_entity_id(id)
+            .unwrap_or_else(|_| panic!("valid entity id"))
+            .to_string(),
+        id
+    );
+    assert_eq!(
+        parse_event_id("not-an-event")
+            .expect_err("invalid event id")
+            .code,
+        "invalid_event_id"
+    );
+    assert_eq!(
+        parse_entity_id("not-an-entity")
+            .expect_err("invalid entity id")
+            .code,
+        "invalid_entity_id"
+    );
+    assert_eq!(
+        parse_narrative_scope(Some(super::NarrativeReadScopeCommand {
+            variant_id: id.to_owned(),
+            revision_id: Some(id.to_owned()),
+        }))
+        .unwrap_or_else(|_| panic!("historical narrative scope"))
+        .unwrap_or_else(|| panic!("scope"))
+        .revision_id
+        .expect("revision")
+        .to_string(),
+        id
+    );
+    assert_eq!(
+        parse_narrative_scope(Some(super::NarrativeReadScopeCommand {
+            variant_id: "invalid".to_owned(),
+            revision_id: None,
+        }))
+        .expect_err("invalid scope")
+        .code,
+        "invalid_narrative_scope"
+    );
+    assert_eq!(
+        parse_internal_document_kind("short_story")
+            .unwrap_or_else(|_| panic!("closed internal document kind"))
+            .as_str(),
+        "short_story"
+    );
+    assert_eq!(
+        parse_internal_document_kind("novel")
+            .expect_err("novel generation is not available")
+            .code,
+        "invalid_internal_document_kind"
+    );
+
+    assert!(
+        serde_json::from_value::<DeriveNarrativeTimelineCommand>(json!({
+            "scope": null,
+            "unexpected": true
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<DeriveCausalThreadsCommand>(json!({
+            "scope": null,
+            "startEventIds": null,
+            "maxDepth": 3,
+            "limit": 100,
+            "unexpected": true
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<NarrativeContinuitySelectionCommand>(json!({
+            "kind": "causal_thread",
+            "startEventId": id,
+            "unexpected": true
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<NarrativeContinuitySelectionCommand>(json!({
+            "kind": "causal_thread",
+            "startEventId": id
+        }))
+        .is_ok(),
+        "selection fields use the frontend camelCase contract"
+    );
+    assert!(
+        serde_json::from_value::<GenerateInternalDocumentCommand>(json!({
+            "requestId": id,
+            "documentKind": "chronicle",
+            "title": "Ledger",
+            "request": "Write a cited ledger.",
+            "perspectiveEntityId": id,
+            "tick": 4,
+            "anchorUris": [],
+            "apiKey": "must-never-cross-this-dto"
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ProposeNarrativeContinuityCommand>(json!({
+            "requestId": id,
+            "scope": null,
+            "selection": { "kind": "causal_thread", "startEventId": id },
+            "alternativeId": "close_thread",
+            "deepReview": true
+        }))
+        .is_err()
+    );
+}
+
+#[test]
 fn deep_review_mode_is_explicit_and_closed() {
     assert_eq!(
         parse_deep_review_mode("deep_impact").unwrap_or_else(|_| panic!("deep mode")),
@@ -232,6 +355,58 @@ fn simulation_commands_preserve_boundary_errors_across_ipc() {
     )
     .expect_err("invalid scenario ids must fail at the command boundary");
     assert_eq!(invalid_id["code"], "invalid_simulation_scenario_id");
+}
+
+#[test]
+fn narrative_derivation_commands_preserve_parser_and_app_errors_across_ipc() {
+    let app = mock_builder()
+        .manage(Arc::new(Mutex::new(NirmataApp::default())))
+        .invoke_handler(tauri::generate_handler![
+            derive_narrative_timeline,
+            derive_causal_threads,
+            derive_loose_ends,
+            explore_narrative_continuity,
+        ])
+        .build(mock_context(noop_assets()))
+        .expect("build narrative command app");
+    let webview = WebviewWindowBuilder::new(&app, "narrative", Default::default())
+        .build()
+        .expect("build narrative command webview");
+
+    let no_world = invoke_ipc(
+        &webview,
+        "derive_narrative_timeline",
+        json!({ "input": { "scope": null } }),
+    )
+    .expect_err("derivation without a world must fail");
+    assert_eq!(no_world["code"], "no_world_open");
+
+    let invalid_event = invoke_ipc(
+        &webview,
+        "derive_causal_threads",
+        json!({
+            "input": {
+                "scope": null,
+                "startEventIds": ["not-an-event"],
+                "maxDepth": 3,
+                "limit": 100
+            }
+        }),
+    )
+    .expect_err("event IDs must fail before app dispatch");
+    assert_eq!(invalid_event["code"], "invalid_event_id");
+
+    let invalid_scope = invoke_ipc(
+        &webview,
+        "derive_loose_ends",
+        json!({
+            "input": {
+                "scope": { "variantId": "invalid", "revisionId": null }
+            }
+        }),
+    )
+    .expect_err("scope IDs must fail before app dispatch");
+    assert_eq!(invalid_scope["code"], "invalid_narrative_scope");
 }
 
 fn preview_form(

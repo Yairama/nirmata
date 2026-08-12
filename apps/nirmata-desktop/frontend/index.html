@@ -211,6 +211,73 @@
           </details>
         </section>
 
+        <section id="narrative-panel" class="narrative-panel" aria-labelledby="narrative-title">
+          <div class="assistant-heading">
+            <div>
+              <p class="panel-eyebrow narrative-eyebrow">Lectura derivada y citada</p>
+              <h3 id="narrative-title">Derivación narrativa</h3>
+            </div>
+            <p id="narrative-status" class="panel-summary">Selecciona una derivación.</p>
+          </div>
+          <div class="narrative-filters">
+            <label>
+              Scope
+              <select id="narrative-scope"></select>
+            </label>
+            <label>
+              Eventos iniciales, UUID uno por línea (opcional)
+              <textarea id="narrative-start-events" rows="2" spellcheck="false"></textarea>
+            </label>
+            <label>
+              Profundidad causal
+              <input id="narrative-max-depth" type="number" min="0" max="3" step="1" value="3" />
+            </label>
+            <label>
+              Límite causal
+              <input id="narrative-limit" type="number" min="0" max="100" step="1" value="100" />
+            </label>
+          </div>
+          <div class="pending-actions">
+            <button id="narrative-timeline" type="button">Story time / discurso</button>
+            <button id="narrative-causal" type="button" class="secondary">Derivar hilos</button>
+            <button id="narrative-loose-ends" type="button" class="secondary">Derivar loose ends</button>
+            <button id="narrative-cancel" type="button" class="ghost" disabled>Cancelar IA</button>
+          </div>
+          <form id="narrative-document-form" class="narrative-document-form">
+            <h4>Documento interno revisable</h4>
+            <label>
+              Kind
+              <select id="narrative-document-kind">
+                <option value="chronicle">Crónica</option>
+                <option value="letter">Carta</option>
+                <option value="report">Informe</option>
+                <option value="myth">Mito</option>
+                <option value="short_story">Historia corta</option>
+              </select>
+            </label>
+            <label>
+              Título solicitado
+              <input id="narrative-document-title" maxlength="200" required />
+            </label>
+            <label>
+              Request
+              <textarea id="narrative-document-request" rows="3" maxlength="20000" required></textarea>
+            </label>
+            <label>
+              Perspective entity UUID
+              <input id="narrative-perspective" placeholder="00000000-0000-0000-0000-000000000000" required />
+            </label>
+            <label>
+              Tick
+              <input id="narrative-tick" type="number" step="1" value="0" required />
+            </label>
+            <button type="submit">Generar documento revisable</button>
+          </form>
+          <div id="narrative-results" class="narrative-results" aria-live="polite">
+            <p class="empty-state">Las derivaciones no escriben canon. Documento y continuidad siempre entran en cambios pendientes.</p>
+          </div>
+        </section>
+
         <section id="lore-import-panel" class="lore-import-panel" aria-labelledby="lore-import-title">
           <div class="assistant-heading">
             <div>

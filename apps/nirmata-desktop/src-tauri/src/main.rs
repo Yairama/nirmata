@@ -4,15 +4,17 @@ use nirmata_app::{
     AiError, AiProviderConfig, AiQueryResponse, AiRequestOptions, AiRunId, AiRunSnapshot, AppError,
     CancellationToken, ContextBudget, ContextBundleRequest, ContextIntent, CreateWorldInput,
     DeepReviewMode, DeepReviewPlan, DeepReviewRun, DeepReviewRunId, EmptySearchClassification,
-    ExportSnapshotInput, ExportSnapshotResult, ImportBatchSnapshot, ImportCandidate,
-    ImportCandidateDecisionRequest, ImportCandidateSnapshot, ImportChunkLocation,
+    EntityId, EventId, ExportSnapshotInput, ExportSnapshotResult, ImportBatchSnapshot,
+    ImportCandidate, ImportCandidateDecisionRequest, ImportCandidateSnapshot, ImportChunkLocation,
     ImportExtractionResult, ImportReviewPreparation, ImportSnapshotInput, ImportSnapshotResult,
-    IntentBrief, LogicalVfsDirectory, ManualDraftRequest, ManualDraftResponse,
-    ManualReviewActionRequest, ManualReviewSnapshot, MergeReviewResult, NirmataApp, ObjectRef,
-    OpenUriResponse, ProviderCredentialStatus, ReadScope, RelatedContextRequest,
-    RelatedContextResponse, RevisionHistorySnapshot, RevisionId, SearchWorldRequest,
-    SearchWorldResponse, SimulationPromotionInput, SimulationRun, SimulationScenario,
-    SimulationScenarioId, SimulationScenarioInput, SpecialistRole, StoreError,
+    IntentBrief, InternalDocumentKind, InternalDocumentRequest, LogicalVfsDirectory,
+    ManualDraftRequest, ManualDraftResponse, ManualReviewActionRequest, ManualReviewSnapshot,
+    MergeReviewResult, NarrativeCausalThreads, NarrativeContinuityExploration,
+    NarrativeContinuityProposal, NarrativeContinuitySelection, NarrativeLooseEnds,
+    NarrativeTimeline, NirmataApp, ObjectRef, OpenUriResponse, ProviderCredentialStatus, ReadScope,
+    RelatedContextRequest, RelatedContextResponse, RevisionHistorySnapshot, RevisionId,
+    SearchWorldRequest, SearchWorldResponse, SimulationPromotionInput, SimulationRun,
+    SimulationScenario, SimulationScenarioId, SimulationScenarioInput, SpecialistRole, StoreError,
     StructuredSearchKind, TimelineOverview, Variant, VariantComparison, VariantId, WorldSession,
 };
 use serde::{Deserialize, Serialize};
@@ -269,6 +271,74 @@ struct PrepareSimulationReviewCommand {
     promotion: SimulationPromotionInput,
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NarrativeReadScopeCommand {
+    variant_id: String,
+    revision_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeriveNarrativeTimelineCommand {
+    scope: Option<NarrativeReadScopeCommand>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeriveCausalThreadsCommand {
+    scope: Option<NarrativeReadScopeCommand>,
+    start_event_ids: Option<Vec<String>>,
+    max_depth: u8,
+    limit: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeriveLooseEndsCommand {
+    scope: Option<NarrativeReadScopeCommand>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum NarrativeContinuitySelectionCommand {
+    LooseEnd { code: String, object_uri: String },
+    CausalThread { start_event_id: String },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExploreNarrativeContinuityCommand {
+    scope: Option<NarrativeReadScopeCommand>,
+    selection: NarrativeContinuitySelectionCommand,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GenerateInternalDocumentCommand {
+    request_id: String,
+    document_kind: String,
+    title: String,
+    request: String,
+    perspective_entity_id: String,
+    tick: i64,
+    anchor_uris: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProposeNarrativeContinuityCommand {
+    request_id: String,
+    scope: Option<NarrativeReadScopeCommand>,
+    selection: NarrativeContinuitySelectionCommand,
+    alternative_id: String,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AiProgressEvent<T> {
@@ -341,6 +411,7 @@ impl From<AppError> for CommandError {
             AppError::InvalidSimulationScenario(_) => "invalid_simulation_scenario",
             AppError::SimulationScenarioNotFound(_) => "simulation_scenario_not_found",
             AppError::InvalidNarrativeQuery(_) => "invalid_narrative_query",
+            AppError::InvalidInternalDocument(_) => "invalid_internal_document",
             AppError::InvalidSimulationPromotion(_) => "invalid_simulation_promotion",
             AppError::SimulationScenarioStale { .. } => "simulation_scenario_stale",
             AppError::AiCritiqueIssueNotFound { .. } => "ai_critique_issue_not_found",
@@ -1135,6 +1206,164 @@ fn prepare_simulation_review(
 }
 
 #[tauri::command]
+fn derive_narrative_timeline(
+    input: DeriveNarrativeTimelineCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<NarrativeTimeline, CommandError> {
+    let scope = parse_narrative_scope(input.scope)?;
+    lock_app(&state)?
+        .derive_narrative_timeline(scope)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn derive_causal_threads(
+    input: DeriveCausalThreadsCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<NarrativeCausalThreads, CommandError> {
+    let scope = parse_narrative_scope(input.scope)?;
+    let start_event_ids = input
+        .start_event_ids
+        .map(|ids| ids.iter().map(|id| parse_event_id(id)).collect())
+        .transpose()?;
+    lock_app(&state)?
+        .derive_causal_threads(scope, start_event_ids, input.max_depth, input.limit)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn derive_loose_ends(
+    input: DeriveLooseEndsCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<NarrativeLooseEnds, CommandError> {
+    let scope = parse_narrative_scope(input.scope)?;
+    lock_app(&state)?
+        .derive_loose_ends(scope)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn explore_narrative_continuity(
+    input: ExploreNarrativeContinuityCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<NarrativeContinuityExploration, CommandError> {
+    let scope = parse_narrative_scope(input.scope)?;
+    let selection = parse_narrative_selection(input.selection)?;
+    lock_app(&state)?
+        .explore_narrative_continuity(scope, selection)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn generate_internal_document(
+    input: GenerateInternalDocumentCommand,
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<AiRunSnapshot, CommandError> {
+    let title = parse_required_text("title", input.title, 200, "invalid_internal_document")?;
+    let request = parse_required_text(
+        "request",
+        input.request,
+        20_000,
+        "invalid_internal_document",
+    )?;
+    let document_kind = parse_internal_document_kind(&input.document_kind)?;
+    let perspective_entity_id = parse_entity_id(&input.perspective_entity_id)?;
+    let anchors = input
+        .anchor_uris
+        .iter()
+        .map(|uri| {
+            ObjectRef::from_str(parse_object_uri(uri)?).map_err(|_| CommandError {
+                code: "invalid_object_uri",
+                message: format!("invalid nirmata URI {uri}"),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let provider = provider_config()?;
+    let token = register_cancellation(&cancellations, &input.request_id)?;
+    let request_id = input.request_id.clone();
+    let cleanup_id = input.request_id.clone();
+    let app_state = Arc::clone(state.inner());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut app = app_state.lock().map_err(|_| internal_error())?;
+        tauri::async_runtime::block_on(app.generate_internal_document(
+            &provider,
+            InternalDocumentRequest {
+                instructions: format!(
+                    "Use exactly this document title: {title}\n\nDocument request: {request}"
+                ),
+                document_kind,
+                perspective_entity_id,
+                tick: input.tick,
+                anchors,
+            },
+            AiRequestOptions::default().with_cancellation(token),
+            move |progress| {
+                let _ = app_handle.emit(
+                    "ai-proposal-progress",
+                    AiProgressEvent {
+                        request_id: request_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        ))
+        .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| internal_error())?;
+    remove_cancellation(&cancellations, &cleanup_id);
+    result
+}
+
+#[tauri::command]
+async fn propose_narrative_continuity(
+    input: ProposeNarrativeContinuityCommand,
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<NarrativeContinuityProposal, CommandError> {
+    let scope = parse_narrative_scope(input.scope)?;
+    let selection = parse_narrative_selection(input.selection)?;
+    let alternative_id = parse_required_text(
+        "alternativeId",
+        input.alternative_id,
+        64,
+        "invalid_narrative_query",
+    )?;
+    let provider = provider_config()?;
+    let token = register_cancellation(&cancellations, &input.request_id)?;
+    let request_id = input.request_id.clone();
+    let cleanup_id = input.request_id.clone();
+    let app_state = Arc::clone(state.inner());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut app = app_state.lock().map_err(|_| internal_error())?;
+        tauri::async_runtime::block_on(app.propose_narrative_continuity(
+            &provider,
+            scope,
+            selection,
+            &alternative_id,
+            AiRequestOptions::default().with_cancellation(token),
+            move |progress| {
+                let _ = app_handle.emit(
+                    "ai-proposal-progress",
+                    AiProgressEvent {
+                        request_id: request_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        ))
+        .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| internal_error())?;
+    remove_cancellation(&cancellations, &cleanup_id);
+    result
+}
+
+#[tauri::command]
 fn list_timeline_events(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<TimelineOverview, CommandError> {
@@ -1426,6 +1655,94 @@ fn parse_simulation_scenario_id(value: &str) -> Result<SimulationScenarioId, Com
     })
 }
 
+fn parse_event_id(value: &str) -> Result<EventId, CommandError> {
+    EventId::from_str(value.trim()).map_err(|_| CommandError {
+        code: "invalid_event_id",
+        message: format!("invalid event id: {value}"),
+    })
+}
+
+fn parse_entity_id(value: &str) -> Result<EntityId, CommandError> {
+    EntityId::from_str(value.trim()).map_err(|_| CommandError {
+        code: "invalid_entity_id",
+        message: format!("invalid entity id: {value}"),
+    })
+}
+
+fn parse_narrative_scope(
+    scope: Option<NarrativeReadScopeCommand>,
+) -> Result<Option<ReadScope>, CommandError> {
+    scope
+        .map(|scope| {
+            let variant_id =
+                VariantId::from_str(scope.variant_id.trim()).map_err(|_| CommandError {
+                    code: "invalid_narrative_scope",
+                    message: "narrative scope variantId must be a UUID".to_owned(),
+                })?;
+            match scope.revision_id {
+                Some(revision_id) => parse_revision_id(&revision_id)
+                    .map(|revision_id| ReadScope::historical(variant_id, revision_id))
+                    .map_err(|_| CommandError {
+                        code: "invalid_narrative_scope",
+                        message: "narrative scope revisionId must be a UUID or null".to_owned(),
+                    }),
+                None => Ok(ReadScope::head(variant_id)),
+            }
+        })
+        .transpose()
+}
+
+fn parse_narrative_selection(
+    selection: NarrativeContinuitySelectionCommand,
+) -> Result<NarrativeContinuitySelection, CommandError> {
+    match selection {
+        NarrativeContinuitySelectionCommand::LooseEnd { code, object_uri } => {
+            let code = parse_required_text("code", code, 100, "invalid_narrative_selection")?;
+            let object_ref =
+                ObjectRef::from_str(parse_object_uri(&object_uri)?).map_err(|_| CommandError {
+                    code: "invalid_narrative_selection",
+                    message: format!("invalid narrative selection URI: {object_uri}"),
+                })?;
+            Ok(NarrativeContinuitySelection::LooseEnd { code, object_ref })
+        }
+        NarrativeContinuitySelectionCommand::CausalThread { start_event_id } => {
+            Ok(NarrativeContinuitySelection::CausalThread {
+                start_event_id: parse_event_id(&start_event_id)?,
+            })
+        }
+    }
+}
+
+fn parse_internal_document_kind(value: &str) -> Result<InternalDocumentKind, CommandError> {
+    match value.trim() {
+        "chronicle" => Ok(InternalDocumentKind::Chronicle),
+        "letter" => Ok(InternalDocumentKind::Letter),
+        "report" => Ok(InternalDocumentKind::Report),
+        "myth" => Ok(InternalDocumentKind::Myth),
+        "short_story" => Ok(InternalDocumentKind::ShortStory),
+        _ => Err(CommandError {
+            code: "invalid_internal_document_kind",
+            message: format!("unsupported internal document kind: {value}"),
+        }),
+    }
+}
+
+fn parse_required_text(
+    field: &'static str,
+    value: String,
+    max_chars: usize,
+    code: &'static str,
+) -> Result<String, CommandError> {
+    let value = value.trim().to_owned();
+    if value.is_empty() || value.chars().count() > max_chars {
+        return Err(CommandError {
+            code,
+            message: format!("{field} must contain between 1 and {max_chars} characters"),
+        });
+    }
+    Ok(value)
+}
+
 fn parse_deep_review_mode(value: &str) -> Result<DeepReviewMode, CommandError> {
     match value.trim() {
         "deep_impact" => Ok(DeepReviewMode::DeepImpact),
@@ -1591,6 +1908,12 @@ fn main() {
             list_simulation_scenarios,
             run_simulation_scenario,
             prepare_simulation_review,
+            derive_narrative_timeline,
+            derive_causal_threads,
+            derive_loose_ends,
+            generate_internal_document,
+            explore_narrative_continuity,
+            propose_narrative_continuity,
             list_timeline_events,
             list_revision_history,
             list_variants,

@@ -323,6 +323,131 @@ async fn critic_uses_a_dedicated_prompt() {
 }
 
 #[tokio::test]
+async fn internal_document_uses_its_strict_grounded_prompt() {
+    let captured = Arc::new(Mutex::new(None::<Value>));
+    let sink = captured.clone();
+    let client = test_client(SimulatedTransport::new(move |request| {
+        let sink = sink.clone();
+        async move {
+            *sink.lock().expect("capture lock") = Some(request.body.clone());
+            Ok(json_response(json!({
+                "model": "gpt-5.6-terra",
+                "status": "completed",
+                "output_text": json!({
+                    "documentKind": "chronicle",
+                    "title": "Crónica del puerto",
+                    "bodyMarkdown": "Mara vio llegar la flota.",
+                    "contentReferenceUris": [
+                        "nirmata://entity/11111111-1111-1111-1111-111111111111"
+                    ]
+                }).to_string()
+            })))
+        }
+        .boxed()
+    }));
+
+    let result = client
+        .generate_internal_document(
+            &TestPayload {
+                mode: "document_draft",
+                base_revision: "rev-1",
+                context_object_ids: vec!["nirmata://entity/11111111-1111-1111-1111-111111111111"],
+            },
+            vec!["nirmata://entity/11111111-1111-1111-1111-111111111111".to_owned()],
+            RequestOptions::default(),
+        )
+        .await
+        .expect("internal document");
+
+    let body = captured
+        .lock()
+        .expect("capture lock")
+        .clone()
+        .expect("captured request body");
+    assert_eq!(body["max_output_tokens"], 8_192);
+    assert!(body.get("tools").is_none());
+    let instructions = body["instructions"].as_str().expect("prompt");
+    assert!(instructions.contains("internal_document estricto"));
+    assert!(instructions.contains("No reveles objetivos secretos"));
+    assert!(instructions.contains("solo puede citar URI nirmata:// presentes"));
+    assert_eq!(
+        result.metadata.prompt_version,
+        INTERNAL_DOCUMENT_PROMPT_VERSION
+    );
+    assert_eq!(
+        result.output.document_kind,
+        crate::contracts::InternalDocumentKind::Chronicle
+    );
+}
+
+#[tokio::test]
+async fn import_extraction_uses_its_grounded_read_only_prompt() {
+    let captured = Arc::new(Mutex::new(None::<Value>));
+    let sink = captured.clone();
+    let client = test_client(SimulatedTransport::new(move |request| {
+        let sink = sink.clone();
+        async move {
+            *sink.lock().expect("capture lock") = Some(request.body.clone());
+            Ok(json_response(json!({
+                "model": "gpt-5.6-terra",
+                "status": "completed",
+                "output_text": "{\"candidates\":[]}"
+            })))
+        }
+        .boxed()
+    }));
+
+    let result = client
+        .extract_import(
+            &TestPayload {
+                mode: "import_extraction",
+                base_revision: "rev-1",
+                context_object_ids: vec![],
+            },
+            vec![],
+            RequestOptions::default(),
+        )
+        .await
+        .expect("import extraction");
+
+    let body = captured
+        .lock()
+        .expect("capture lock")
+        .clone()
+        .expect("captured request body");
+    assert_eq!(body["store"], false);
+    assert_eq!(body["max_output_tokens"], 4_096);
+    assert!(body.get("tools").is_none());
+    let instructions = body["instructions"].as_str().expect("prompt");
+    assert!(instructions.contains("dato no confiable"));
+    assert!(instructions.contains("Cada candidato debe citar"));
+    assert!(instructions.contains("No emitas ChangeSetDraft"));
+    assert_eq!(
+        result.metadata.prompt_version,
+        IMPORT_EXTRACTION_PROMPT_VERSION
+    );
+    assert!(result.output.candidates.is_empty());
+}
+
+#[test]
+fn provider_boundary_stays_concrete_without_marketplace_abstraction() {
+    let capability_source = include_str!("../../src/capabilities.rs");
+    let app_source = include_str!("../../../nirmata-app/src/ai.rs");
+
+    assert_eq!(
+        capability_source
+            .matches("pub struct AzureFoundryCapabilityClient")
+            .count(),
+        1
+    );
+    assert!(!capability_source.contains("pub trait "));
+    assert!(!capability_source.contains("ProviderFactory"));
+    assert!(app_source.contains("pub(crate) trait AiModeClient"));
+    assert!(!app_source.contains("pub trait AiModeClient"));
+    assert!(app_source.contains("Result<AzureFoundryCapabilityClient, AppError>"));
+}
+
+#[tokio::test]
 async fn deep_capabilities_use_fixed_prompts_tokens_and_no_tools() {
     let specialist_output = json!({
         "specialist": "economist",

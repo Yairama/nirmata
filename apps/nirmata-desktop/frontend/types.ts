@@ -553,6 +553,83 @@ export type TimelineOverview = {
   unknown: TimelineEventEntry[];
 };
 
+export type NarrativeObjectReference = {
+  objectRef: ObjectRef;
+  uri: string;
+};
+
+export type NarrativeTimelineEvent = {
+  event: NarrativeObjectReference;
+  summary: string;
+  time: EventTime;
+  evidenceUris: string[];
+};
+
+export type NarrativeTimeline = {
+  scope: ReadScope;
+  storyTime: NarrativeTimelineEvent[];
+  unknownStoryTime: NarrativeTimelineEvent[];
+  discourseOrder: Array<{
+    source: NarrativeObjectReference;
+    events: Array<{
+      event: NarrativeObjectReference;
+      ordinal: number;
+      evidenceUris: string[];
+    }>;
+  }>;
+};
+
+export type NarrativeCausalThreads = {
+  scope: ReadScope;
+  maxDepth: number;
+  limit: number;
+  threads: Array<{
+    start: NarrativeObjectReference;
+    links: Array<{
+      depth: number;
+      kind: string;
+      source: NarrativeObjectReference;
+      target: NarrativeObjectReference;
+      evidenceUris: string[];
+    }>;
+  }>;
+};
+
+export type NarrativeLooseEnds = {
+  scope: ReadScope;
+  findings: Array<{
+    code: string;
+    message: string;
+    objectRefs: ObjectRef[];
+    evidenceUris: string[];
+  }>;
+};
+
+export type NarrativeContinuitySelection =
+  | { kind: "loose_end"; code: string; objectRef: ObjectRef }
+  | { kind: "causal_thread"; startEventId: string };
+
+export type NarrativeContinuityExploration = {
+  scope: ReadScope;
+  selection: NarrativeContinuitySelection;
+  question: string;
+  alternatives: Array<{
+    id: string;
+    title: string;
+    consequence: string;
+    proposalRequest: string;
+  }>;
+  sourceUris: string[];
+};
+
+export type NarrativeContinuityProposal = {
+  exploration: NarrativeContinuityExploration;
+  selectedAlternativeId: string;
+  run: AiRunSnapshot;
+};
+
+export type InternalDocumentKind = "chronicle" | "letter" | "report" | "myth" | "short_story";
+
 export type RevisionAuditOperationSnapshot = {
   operationId: string;
   targetUri: string;
@@ -936,6 +1013,12 @@ export type AppState = {
   editorMode: EditorMode | null;
   context: RelatedContextResponse | null;
   timeline: TimelineOverview | null;
+  narrative: {
+    timeline: NarrativeTimeline | null;
+    causalThreads: NarrativeCausalThreads | null;
+    looseEnds: NarrativeLooseEnds | null;
+    exploration: NarrativeContinuityExploration | null;
+  };
   revisionHistory: RevisionHistorySnapshot | null;
   selectedRevisionId: string | null;
   recentUris: string[];

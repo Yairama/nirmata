@@ -1,6 +1,5 @@
-import { buildCreateEditor } from "./editor-create.js";
-import { cloneEditorMode } from "./editor-model.js";
-import { button, clearError, humanize, objectKindFromUri, setStatus, showError } from "./helpers.js";
+import { button, clearError, humanize, setStatus, showError } from "./helpers.js";
+import { attachAiReview } from "./render-pending.js";
 import {
   assistantCancel,
   assistantContext,
@@ -27,11 +26,7 @@ import type {
   AiRunSnapshot,
   DeepReviewPlan,
   DeepReviewRun,
-  ManualReviewSnapshot,
-  ObjectKind,
-  PendingDraftRecord,
   ProviderCredentialStatus,
-  SearchObjectKind,
   SpecialistRole,
   WorldSession,
 } from "./types.js";
@@ -149,47 +144,6 @@ function renderQuery(response: AiQueryResponse): void {
   }
 }
 
-function fallbackEditor(targetUri: string) {
-  const kind = objectKindFromUri(targetUri) as ObjectKind;
-  if (state.editorMode) {
-    return cloneEditorMode(state.editorMode);
-  }
-  return buildCreateEditor((kind === "world" ? "entity" : kind) as SearchObjectKind);
-}
-
-async function attachReview(run: AiRunSnapshot): Promise<void> {
-  if (!run.reviewKey || !run.draft) {
-    return;
-  }
-  const review = await invoke<ManualReviewSnapshot>("read_manual_review", {
-    input: { reviewKey: run.reviewKey },
-  });
-  review.readyToConfirm = run.status === "ready_to_commit" && review.readyToConfirm;
-  const targetUri = review.operations[0]?.targetUri ?? run.reviewKey;
-  const kind = objectKindFromUri(targetUri) as ObjectKind;
-  const record: PendingDraftRecord = {
-    preview: {
-      draftKey: run.reviewKey,
-      targetUri,
-      objectType: kind,
-      mode: state.selectedUri === targetUri ? "update" : "create",
-      title: "Propuesta de IA",
-      objective: review.objective,
-      sourceUris: review.sources,
-      assumptions: review.assumptions,
-      logicalPath: targetUri,
-      validationReport: review.validationReport,
-      readyToConfirm: review.readyToConfirm,
-    },
-    review,
-    editor: fallbackEditor(targetUri),
-    aiRunId: run.id,
-  };
-  state.pendingDrafts.set(run.reviewKey, record);
-  state.panels.bottomCollapsed = false;
-  renderWorkspace();
-}
-
 function renderRun(run: AiRunSnapshot): void {
   assistantTranscript.replaceChildren();
   const card = document.createElement("article");
@@ -230,7 +184,7 @@ function renderRun(run: AiRunSnapshot): void {
           input: { runId: run.id, issueId: issue.issueId, judgment: judgment.trim() },
         });
         renderRun(activeRun);
-        await attachReview(activeRun);
+        await attachAiReview(activeRun);
       });
       warning.append(judge);
     }
@@ -367,7 +321,7 @@ async function executeDeepReview(plan: DeepReviewPlan, roles: SpecialistRole[]):
     renderDeepRun(run);
     if (run.standardRunId && run.status === "awaiting_review") {
       activeRun = await invoke<AiRunSnapshot>("read_ai_run", { runId: run.standardRunId });
-      await attachReview(activeRun);
+      await attachAiReview(activeRun);
       assistantFinalCritique.hidden = !activeRun.reviewKey;
     } else {
       activeRun = null;
@@ -404,7 +358,7 @@ async function continueIntentBrief(run: AiRunSnapshot): Promise<void> {
       },
     });
     renderRun(activeRun);
-    await attachReview(activeRun);
+    await attachAiReview(activeRun);
   } catch (value) {
     showError(value);
   } finally {
@@ -456,7 +410,7 @@ async function submitAssistant(): Promise<void> {
         input: { requestId, request, anchorUri: state.selectedUri },
       });
       renderRun(activeRun);
-      await attachReview(activeRun);
+      await attachAiReview(activeRun);
     } else {
       const plan = await invoke<DeepReviewPlan>("prepare_deep_review", {
         input: { mode, request, anchorUri: state.selectedUri },
@@ -496,7 +450,7 @@ assistantFinalCritique.addEventListener("click", async () => {
       input: { requestId, runId: activeRun.id, anchorUri: state.selectedUri },
     });
     renderRun(activeRun);
-    await attachReview(activeRun);
+    await attachAiReview(activeRun);
   } catch (value) {
     showError(value);
   } finally {
@@ -554,6 +508,11 @@ window.setInterval(() => {
     updateAvailability();
   }
 }, 400);
+window.addEventListener("nirmata:ai-review-attached", (event) => {
+  activeRun = (event as CustomEvent<AiRunSnapshot>).detail;
+  renderRun(activeRun);
+  updateAvailability();
+});
 updateMode("query");
 updateContextLabel();
 void refreshCredential().catch(showError);

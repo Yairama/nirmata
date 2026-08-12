@@ -32,6 +32,12 @@ export const state: AppState = {
   editorMode: null,
   context: null,
   timeline: null,
+  narrative: {
+    timeline: null,
+    causalThreads: null,
+    looseEnds: null,
+    exploration: null,
+  },
   revisionHistory: null,
   selectedRevisionId: null,
   recentUris: [],
@@ -151,3 +157,19 @@ export const simulationDelete = document.querySelector<HTMLButtonElement>("#simu
 export const simulationRun = document.querySelector<HTMLButtonElement>("#simulation-run")!;
 export const simulationStatus = document.querySelector<HTMLElement>("#simulation-status")!;
 export const simulationResults = document.querySelector<HTMLElement>("#simulation-results")!;
+export const narrativeScope = document.querySelector<HTMLSelectElement>("#narrative-scope")!;
+export const narrativeTimeline = document.querySelector<HTMLButtonElement>("#narrative-timeline")!;
+export const narrativeCausal = document.querySelector<HTMLButtonElement>("#narrative-causal")!;
+export const narrativeLooseEnds = document.querySelector<HTMLButtonElement>("#narrative-loose-ends")!;
+export const narrativeStartEvents = document.querySelector<HTMLTextAreaElement>("#narrative-start-events")!;
+export const narrativeMaxDepth = document.querySelector<HTMLInputElement>("#narrative-max-depth")!;
+export const narrativeLimit = document.querySelector<HTMLInputElement>("#narrative-limit")!;
+export const narrativeDocumentForm = document.querySelector<HTMLFormElement>("#narrative-document-form")!;
+export const narrativeDocumentKind = document.querySelector<HTMLSelectElement>("#narrative-document-kind")!;
+export const narrativeDocumentTitle = document.querySelector<HTMLInputElement>("#narrative-document-title")!;
+export const narrativeDocumentRequest = document.querySelector<HTMLTextAreaElement>("#narrative-document-request")!;
+export const narrativePerspective = document.querySelector<HTMLInputElement>("#narrative-perspective")!;
+export const narrativeTick = document.querySelector<HTMLInputElement>("#narrative-tick")!;
+export const narrativeCancel = document.querySelector<HTMLButtonElement>("#narrative-cancel")!;
+export const narrativeStatus = document.querySelector<HTMLElement>("#narrative-status")!;
+export const narrativeResults = document.querySelector<HTMLElement>("#narrative-results")!;

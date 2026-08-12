@@ -34,6 +34,39 @@ fn accepts_no_evidence_without_content_references() {
     assert!(response.items[0].citations.is_empty());
 }
 
+#[test]
+fn internal_document_is_strict_and_requires_references() {
+    let valid = serde_json::json!({
+        "documentKind": "letter",
+        "title": "Carta desde el puerto",
+        "bodyMarkdown": "Mara registra la llegada de la flota.",
+        "contentReferenceUris": [
+            "nirmata://entity/11111111-1111-1111-1111-111111111111"
+        ]
+    });
+    let document = parse_internal_document(&valid.to_string()).expect("valid internal document");
+    assert_eq!(document.document_kind, InternalDocumentKind::Letter);
+    assert_eq!(document.content_reference_uris.len(), 1);
+
+    let mut unknown = valid.clone();
+    unknown["operations"] = serde_json::json!([]);
+    assert_eq!(
+        parse_internal_document(&unknown.to_string())
+            .expect_err("unknown fields must fail")
+            .kind(),
+        StructuredOutputErrorKind::InvalidShape
+    );
+
+    let mut missing_references = valid;
+    missing_references["contentReferenceUris"] = serde_json::json!([]);
+    assert_eq!(
+        parse_internal_document(&missing_references.to_string())
+            .expect_err("references are mandatory")
+            .kind(),
+        StructuredOutputErrorKind::InvalidContent
+    );
+}
+
 fn valid_specialist_report_json() -> serde_json::Value {
     serde_json::json!({
         "specialist": "economist",

@@ -49,6 +49,8 @@ Cada archivo cubre una sola responsabilidad y puede referenciarse por su ruta.
 - [`validation/calendar-history.md`](validation/calendar-history.md): conversion por ticks, ChangeSet, variantes, snapshots e historia del calendario fijo.
 - [`validation/simulation-engine.md`](validation/simulation-engine.md): escenarios externos, validación, determinismo y trazas de recursos.
 - [`validation/narrative-derivations.md`](validation/narrative-derivations.md): story time, discurso, causalidad y cabos heurísticos citados.
+- [`validation/provider-gate.md`](validation/provider-gate.md): auditoria del cliente Azure concreto y gate cerrado sin segundo proveedor.
+- [`validation/general-acceptance.md`](validation/general-acceptance.md): matriz final de owners ejecutables y recorrido transversal read-only.
 
 ## Convencion
 

@@ -14,11 +14,11 @@ mod snapshot_import;
 mod variants;
 
 pub use ai::{
-    AiAffectedSubgraphSnapshot, AiContextSnapshot, AiCritiqueInput, AiMode, AiParsingFailure,
-    AiProposalAction, AiProposalDraftResponse, AiProposalInput, AiProposalOperationPreview,
-    AiProposalProgress, AiProposalResponse, AiProviderConfig, AiQueryCitation, AiQueryInput,
-    AiQueryItem, AiQueryProgress, AiQueryResponse, AiRequestOptions, AiRunId, AiRunSnapshot,
-    AiRunStatus, IntentBrief,
+    AiAffectedSubgraphSnapshot, AiContextSnapshot, AiCritiqueInput, AiInternalDocumentInput,
+    AiMode, AiParsingFailure, AiProposalAction, AiProposalDraftResponse, AiProposalInput,
+    AiProposalOperationPreview, AiProposalProgress, AiProposalResponse, AiProviderConfig,
+    AiQueryCitation, AiQueryInput, AiQueryItem, AiQueryProgress, AiQueryResponse, AiRequestOptions,
+    AiRunId, AiRunSnapshot, AiRunStatus, IntentBrief, InternalDocumentRequest,
 };
 pub use app::*;
 pub use context_bundle::{
@@ -49,13 +49,19 @@ pub use manual_review::{
 };
 pub use narrative::{
     MAX_CAUSAL_DEPTH, MAX_CAUSAL_RESULTS, NarrativeCausalLink, NarrativeCausalThread,
-    NarrativeCausalThreads, NarrativeDiscourseEvent, NarrativeDiscourseSequence, NarrativeLooseEnd,
-    NarrativeLooseEnds, NarrativeObjectReference, NarrativeTimeline, NarrativeTimelineEvent,
+    NarrativeCausalThreads, NarrativeContinuityAlternative, NarrativeContinuityExploration,
+    NarrativeContinuityProposal, NarrativeContinuitySelection, NarrativeDiscourseEvent,
+    NarrativeDiscourseSequence, NarrativeLooseEnd, NarrativeLooseEnds, NarrativeObjectReference,
+    NarrativeTimeline, NarrativeTimelineEvent,
 };
 pub use nirmata_ai::contracts::SpecialistRole;
-pub use nirmata_ai::contracts::{ImportCandidate, ImportCitation, ImportExtraction};
+pub use nirmata_ai::contracts::{
+    ImportCandidate, ImportCitation, ImportExtraction, InternalDocumentKind,
+};
 pub use nirmata_ai::{AiError, CancellationToken, ProviderCredentialStatus};
-pub use nirmata_core::{ChangeOperationId, RevisionId, VariantId, document::ObjectRef};
+pub use nirmata_core::{
+    ChangeOperationId, EntityId, EventId, RevisionId, VariantId, document::ObjectRef,
+};
 pub use nirmata_store::{
     LogicalVfsDirectory, LogicalVfsNode, LogicalVfsObject, ReadScope, StoreError,
     StructuredSearchKind, Variant, VariantComparison, VariantDiff, VariantDiffKind,

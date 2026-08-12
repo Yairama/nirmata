@@ -167,6 +167,10 @@ function resetWorkspaceState(): void {
   state.editorMode = null;
   state.context = null;
   state.timeline = null;
+  state.narrative.timeline = null;
+  state.narrative.causalThreads = null;
+  state.narrative.looseEnds = null;
+  state.narrative.exploration = null;
   state.revisionHistory = null;
   state.selectedRevisionId = null;
   state.recentUris = [];

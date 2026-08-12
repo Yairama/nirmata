@@ -12,6 +12,7 @@ const frontendSource = (
 ).join("\n");
 const tauriSource = await readFile(new URL("../src-tauri/src/main.rs", import.meta.url), "utf8");
 const simulationSource = await readFile(new URL("simulation.ts", frontendDirectory), "utf8");
+const narrativeSource = await readFile(new URL("narrative.ts", frontendDirectory), "utf8");
 const htmlSource = await readFile(new URL("index.html", frontendDirectory), "utf8");
 
 test("hostile Markdown stays in plain text mode", () => {
@@ -83,6 +84,12 @@ test("foundation workflows are wired to specific Tauri commands", () => {
     "list_simulation_scenarios",
     "run_simulation_scenario",
     "prepare_simulation_review",
+    "derive_narrative_timeline",
+    "derive_causal_threads",
+    "derive_loose_ends",
+    "generate_internal_document",
+    "explore_narrative_continuity",
+    "propose_narrative_continuity",
   ];
   for (const command of commands) {
     assert.ok(frontendSource.includes(`"${command}"`), `frontend invokes ${command}`);
@@ -132,4 +139,23 @@ test("simulation stays one-shot, outside canon, and enters only standard review"
   assert.match(tauriSource, /struct CreateSimulationScenarioCommand/u);
   assert.match(tauriSource, /fn parse_simulation_scenario_id/u);
   assert.match(tauriSource, /deny_unknown_fields\)\]\s*struct PrepareSimulationReviewCommand/u);
+});
+
+test("narrative derivation stays cited, scoped, review-only, and shallow by default", () => {
+  assert.match(htmlSource, /Derivación narrativa/u);
+  assert.match(narrativeSource, /storyTime/u);
+  assert.match(narrativeSource, /discourseOrder/u);
+  assert.match(narrativeSource, /finding\.code/u);
+  assert.match(narrativeSource, /evidenceUris/u);
+  assert.match(narrativeSource, /\.textContent =/u);
+  assert.match(narrativeSource, /state\.session\?\.read_only/u);
+  assert.match(narrativeSource, /attachAiReview\(proposal\.run/u);
+  assert.match(narrativeSource, /attachAiReview\(run/u);
+  assert.match(narrativeSource, /Alternativas de continuidad listas; todavía no se llamó a IA/u);
+  assert.doesNotMatch(narrativeSource, /confirm_manual_review|prepare_deep_review|execute_deep_review/u);
+  assert.doesNotMatch(narrativeSource, /apiKey|PROVIDER_API_KEY|innerHTML/u);
+  assert.doesNotMatch(htmlSource, />\s*Generar novela\s*</u);
+  assert.match(tauriSource, /deny_unknown_fields\)\]\s*struct GenerateInternalDocumentCommand/u);
+  assert.match(tauriSource, /deny_unknown_fields\)\]\s*struct ProposeNarrativeContinuityCommand/u);
+  assert.doesNotMatch(tauriSource, /GenerateInternalDocumentCommand[\s\S]{0,500}(?:api_key|apiKey)/u);
 });

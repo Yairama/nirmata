@@ -5,6 +5,7 @@ use nirmata_core::{
     claim::{Claim, ClaimAuthentication, ClaimObject},
     document::{DocumentCanonStatus, ObjectRef},
     event::Event,
+    goal::GoalVisibility,
     time::{EventTime, EventTimeKind},
 };
 use nirmata_store::{
@@ -182,8 +183,12 @@ pub(crate) fn build_context_bundle_scoped(
         .world()
         .calendar()
         .cloned();
-    let mut collector =
-        ContextCollector::new(request.budget, &request.perspective_entity_ids, calendar);
+    let mut collector = ContextCollector::new(
+        request.budget,
+        &request.perspective_entity_ids,
+        calendar,
+        matches!(request.intent, ContextIntent::DocumentDraft),
+    );
     if request.budget.max_objects == 0 || request.budget.max_chars == 0 {
         return Ok(collector.finish());
     }
@@ -194,7 +199,7 @@ pub(crate) fn build_context_bundle_scoped(
 
     for anchor in anchor_refs {
         let resolved = store.resolve_object_ref_scoped(scope, anchor)?;
-        collector.add(
+        let accepted = collector.add(
             resolved.clone(),
             ContextStage::Selection,
             format!("anchor:{anchor}"),
@@ -202,6 +207,9 @@ pub(crate) fn build_context_bundle_scoped(
             true,
             false,
         );
+        if !accepted {
+            continue;
+        }
         for related in related_refs(&resolved) {
             context_seed_refs.push(related);
             if collector.is_exhausted() {
@@ -401,6 +409,7 @@ struct ContextCollector {
     context_refs: BTreeSet<ObjectRef>,
     perspective_filter: BTreeSet<EntityId>,
     calendar: Option<WorldCalendar>,
+    restrict_secret_goals: bool,
 }
 
 impl ContextCollector {
@@ -408,6 +417,7 @@ impl ContextCollector {
         budget: ContextBudget,
         perspective_entity_ids: &[EntityId],
         calendar: Option<WorldCalendar>,
+        restrict_secret_goals: bool,
     ) -> Self {
         Self {
             bundle: ContextBundle::with_budget(budget),
@@ -415,6 +425,7 @@ impl ContextCollector {
             context_refs: BTreeSet::new(),
             perspective_filter: perspective_entity_ids.iter().copied().collect(),
             calendar,
+            restrict_secret_goals,
         }
     }
 
@@ -454,8 +465,10 @@ impl ContextCollector {
         }
 
         let object_ref = object.object_ref();
-        if stage != ContextStage::Selection
-            && !matches_perspective_filter(&object, &self.perspective_filter)
+        if (self.restrict_secret_goals
+            && !is_accessible_to_perspective(&object, &self.perspective_filter))
+            || (stage != ContextStage::Selection
+                && !matches_perspective_filter(&object, &self.perspective_filter))
         {
             return false;
         }
@@ -602,6 +615,18 @@ fn matches_perspective_filter(object: &ResolvedObject, filter: &BTreeSet<EntityI
     perspective_owner_ids(object)
         .into_iter()
         .any(|entity_id| filter.contains(&entity_id))
+}
+
+fn is_accessible_to_perspective(
+    object: &ResolvedObject,
+    perspective_entity_ids: &BTreeSet<EntityId>,
+) -> bool {
+    !matches!(
+        object,
+        ResolvedObject::Goal(goal)
+            if goal.visibility() == GoalVisibility::Secret
+                && !perspective_entity_ids.contains(&goal.holder_entity_id())
+    )
 }
 
 fn perspective_owner_ids(object: &ResolvedObject) -> Vec<EntityId> {

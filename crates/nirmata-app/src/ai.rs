@@ -13,15 +13,15 @@ use nirmata_ai::{
     },
     contracts::{
         AdvisoryClassification, AdvisoryResponse, CritiqueReport, DeepSynthesis, ImportExtraction,
-        SpecialistReport, StructuredOutputDiagnostic, StructuredOutputError,
-        StructuredOutputErrorKind,
+        InternalDocumentDraft, InternalDocumentKind, SpecialistReport, StructuredOutputDiagnostic,
+        StructuredOutputError, StructuredOutputErrorKind,
     },
 };
 use nirmata_core::{
-    ChangeSetId, RevisionId, WorldId,
-    change_set::{ChangeOperation, ChangeSetDraft},
+    ChangeOperationId, ChangeSetId, EntityId, RevisionId, WorldId,
+    change_set::{ChangeOperation, ChangeSetDraft, RetconKind},
     claim::Claim,
-    document::{ContentReference, Document, ObjectRef},
+    document::{ContentReference, Document, DocumentAggregate, DocumentCanonStatus, ObjectRef},
     entity::Entity,
     event::{Event, EventLink},
     goal::Goal,
@@ -29,7 +29,7 @@ use nirmata_core::{
     rule::Rule,
     validation::{ValidationReport, ValidationSeverity},
 };
-use nirmata_store::ReadScope;
+use nirmata_store::{ReadScope, StructuredSearchTemporal};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -42,6 +42,7 @@ use std::{
 };
 
 pub(crate) type ClientFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+type DraftTransform<'a> = dyn Fn(ChangeSetDraft) -> Result<ChangeSetDraft, AppError> + 'a;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -49,6 +50,7 @@ pub enum AiMode {
     Query,
     Propose,
     Critic,
+    DocumentDraft,
     DeepImpact,
     Audit,
 }
@@ -158,6 +160,27 @@ pub struct AiQueryInput {
 pub struct AiProposalInput {
     pub mode: AiMode,
     pub request: String,
+    pub snapshot: AiContextSnapshot,
+    pub context_object_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InternalDocumentRequest {
+    pub instructions: String,
+    pub document_kind: InternalDocumentKind,
+    pub perspective_entity_id: EntityId,
+    pub tick: i64,
+    pub anchors: Vec<ObjectRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiInternalDocumentInput {
+    pub mode: AiMode,
+    pub instructions: String,
+    pub requested_document_kind: InternalDocumentKind,
+    pub perspective_entity_id: EntityId,
+    pub tick: i64,
     pub snapshot: AiContextSnapshot,
     pub context_object_ids: Vec<String>,
 }
@@ -804,6 +827,21 @@ pub(crate) trait AiModeClient {
             )))
         })
     }
+
+    fn run_internal_document<'a>(
+        &'a self,
+        payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<InternalDocumentDraft>, CapabilityError>>
+    {
+        let _ = (payload, context_object_ids, options);
+        Box::pin(async {
+            Err(CapabilityError::Ai(AiError::InvalidResponse(
+                "internal document capability is not available".to_owned(),
+            )))
+        })
+    }
 }
 
 impl AiModeClient for AzureFoundryCapabilityClient {
@@ -867,6 +905,19 @@ impl AiModeClient for AzureFoundryCapabilityClient {
     ) -> ClientFuture<'a, Result<CapabilityInvocation<ImportExtraction>, CapabilityError>> {
         Box::pin(async move {
             self.extract_import(&payload, context_object_ids, options)
+                .await
+        })
+    }
+
+    fn run_internal_document<'a>(
+        &'a self,
+        payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<InternalDocumentDraft>, CapabilityError>>
+    {
+        Box::pin(async move {
+            self.generate_internal_document(&payload, context_object_ids, options)
                 .await
         })
     }
@@ -1016,6 +1067,124 @@ impl crate::NirmataApp {
                 brief,
                 context_request,
                 options,
+                on_progress,
+            )
+            .await;
+        match result {
+            Ok(response) => {
+                self.complete_ai_proposal_run(run_id, AiProposalResponse::Draft(response))?
+            }
+            Err(error) => {
+                let run = self
+                    .ai_runs
+                    .get_mut(&run_id)
+                    .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+                let message = error.to_string();
+                run.state = if matches!(error, AppError::Ai(AiError::RequestCancelled)) {
+                    AiRunState::Cancelled(message)
+                } else {
+                    AiRunState::Failed(message)
+                };
+                return Err(error);
+            }
+        }
+        self.read_ai_run(run_id)
+    }
+
+    pub async fn generate_internal_document<F>(
+        &mut self,
+        provider: &AiProviderConfig,
+        request: InternalDocumentRequest,
+        options: AiRequestOptions,
+        on_progress: F,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
+        let client = self.provider_client(provider)?;
+        self.generate_internal_document_with(&client, request, options, on_progress)
+            .await
+    }
+
+    pub(crate) async fn generate_internal_document_with<C, F>(
+        &mut self,
+        client: &C,
+        request: InternalDocumentRequest,
+        options: AiRequestOptions,
+        mut on_progress: F,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        C: AiModeClient,
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
+        on_progress(AiProposalProgress::PreparingContext);
+        let (prepared, context_request) = self.prepare_internal_document(&request)?;
+        let payload = serialize_payload(&prepared, "internal document")?;
+        on_progress(AiProposalProgress::CallingModel);
+        let invocation = client
+            .run_internal_document(
+                payload,
+                prepared.context_object_ids.clone(),
+                options.clone().into_request_options(),
+            )
+            .await
+            .map_err(map_capability_error)?;
+        on_progress(AiProposalProgress::Validating);
+        validate_internal_document_output(&request, &prepared.snapshot, &invocation.output)?;
+        let draft = internal_document_change_set(
+            &request,
+            &prepared.snapshot,
+            &invocation.output,
+            crate::app::now_ms()?,
+        )?;
+        let request_text = format!(
+            "Create {} from {} at tick {}: {}",
+            request.document_kind.as_str(),
+            ObjectRef::Entity(request.perspective_entity_id),
+            request.tick,
+            request.instructions.trim()
+        );
+        self.hand_external_draft_to_standard_review(
+            client,
+            request_text,
+            draft,
+            invocation.metadata,
+            &context_request,
+            options,
+            on_progress,
+        )
+        .await
+    }
+
+    pub(crate) async fn execute_ai_proposal_run_from_intent_brief_with_transform<C, F, G>(
+        &mut self,
+        client: &C,
+        brief: &IntentBrief,
+        context_request: &ContextBundleRequest,
+        options: AiRequestOptions,
+        on_progress: F,
+        draft_transform: G,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        C: AiModeClient,
+        F: FnMut(AiProposalProgress) + Send,
+        G: Fn(ChangeSetDraft) -> Result<ChangeSetDraft, AppError>,
+    {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
+        let request = brief.render_request();
+        let prepared = self.prepare_ai_proposal(request.clone(), context_request)?;
+        let run = AiRun::running(request, prepared.snapshot);
+        let run_id = run.id;
+        self.ai_runs.insert(run_id, run);
+        let result = self
+            .execute_ai_proposal_from_intent_brief_with_transform(
+                client,
+                brief,
+                context_request,
+                options,
+                Some(&draft_transform),
                 on_progress,
             )
             .await;
@@ -1349,6 +1518,46 @@ impl crate::NirmataApp {
         })
     }
 
+    pub fn prepare_internal_document(
+        &self,
+        request: &InternalDocumentRequest,
+    ) -> Result<(AiInternalDocumentInput, ContextBundleRequest), AppError> {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
+        if request.instructions.trim().is_empty() {
+            return Err(AppError::InvalidInternalDocument(
+                "instructions cannot be empty".to_owned(),
+            ));
+        }
+        let perspective = ObjectRef::Entity(request.perspective_entity_id);
+        let mut context_request = ContextBundleRequest::new(crate::ContextIntent::DocumentDraft);
+        context_request.anchors = request.anchors.clone();
+        if !context_request.anchors.contains(&perspective) {
+            context_request.anchors.push(perspective);
+        }
+        context_request.temporal = Some(StructuredSearchTemporal::Tick(request.tick));
+        context_request.perspective_entity_ids = vec![request.perspective_entity_id];
+        context_request.include_perspectives = true;
+        let snapshot = self.build_ai_context_snapshot(&context_request)?;
+        if !snapshot.context.contains(perspective) {
+            return Err(AppError::InvalidInternalDocument(
+                "perspective entity is not accessible in the document context".to_owned(),
+            ));
+        }
+        let context_object_ids = snapshot.context_object_ids();
+        Ok((
+            AiInternalDocumentInput {
+                mode: AiMode::DocumentDraft,
+                instructions: request.instructions.clone(),
+                requested_document_kind: request.document_kind,
+                perspective_entity_id: request.perspective_entity_id,
+                tick: request.tick,
+                snapshot,
+                context_object_ids,
+            },
+            context_request,
+        ))
+    }
+
     pub fn prepare_ai_critique(
         &self,
         request: impl Into<String>,
@@ -1548,6 +1757,7 @@ impl crate::NirmataApp {
                 prepared,
                 context_request,
                 options,
+                None,
                 &mut on_progress,
             )
             .await?;
@@ -1561,6 +1771,30 @@ impl crate::NirmataApp {
         brief: &IntentBrief,
         context_request: &ContextBundleRequest,
         options: AiRequestOptions,
+        on_progress: F,
+    ) -> Result<AiProposalDraftResponse, AppError>
+    where
+        C: AiModeClient,
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        self.execute_ai_proposal_from_intent_brief_with_transform(
+            client,
+            brief,
+            context_request,
+            options,
+            None,
+            on_progress,
+        )
+        .await
+    }
+
+    async fn execute_ai_proposal_from_intent_brief_with_transform<C, F>(
+        &self,
+        client: &C,
+        brief: &IntentBrief,
+        context_request: &ContextBundleRequest,
+        options: AiRequestOptions,
+        draft_transform: Option<&DraftTransform<'_>>,
         mut on_progress: F,
     ) -> Result<AiProposalDraftResponse, AppError>
     where
@@ -1577,6 +1811,7 @@ impl crate::NirmataApp {
                 prepared,
                 context_request,
                 options,
+                draft_transform,
                 &mut on_progress,
             )
             .await?;
@@ -1591,6 +1826,7 @@ impl crate::NirmataApp {
         prepared: AiProposalInput,
         context_request: &ContextBundleRequest,
         options: AiRequestOptions,
+        draft_transform: Option<&DraftTransform<'_>>,
         on_progress: &mut F,
     ) -> Result<AiProposalDraftResponse, AppError>
     where
@@ -1610,6 +1846,8 @@ impl crate::NirmataApp {
 
         match initial_result {
             Ok(initial_invocation) => {
+                let initial_invocation =
+                    transform_draft_invocation(initial_invocation, draft_transform)?;
                 let (initial_critique_input, initial_critique) = self
                     .evaluate_ai_proposal_with(
                         client,
@@ -1659,6 +1897,8 @@ impl crate::NirmataApp {
                     .await
                 {
                     Ok(repaired_invocation) => {
+                        let repaired_invocation =
+                            transform_draft_invocation(repaired_invocation, draft_transform)?;
                         let (repaired_input, repaired_critique) = self
                             .evaluate_ai_proposal_with(
                                 client,
@@ -1718,6 +1958,8 @@ impl crate::NirmataApp {
                     )
                     .await
                     .map_err(map_capability_error)?;
+                let repaired_invocation =
+                    transform_draft_invocation(repaired_invocation, draft_transform)?;
                 let (repaired_input, repaired_critique) = self
                     .evaluate_ai_proposal_with(
                         client,
@@ -1911,6 +2153,126 @@ impl crate::NirmataApp {
         self.complete_ai_proposal_run(run_id, AiProposalResponse::Draft(proposal))?;
         self.read_ai_run(run_id)
     }
+}
+
+fn transform_draft_invocation(
+    invocation: CapabilityInvocation<ChangeSetDraft>,
+    transform: Option<&DraftTransform<'_>>,
+) -> Result<CapabilityInvocation<ChangeSetDraft>, AppError> {
+    let Some(transform) = transform else {
+        return Ok(invocation);
+    };
+    Ok(CapabilityInvocation {
+        output: transform(invocation.output)?,
+        metadata: invocation.metadata,
+    })
+}
+
+fn validate_internal_document_output(
+    request: &InternalDocumentRequest,
+    snapshot: &AiContextSnapshot,
+    output: &InternalDocumentDraft,
+) -> Result<(), AppError> {
+    if output.document_kind != request.document_kind {
+        return Err(AppError::InvalidInternalDocument(format!(
+            "model returned {} instead of requested {}",
+            output.document_kind.as_str(),
+            request.document_kind.as_str()
+        )));
+    }
+    let allowed = snapshot
+        .context_object_ids()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    for reference in &output.content_reference_uris {
+        let uri = String::from(*reference);
+        if !allowed.contains(&uri) {
+            return Err(AppError::InvalidInternalDocument(format!(
+                "document cites {uri} outside the perspective context"
+            )));
+        }
+    }
+    if output.content_reference_uris.iter().all(|reference| {
+        !matches!(
+            reference.object_ref(),
+            ObjectRef::Entity(_) | ObjectRef::Event(_) | ObjectRef::Rule(_)
+        )
+    }) {
+        return Err(AppError::InvalidInternalDocument(
+            "document must cite at least one accessible entity, event or rule".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn internal_document_change_set(
+    request: &InternalDocumentRequest,
+    snapshot: &AiContextSnapshot,
+    output: &InternalDocumentDraft,
+    now_ms: i64,
+) -> Result<ChangeSetDraft, AppError> {
+    let document = Document::new(
+        snapshot.world_id,
+        output.title.clone(),
+        output.document_kind.as_str(),
+        Some(request.perspective_entity_id),
+        Some(request.perspective_entity_id),
+        DocumentCanonStatus::Canonical,
+        output.body_markdown.clone(),
+        now_ms,
+    )?;
+    let document_ref = ObjectRef::Document(document.id());
+    let sources = output
+        .content_reference_uris
+        .iter()
+        .map(|reference| reference.object_ref())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let references = sources
+        .iter()
+        .enumerate()
+        .map(|(ordinal, target)| {
+            Ok(ContentReference::new(
+                document_ref,
+                *target,
+                u32::try_from(ordinal).map_err(|_| {
+                    AppError::InvalidInternalDocument("too many content references".to_owned())
+                })?,
+            ))
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    let aggregate = DocumentAggregate::new(document, references);
+    let mut affected_ids = BTreeSet::from([
+        document_ref,
+        ObjectRef::Entity(request.perspective_entity_id),
+    ]);
+    affected_ids.extend(sources.iter().copied());
+    let operation = ChangeOperation::CreateDocument {
+        operation_id: ChangeOperationId::new(),
+        affected_ids: affected_ids.into_iter().collect(),
+        expected_version: 0,
+        retcon: RetconKind::Additive,
+        after: aggregate,
+    };
+    ChangeSetDraft::new(
+        snapshot.world_id,
+        snapshot.base_revision,
+        format!(
+            "Create internal {}: {}",
+            output.document_kind.as_str(),
+            output.title
+        ),
+        sources,
+        vec![format!(
+            "Written from {} at tick {} using only the scoped context.",
+            ObjectRef::Entity(request.perspective_entity_id),
+            request.tick
+        )],
+        vec![operation],
+        vec![],
+    )
+    .map_err(Into::into)
 }
 
 fn build_proposal_draft_response(

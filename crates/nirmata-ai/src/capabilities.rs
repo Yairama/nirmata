@@ -2,10 +2,10 @@ use crate::{
     AiError, AzureFoundryClientInner, RequestOptions, ReqwestTransport, ResponseRequest,
     ResponseUsage, Transport,
     contracts::{
-        AdvisoryResponse, CritiqueReport, DeepSynthesis, ImportExtraction, SpecialistReport,
-        StructuredOutputError, parse_advisory_response, parse_change_set_draft,
+        AdvisoryResponse, CritiqueReport, DeepSynthesis, ImportExtraction, InternalDocumentDraft,
+        SpecialistReport, StructuredOutputError, parse_advisory_response, parse_change_set_draft,
         parse_critique_report, parse_deep_synthesis, parse_import_extraction,
-        parse_specialist_report,
+        parse_internal_document, parse_specialist_report,
     },
 };
 use nirmata_core::change_set::ChangeSetDraft;
@@ -18,6 +18,7 @@ pub const CRITIC_PROMPT_VERSION: &str = "critic_v3";
 pub const SPECIALIST_PROMPT_VERSION: &str = "specialist_v1";
 pub const SYNTHESIS_PROMPT_VERSION: &str = "deep_synthesis_v1";
 pub const IMPORT_EXTRACTION_PROMPT_VERSION: &str = "import_extraction_v1";
+pub const INTERNAL_DOCUMENT_PROMPT_VERSION: &str = "internal_document_v1";
 
 const QUERY_SYSTEM_PROMPT: &str = concat!(
     "Modo query de Nirmata. ",
@@ -74,6 +75,16 @@ const IMPORT_EXTRACTION_SYSTEM_PROMPT: &str = concat!(
     "Cada candidato debe citar chunkId, sourceId, sourceHash y un excerpt literal. ",
     "Conserva afirmaciones opuestas como candidatos separados con la misma contradictionKey. ",
     "No emitas ChangeSetDraft, operaciones ni autoridad canonica."
+);
+
+const INTERNAL_DOCUMENT_SYSTEM_PROMPT: &str = concat!(
+    "Documento interno de Nirmata. ",
+    "Responde solo con JSON internal_document estricto: documentKind, title, bodyMarkdown y contentReferenceUris. ",
+    "documentKind debe ser chronicle, letter, report, myth o short_story y debe coincidir con el solicitado. ",
+    "Escribe Markdown desde la perspectiva y tick recibidos usando exclusivamente el contexto entregado. ",
+    "No reveles objetivos secretos ni conocimiento fuera de esa perspectiva. ",
+    "contentReferenceUris es obligatorio y solo puede citar URI nirmata:// presentes en contextObjectIds. ",
+    "No emitas operaciones, ChangeSetDraft, herramientas de escritura ni texto fuera del contrato."
 );
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -248,6 +259,20 @@ impl AzureFoundryCapabilityClient {
             .extract_import(payload, context_object_ids, options)
             .await
     }
+
+    pub async fn generate_internal_document<P>(
+        &self,
+        payload: &P,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> Result<CapabilityInvocation<InternalDocumentDraft>, CapabilityError>
+    where
+        P: Serialize,
+    {
+        self.inner
+            .generate_internal_document(payload, context_object_ids, options)
+            .await
+    }
 }
 
 struct CapabilityClientInner<T> {
@@ -417,6 +442,27 @@ where
             IMPORT_EXTRACTION_PROMPT_VERSION,
             4_096,
             parse_import_extraction,
+            options,
+        )
+        .await
+    }
+
+    async fn generate_internal_document<P>(
+        &self,
+        payload: &P,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> Result<CapabilityInvocation<InternalDocumentDraft>, CapabilityError>
+    where
+        P: Serialize,
+    {
+        self.invoke(
+            payload,
+            context_object_ids,
+            INTERNAL_DOCUMENT_SYSTEM_PROMPT,
+            INTERNAL_DOCUMENT_PROMPT_VERSION,
+            8_192,
+            parse_internal_document,
             options,
         )
         .await

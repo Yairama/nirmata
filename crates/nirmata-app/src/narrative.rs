@@ -1,6 +1,11 @@
-use crate::{AppError, NirmataApp, app::ActiveWorld};
+use crate::{
+    AiProposalProgress, AiProviderConfig, AiRequestOptions, AiRunSnapshot, AppError,
+    ContextBundleRequest, ContextIntent, IntentBrief, NirmataApp, SearchResult, ai::AiModeClient,
+    app::ActiveWorld,
+};
 use nirmata_core::{
     EventId,
+    change_set::{ChangeSetDraft, DecisionPoint},
     claim::ClaimAuthentication,
     document::{ContentReference, ObjectRef},
     event::{EventLink, EventLinkKind},
@@ -94,6 +99,45 @@ pub struct NarrativeLooseEnd {
 pub struct NarrativeLooseEnds {
     pub scope: ReadScope,
     pub findings: Vec<NarrativeLooseEnd>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum NarrativeContinuitySelection {
+    LooseEnd { code: String, object_ref: ObjectRef },
+    CausalThread { start_event_id: EventId },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NarrativeContinuityAlternative {
+    pub id: String,
+    pub title: String,
+    pub consequence: String,
+    pub proposal_request: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NarrativeContinuityExploration {
+    pub scope: ReadScope,
+    pub selection: NarrativeContinuitySelection,
+    pub question: String,
+    pub alternatives: Vec<NarrativeContinuityAlternative>,
+    pub source_uris: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NarrativeContinuityProposal {
+    pub exploration: NarrativeContinuityExploration,
+    pub selected_alternative_id: String,
+    pub intent_brief: IntentBrief,
+    pub run: AiRunSnapshot,
 }
 
 impl NirmataApp {
@@ -300,6 +344,360 @@ impl NirmataApp {
         });
         Ok(NarrativeLooseEnds { scope, findings })
     }
+
+    pub fn explore_narrative_continuity(
+        &self,
+        scope: Option<ReadScope>,
+        selection: NarrativeContinuitySelection,
+    ) -> Result<NarrativeContinuityExploration, AppError> {
+        match &selection {
+            NarrativeContinuitySelection::LooseEnd { code, object_ref } => {
+                let loose_ends = self.derive_loose_ends(scope)?;
+                let finding = loose_ends
+                    .findings
+                    .iter()
+                    .find(|finding| {
+                        finding.code == code && finding.object_refs.contains(object_ref)
+                    })
+                    .ok_or_else(|| {
+                        AppError::InvalidNarrativeQuery(
+                            "selected loose end does not exist in the requested scope".to_owned(),
+                        )
+                    })?;
+                let (question, alternatives) = loose_end_continuity_options(finding);
+                Ok(NarrativeContinuityExploration {
+                    scope: loose_ends.scope,
+                    selection,
+                    question,
+                    alternatives,
+                    source_uris: finding.evidence_uris.clone(),
+                })
+            }
+            NarrativeContinuitySelection::CausalThread { start_event_id } => {
+                let causal = self.derive_causal_threads(
+                    scope,
+                    Some(vec![*start_event_id]),
+                    MAX_CAUSAL_DEPTH,
+                    MAX_CAUSAL_RESULTS,
+                )?;
+                let thread = causal.threads.first().ok_or_else(|| {
+                    AppError::InvalidNarrativeQuery(
+                        "selected causal thread does not exist in the requested scope".to_owned(),
+                    )
+                })?;
+                let mut source_uris = BTreeSet::from([thread.start.uri.clone()]);
+                source_uris.extend(
+                    thread
+                        .links
+                        .iter()
+                        .flat_map(|link| link.evidence_uris.iter().cloned()),
+                );
+                let alternatives = vec![
+                    continuity_alternative(
+                        "follow_consequence",
+                        "Desarrollar la consecuencia",
+                        "Extiende el efecto causal ya establecido.",
+                        format!(
+                            "Crea un cambio que desarrolle una consecuencia del hilo iniciado en {}.",
+                            thread.start.uri
+                        ),
+                    ),
+                    continuity_alternative(
+                        "introduce_complication",
+                        "Introducir una complicación",
+                        "Mantiene el hilo abierto y agrega una consecuencia incompatible o costosa.",
+                        format!(
+                            "Crea un cambio que complique sin borrar el hilo iniciado en {}.",
+                            thread.start.uri
+                        ),
+                    ),
+                    continuity_alternative(
+                        "close_thread",
+                        "Cerrar el hilo",
+                        "Propone una resolución explícita y sus efectos inmediatos.",
+                        format!(
+                            "Crea un cambio que cierre explícitamente el hilo iniciado en {}.",
+                            thread.start.uri
+                        ),
+                    ),
+                ];
+                Ok(NarrativeContinuityExploration {
+                    scope: causal.scope,
+                    selection,
+                    question: format!(
+                        "¿Cómo debería continuar el hilo causal iniciado en {}?",
+                        thread.start.uri
+                    ),
+                    alternatives,
+                    source_uris: source_uris.into_iter().collect(),
+                })
+            }
+        }
+    }
+
+    pub async fn propose_narrative_continuity<F>(
+        &mut self,
+        provider: &AiProviderConfig,
+        scope: Option<ReadScope>,
+        selection: NarrativeContinuitySelection,
+        alternative_id: &str,
+        options: AiRequestOptions,
+        on_progress: F,
+    ) -> Result<NarrativeContinuityProposal, AppError>
+    where
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        let client = self.provider_client(provider)?;
+        self.propose_narrative_continuity_with(
+            &client,
+            scope,
+            selection,
+            alternative_id,
+            options,
+            on_progress,
+        )
+        .await
+    }
+
+    pub(crate) async fn propose_narrative_continuity_with<C, F>(
+        &mut self,
+        client: &C,
+        scope: Option<ReadScope>,
+        selection: NarrativeContinuitySelection,
+        alternative_id: &str,
+        options: AiRequestOptions,
+        on_progress: F,
+    ) -> Result<NarrativeContinuityProposal, AppError>
+    where
+        C: AiModeClient,
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        let exploration = self.explore_narrative_continuity(scope, selection)?;
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        crate::app::ensure_active_write_scope(active)?;
+        let active_scope = ReadScope::historical(
+            active.session.active_variant.id,
+            active.store.resolve_scope(active.read_scope)?,
+        );
+        if exploration.scope != active_scope {
+            return Err(AppError::InvalidNarrativeQuery(
+                "continuity proposals must use a derivation from the active head".to_owned(),
+            ));
+        }
+        let selected = exploration
+            .alternatives
+            .iter()
+            .find(|alternative| alternative.id == alternative_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::InvalidNarrativeQuery(format!(
+                    "unknown continuity alternative {alternative_id}"
+                ))
+            })?;
+        let source_refs = exploration
+            .source_uris
+            .iter()
+            .map(|uri| {
+                uri.parse::<ObjectRef>()
+                    .map_err(|_| AppError::InvalidObjectUri(uri.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let entities = source_refs
+            .iter()
+            .filter(|source| matches!(source, ObjectRef::Entity(_)))
+            .map(|source| {
+                self.open_uri(&source.to_string())
+                    .map(|opened| opened.result)
+            })
+            .collect::<Result<Vec<SearchResult>, AppError>>()?;
+        let intent_brief = IntentBrief {
+            user_request: selected.proposal_request.clone(),
+            objective: selected.proposal_request.clone(),
+            scope: format!(
+                "Continuidad acotada a {}.",
+                exploration.source_uris.join(", ")
+            ),
+            entities,
+            restrictions: vec![
+                "Conservar todas las fuentes del hilo o cabo seleccionado.".to_owned(),
+                "Conservar las alternativas como un DecisionPoint trazable.".to_owned(),
+                "No usar revisión profunda salvo petición explícita separada.".to_owned(),
+            ],
+            reason: "El usuario eligió una alternativa explícita de continuidad narrativa."
+                .to_owned(),
+        };
+        let mut context_request = ContextBundleRequest::new(ContextIntent::ImpactAnalysis);
+        context_request.anchors = source_refs.clone();
+        context_request.include_perspectives = true;
+        let alternatives = exploration
+            .alternatives
+            .iter()
+            .map(|alternative| alternative.title.clone())
+            .collect::<Vec<_>>();
+        let selected_title = selected.title.clone();
+        let question = exploration.question.clone();
+        let run = self
+            .execute_ai_proposal_run_from_intent_brief_with_transform(
+                client,
+                &intent_brief,
+                &context_request,
+                options,
+                on_progress,
+                move |draft| {
+                    add_continuity_trace(
+                        draft,
+                        &source_refs,
+                        &question,
+                        &alternatives,
+                        &selected_title,
+                    )
+                },
+            )
+            .await?;
+        Ok(NarrativeContinuityProposal {
+            exploration,
+            selected_alternative_id: alternative_id.to_owned(),
+            intent_brief,
+            run,
+        })
+    }
+}
+
+fn loose_end_continuity_options(
+    finding: &NarrativeLooseEnd,
+) -> (String, Vec<NarrativeContinuityAlternative>) {
+    let source = finding
+        .evidence_uris
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "el cabo seleccionado".to_owned());
+    let alternatives = match finding.code {
+        "active_goal_without_resolution" => vec![
+            continuity_alternative(
+                "achieve_goal",
+                "Cumplir el objetivo",
+                "Resuelve el objetivo con una consecuencia verificable.",
+                format!("Crea un cambio que cumpla el objetivo abierto citado por {source}."),
+            ),
+            continuity_alternative(
+                "frustrate_goal",
+                "Frustrar el objetivo",
+                "Cierra el objetivo mediante un obstáculo o coste explícito.",
+                format!("Crea un cambio que frustre el objetivo abierto citado por {source}."),
+            ),
+            continuity_alternative(
+                "complicate_goal",
+                "Complicar el objetivo",
+                "Mantiene el objetivo activo y agrega una consecuencia nueva.",
+                format!("Crea un cambio que complique el objetivo abierto citado por {source}."),
+            ),
+        ],
+        "disputed_claim" => vec![
+            continuity_alternative(
+                "confirm_claim",
+                "Confirmar la afirmación",
+                "Añade evidencia que favorece una lectura sin borrar su historia.",
+                format!("Crea un cambio que confirme la afirmación disputada citada por {source}."),
+            ),
+            continuity_alternative(
+                "refute_claim",
+                "Refutar la afirmación",
+                "Añade evidencia contraria y conserva la afirmación previa como perspectiva.",
+                format!("Crea un cambio que refute la afirmación disputada citada por {source}."),
+            ),
+            continuity_alternative(
+                "preserve_ambiguity",
+                "Preservar la ambigüedad",
+                "Desarrolla consecuencias incompatibles sin declarar una verdad final.",
+                format!("Crea un cambio que preserve la disputa citada por {source}."),
+            ),
+        ],
+        _ => vec![
+            continuity_alternative(
+                "resolve",
+                "Resolver el cabo",
+                "Cierra explícitamente el estado abierto.",
+                format!("Crea un cambio que resuelva el cabo citado por {source}."),
+            ),
+            continuity_alternative(
+                "escalate",
+                "Escalar el cabo",
+                "Mantiene el estado abierto y aumenta sus consecuencias.",
+                format!("Crea un cambio que escale el cabo citado por {source}."),
+            ),
+            continuity_alternative(
+                "redirect",
+                "Redirigir el cabo",
+                "Conecta el estado abierto con otro objeto sin cerrarlo todavía.",
+                format!("Crea un cambio que redirija el cabo citado por {source}."),
+            ),
+        ],
+    };
+    (
+        format!("¿Cómo debería desarrollarse {}?", finding.message),
+        alternatives,
+    )
+}
+
+fn continuity_alternative(
+    id: &str,
+    title: &str,
+    consequence: &str,
+    proposal_request: String,
+) -> NarrativeContinuityAlternative {
+    NarrativeContinuityAlternative {
+        id: id.to_owned(),
+        title: title.to_owned(),
+        consequence: consequence.to_owned(),
+        proposal_request,
+    }
+}
+
+fn add_continuity_trace(
+    draft: ChangeSetDraft,
+    continuity_sources: &[ObjectRef],
+    question: &str,
+    alternatives: &[String],
+    selected_alternative: &str,
+) -> Result<ChangeSetDraft, AppError> {
+    let operation_ids = draft
+        .operations()
+        .iter()
+        .map(|operation| operation.operation_id())
+        .collect::<Vec<_>>();
+    if operation_ids.is_empty() {
+        return Err(AppError::InvalidNarrativeQuery(
+            "continuity proposal must contain at least one operation".to_owned(),
+        ));
+    }
+    if draft.decisions().len() >= 3 {
+        return Err(AppError::InvalidNarrativeQuery(
+            "continuity proposal cannot preserve another visible DecisionPoint".to_owned(),
+        ));
+    }
+    let mut sources = draft.sources().iter().copied().collect::<BTreeSet<_>>();
+    sources.extend(continuity_sources.iter().copied());
+    let mut decisions = draft.decisions().to_vec();
+    decisions.push(DecisionPoint::restore(
+        nirmata_core::DecisionPointId::new(),
+        operation_ids,
+        question.to_owned(),
+        alternatives.to_vec(),
+        None,
+        Some("Derived from the selected narrative thread and its cited sources.".to_owned()),
+        Some(selected_alternative.to_owned()),
+    )?);
+    ChangeSetDraft::restore(
+        draft.id(),
+        draft.world_id(),
+        draft.base_revision(),
+        draft.objective().to_owned(),
+        sources.into_iter().collect(),
+        draft.assumptions().to_vec(),
+        draft.operations().to_vec(),
+        decisions,
+    )
+    .map_err(Into::into)
 }
 
 fn scoped_snapshot(
