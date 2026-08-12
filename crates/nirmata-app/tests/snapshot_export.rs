@@ -17,7 +17,8 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 struct Fixture {
@@ -259,6 +260,21 @@ fn export(app: &NirmataApp, parent: &Path, name: &str) -> nirmata_app::ExportSna
     .expect("export snapshot")
 }
 
+fn remove_fixture(path: &Path) {
+    let mut last_error = None;
+    for _ in 0..40 {
+        match fs::remove_dir_all(path) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+    panic!("remove fixture: {}", last_error.expect("cleanup error"));
+}
+
 #[test]
 fn exports_complete_equivalent_snapshots_with_stable_identity_and_no_canon_write() {
     let fixture = create_fixture();
@@ -297,7 +313,7 @@ fn exports_complete_equivalent_snapshots_with_stable_identity_and_no_canon_write
         manifest["base_revision"],
         session.current_revision.to_string()
     );
-    assert_eq!(manifest["canon_schema_version"], 8);
+    assert_eq!(manifest["canon_schema_version"], 9);
     assert_eq!(manifest["logical_hash"], first.logical_hash);
 
     let objects = manifest["objects"].as_array().expect("manifest objects");
@@ -420,5 +436,5 @@ fn exports_complete_equivalent_snapshots_with_stable_identity_and_no_canon_write
     );
     assert_eq!(reopened_after_rename, canon_after_rename);
 
-    fs::remove_dir_all(&fixture.parent).expect("remove fixture");
+    remove_fixture(&fixture.parent);
 }

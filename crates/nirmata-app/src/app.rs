@@ -5,6 +5,7 @@ use crate::manual_review::{
     ManualReviewFreshnessSnapshot, annotate_report_with_change_operations, create_undo_review,
     object_snapshot_from_change_value,
 };
+use crate::variants::apply_variant_merge_review_action;
 use crate::{
     AppError, ContextBundle, ContextBundleRequest, LogicalVfsDirectory, ManualDraftRequest,
     ManualDraftResponse, ManualReviewAction, ManualReviewActionRequest,
@@ -468,9 +469,14 @@ impl NirmataApp {
             .cloned()
             .ok_or_else(|| AppError::ReviewSessionNotFound(review_key.to_owned()))?;
         let action = action.into_action()?;
-        let updated_review = review
-            .review
-            .apply_action(action, now_ms()?, &active.store)?;
+        let decided_at_ms = now_ms()?;
+        let updated_review = if review.merge_source_revision.is_some() {
+            apply_variant_merge_review_action(&review.review, action, decided_at_ms, &active.store)?
+        } else {
+            review
+                .review
+                .apply_action(action, decided_at_ms, &active.store)?
+        };
         let mut updated = match (review.ai_run_id, review.revalidation_allowed) {
             (Some(run_id), _) => StoredManualReview::from_ai(updated_review, run_id),
             (None, false) => StoredManualReview::from_snapshot_import(updated_review),
@@ -780,15 +786,22 @@ impl NirmataApp {
     pub fn list_revision_history(&mut self) -> Result<RevisionHistorySnapshot, AppError> {
         let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
         refresh_active_world(active)?;
-        let undo_target_revision_id =
-            match resolve_undo_target(&active.store, active.session.current_revision, None) {
-                Ok(target) => Some(target.revision.id()),
-                Err(AppError::NoUndoableRevision) => None,
-                Err(error) => return Err(error),
-            };
-        let mut revisions = active
+        let observed_variant = active
             .store
-            .list_revisions()?
+            .get_variant(active.read_scope.variant_id)?
+            .ok_or_else(|| StoreError::InvalidVariant("viewed variant was not found".to_owned()))?;
+        let observed_head = observed_variant.head_revision_id;
+        let undo_target_revision_id =
+            if active.read_scope == ReadScope::head(active.session.active_variant.id) {
+                match resolve_undo_target(&active.store, active.session.current_revision, None) {
+                    Ok(target) => Some(target.revision.id()),
+                    Err(AppError::NoUndoableRevision) => None,
+                    Err(error) => return Err(error),
+                }
+            } else {
+                None
+            };
+        let mut revisions = revision_chain(&active.store, observed_head)?
             .into_iter()
             .rev()
             .filter_map(|revision| {
@@ -808,14 +821,14 @@ impl NirmataApp {
                     })?;
                 Ok(revision_history_entry_snapshot(
                     &record,
-                    active.session.current_revision,
+                    observed_head,
                     undo_target_revision_id,
                 ))
             })
             .collect::<Result<Vec<_>, AppError>>()?;
         revisions.shrink_to_fit();
         Ok(RevisionHistorySnapshot {
-            current_head_revision_id: active.session.current_revision.to_string(),
+            current_head_revision_id: observed_head.to_string(),
             undo_target_revision_id: undo_target_revision_id.map(|value| value.to_string()),
             revisions,
         })

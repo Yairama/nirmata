@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 8;
+pub(crate) const SCHEMA_VERSION: i64 = 9;
 
 pub(crate) const VARIANT_SCHEMA: &str = "
     CREATE TABLE variants (
@@ -33,6 +33,116 @@ pub(crate) const VARIANT_SCHEMA: &str = "
     CREATE INDEX revisions_variant_id ON revisions (variant_id, created_at_ms);
     CREATE INDEX change_sets_variant_id ON change_sets (variant_id, created_at_ms);
     CREATE INDEX import_batches_variant_id ON import_batches (variant_id, created_at_ms);
+";
+
+pub(crate) const VARIANT_INTEGRITY_SCHEMA: &str = "
+    CREATE TRIGGER variants_head_world_insert
+    BEFORE INSERT ON variants
+    WHEN NOT EXISTS (
+        SELECT 1 FROM revisions
+        WHERE id = NEW.head_revision_id AND world_id = NEW.world_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'variant head must belong to its world');
+    END;
+
+    CREATE TRIGGER variants_head_world_update
+    BEFORE UPDATE OF head_revision_id, world_id ON variants
+    WHEN NOT EXISTS (
+        SELECT 1 FROM revisions
+        WHERE id = NEW.head_revision_id AND world_id = NEW.world_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'variant head must belong to its world');
+    END;
+
+    CREATE TRIGGER worlds_active_variant_update
+    BEFORE UPDATE OF active_variant_id ON worlds
+    WHEN NEW.active_variant_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM variants
+        WHERE id = NEW.active_variant_id AND world_id = NEW.id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'active variant must belong to its world');
+    END;
+
+    CREATE TRIGGER revisions_variant_insert
+    BEFORE INSERT ON revisions
+    WHEN NEW.variant_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM variants
+        WHERE id = NEW.variant_id AND world_id = NEW.world_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'revision variant must belong to its world');
+    END;
+
+    CREATE TRIGGER revisions_variant_update
+    BEFORE UPDATE OF variant_id, world_id ON revisions
+    WHEN NEW.variant_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM variants
+        WHERE id = NEW.variant_id AND world_id = NEW.world_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'revision variant must belong to its world');
+    END;
+
+    CREATE TRIGGER revisions_source_insert
+    BEFORE INSERT ON revisions
+    WHEN NEW.source_revision_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM revisions WHERE id = NEW.source_revision_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'merge source revision does not exist');
+    END;
+
+    CREATE TRIGGER revisions_source_update
+    BEFORE UPDATE OF source_revision_id ON revisions
+    WHEN NEW.source_revision_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM revisions WHERE id = NEW.source_revision_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'merge source revision does not exist');
+    END;
+
+    CREATE TRIGGER change_sets_variant_insert
+    BEFORE INSERT ON change_sets
+    WHEN NEW.variant_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM variants
+        WHERE id = NEW.variant_id AND world_id = NEW.world_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'change set variant must belong to its world');
+    END;
+
+    CREATE TRIGGER change_sets_variant_update
+    BEFORE UPDATE OF variant_id, world_id ON change_sets
+    WHEN NEW.variant_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM variants
+        WHERE id = NEW.variant_id AND world_id = NEW.world_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'change set variant must belong to its world');
+    END;
+
+    CREATE TRIGGER import_batches_variant_insert
+    BEFORE INSERT ON import_batches
+    WHEN NEW.variant_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM variants
+        WHERE id = NEW.variant_id AND world_id = NEW.world_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'import batch variant must belong to its world');
+    END;
+
+    CREATE TRIGGER import_batches_variant_update
+    BEFORE UPDATE OF variant_id, world_id ON import_batches
+    WHEN NEW.variant_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM variants
+        WHERE id = NEW.variant_id AND world_id = NEW.world_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'import batch variant must belong to its world');
+    END;
 ";
 
 pub(crate) const LORE_IMPORT_SCHEMA: &str = "

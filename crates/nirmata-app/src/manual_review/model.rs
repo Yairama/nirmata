@@ -802,6 +802,38 @@ impl ManualReviewSession {
         )
     }
 
+    pub(crate) fn set_operation_selection(
+        &self,
+        operation_ids: &[ChangeOperationId],
+        selected: bool,
+        store: &WorldStore,
+    ) -> Result<Self, AppError> {
+        let mut operations = self.operations.clone();
+        let mut waivers = self.waivers.clone();
+        for operation_id in operation_ids {
+            let operation = find_operation_mut(&mut operations, *operation_id)?;
+            if selected {
+                operation.decision = if operation.current == operation.original {
+                    OperationDecision::Accept
+                } else {
+                    OperationDecision::Edit
+                };
+            } else {
+                operation.decision = OperationDecision::Reject;
+                operation.judgment = None;
+                waivers.retain(|waiver| waiver.operation_id() != *operation_id);
+            }
+        }
+        Self::rebuild(
+            self.variant_id,
+            self.original_draft.clone(),
+            operations,
+            self.decisions.clone(),
+            waivers,
+            store,
+        )
+    }
+
     pub fn original_draft(&self) -> &ChangeSetDraft {
         &self.original_draft
     }

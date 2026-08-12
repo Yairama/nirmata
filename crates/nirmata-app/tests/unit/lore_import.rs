@@ -20,7 +20,8 @@ use std::{
     collections::VecDeque,
     fs,
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 fn fixture(label: &str) -> (NirmataApp, PathBuf) {
@@ -42,6 +43,21 @@ fn fixture(label: &str) -> (NirmataApp, PathBuf) {
     })
     .expect("create world");
     (app, root)
+}
+
+fn remove_fixture(root: PathBuf) {
+    let mut last_error = None;
+    for _ in 0..40 {
+        match fs::remove_dir_all(&root) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+    panic!("remove fixture: {}", last_error.expect("cleanup error"));
 }
 
 #[test]
@@ -98,7 +114,7 @@ fn nir_065_ingests_confined_utf8_sources_with_inert_preview_and_hash() {
         Err(AppError::LoreImportBatchNotFound(_))
     ));
     app.close_world().unwrap();
-    fs::remove_dir_all(root).unwrap();
+    remove_fixture(root);
 }
 
 #[test]
@@ -139,7 +155,7 @@ fn nir_065_rejects_unsupported_binary_oversized_and_unconfined_sources_atomicall
     assert_eq!(before, after);
     app.close_world().unwrap();
     fs::remove_file(outside).unwrap();
-    fs::remove_dir_all(root).unwrap();
+    remove_fixture(root);
 }
 
 #[test]
@@ -212,7 +228,7 @@ fn nir_066_chunks_are_stable_open_exact_ranges_and_replacement_invalidates_old_h
         "# Replaced\nOnly the new account remains.\n"
     );
     app.close_world().unwrap();
-    fs::remove_dir_all(root).unwrap();
+    remove_fixture(root);
 }
 
 #[derive(Clone)]
@@ -462,7 +478,7 @@ async fn nir_067_offline_graph_aware_extraction_resolves_aliases_and_preserves_c
         "import does not depend on deep review"
     );
     app.close_world().unwrap();
-    fs::remove_dir_all(root).unwrap();
+    remove_fixture(root);
 }
 
 fn candidate_storage_id(candidates: &[ImportCandidateSnapshot], contract_id: &str) -> String {
@@ -590,7 +606,7 @@ async fn nir_068_only_explicitly_selected_identity_decisions_become_typed_review
         .unwrap();
     assert_eq!(before, after, "review preparation cannot write canon");
     app.close_world().unwrap();
-    fs::remove_dir_all(root).unwrap();
+    remove_fixture(root);
 }
 
 #[tokio::test]
@@ -672,7 +688,7 @@ async fn nir_068_ambiguous_identity_stays_a_decision_point() {
     assert_eq!(prepared.decision_points.len(), 1);
     assert!(app.manual_reviews.is_empty());
     app.close_world().unwrap();
-    fs::remove_dir_all(root).unwrap();
+    remove_fixture(root);
 }
 
 #[tokio::test]
@@ -781,7 +797,7 @@ async fn nir_068_opposing_canonical_claim_remains_a_review_conflict() {
         1
     );
     app.close_world().unwrap();
-    fs::remove_dir_all(root).unwrap();
+    remove_fixture(root);
 }
 
 #[tokio::test]
@@ -1102,5 +1118,5 @@ async fn nir_070_offline_multipage_import_commits_only_reviewed_provenance_and_u
             .any(|entity| entity.id() == filler.id())
     );
     reopened.close_world().unwrap();
-    fs::remove_dir_all(root).unwrap();
+    remove_fixture(root);
 }

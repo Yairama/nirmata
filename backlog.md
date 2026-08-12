@@ -16,8 +16,11 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
 
 ## Estado actual
 
-- NIR-001–NIR-070 están completadas (70 de 89; 78,7 % del backlog general y
-  100 % del fundamento funcional).
+- NIR-001–NIR-070 están completadas (70 de 89; 78,7 % formal del backlog
+  general y 100 % del fundamento funcional). NIR-071–NIR-075 están en progreso;
+  después de las correcciones del 12 de agosto de 2026 se estima 70 % de la fase
+  y 82,6 % efectivo del backlog, pero ese avance parcial no cuenta como tareas
+  completadas.
 - El workspace Rust incluye `nirmata-core`, `nirmata-store`, `nirmata-ai`,
   `nirmata-app` y la aplicación Tauri.
 - El producto manual permite crear, editar, buscar, revisar, confirmar, auditar
@@ -26,8 +29,14 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
   perspectivas, FTS5 y WordNet local con ranking y fuentes navegables.
 - La frontera de IA incluye credenciales seguras, streaming, contratos
   estrictos, modo `Consultar` y generación validada de propuestas.
-- La siguiente tarea funcional es NIR-071, extender persistencia y lecturas a
-  variantes con cabezas explícitas.
+- La prioridad activa es cerrar NIR-071–NIR-075: variantes, lectura histórica,
+  comparación, merge limitado y su regresión de escritorio.
+- El esquema 9 protege por constraints ejecutables la pertenencia de cabezas,
+  revisiones, ChangeSets e import batches. Las consultas IA conservan el scope
+  observado y las propuestas no se ejecutan fuera de la cabeza activa.
+- La regresión actual ejecuta 218 pruebas offline: 218 pasaron y 1 smoke test de
+  red quedó omitido. Frontend build, 6 checks de seguridad y desktop build
+  también pasaron.
 - NIR-055 integró WordNet en la ruta activa después de las etapas autoritativas
   y FTS5. Sobre `nir-053-v1` mantuvo 25 % de recall de paráfrasis (3/12), 100 %
   de recall no-paráfrasis, 100 % de precisión citada, 2/2 contradicciones y
@@ -40,11 +49,46 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
 
 ## Bloqueos
 
-- No hay bloqueos activos. El 5 de agosto de 2026 se verificaron solicitudes
-  reales normal y streaming con `gpt-5.6-sol` mediante
+- No hay bloqueos externos activos. La aceptación de la fase 10 permanece
+  bloqueada únicamente por los gates pendientes enumerados debajo.
+- El 5 de agosto de 2026 se verificaron solicitudes reales normal y streaming
+  con `gpt-5.6-sol` mediante
   `POST /openai/v1/responses`, autenticación Bearer y `store: false`. Este
   deployment rechaza `temperature`, por lo que el cliente no envía ese
   parámetro.
+
+## Gates críticos activos de la fase 10
+
+Estos hallazgos forman parte del criterio de cierre de NIR-071–NIR-075 y no se
+resuelven rebajando tests o documentación:
+
+1. **Resuelto y probado.** `keep_destination` deselecciona las operaciones
+   conflictivas del merge y `take_source` las conserva; registrar solo el texto
+   de la alternativa no puede habilitar una operación contraria a la decisión
+   humana.
+2. **En progreso.** Deletes, delete/update y claims canónicos opuestos ya reciben
+   retcon y decisión correctos. Conflictos temporales cross-ID y
+   dependencias dudosas deben recibir retcon y `DecisionPoint` correctos. Un
+   delete nunca puede etiquetarse como `additive`.
+3. **Resuelto y probado.** Una ejecución de IA conserva su `ReadScope` al recuperar
+   contexto, resolver citas y navegar fuentes. Propuestas y revisión profunda de
+   impacto quedan bloqueadas fuera de la cabeza activa; auditoría continúa en
+   solo lectura.
+4. **Resuelto y probado.** El historial visible recorre únicamente el linaje de
+   la variante observada. Undo sigue limitado a commits propios de la variante
+   activa.
+5. **En progreso.** El esquema 9 bloquea links nulos, inexistentes o cross-world
+   en mundo-variante-revisión-ChangeSet-importación. Falta integrar creación de
+   `main` y backfill de snapshots en la misma transacción de migración.
+6. **Pendiente.** La comparación debe exponer retcon, procedencia real y
+   referencias afectadas, no una URI sintética que el resolvedor no pueda abrir.
+7. **En progreso.** La GUI bloquea propuestas y revisión profunda de impacto desde
+   historia, conserva navegación citada por scope y distingue variante observada
+   de activa. Falta completar rename/archive
+   y probar navegación, merge parcial, decisiones, auditoría y reapertura.
+8. **Resuelto y probado.** `cargo nextest run --workspace --no-fail-fast` pasó
+   218/218 pruebas en Windows; la limpieza de snapshots y lore usa reintentos
+   acotados ante handles liberados de forma asíncrona.
 
 ## Resumen autónomo del producto y la arquitectura
 
@@ -449,11 +493,11 @@ historia sin introducir colaboración concurrente ni merge semántico automátic
 
 | Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-071 | Pendiente | NIR-022–NIR-025, NIR-052, NIR-057, NIR-070 | Extender persistencia, lecturas y workflows externos a variantes. | Migrar la cadena existente a variante `main`; añadir `variants`, cabezas explícitas y pertenencia de revisión. Mantener estado actual materializado por variante y versiones inmutables/tombstones suficientes para leer una revisión sin mover la cabeza. Introducir `ReadScope { variant_id, revision_id? }` en búsqueda, URI, contexto y consultas derivadas: sin revisión lee la cabeza; con revisión siempre es read-only. Añadir `variant_id` y cabeza base a manifests de snapshot, `ImportBatch`, drafts y sesiones; artefactos anteriores migran explícitamente a `main`. Reimportar o confirmar se permite solo sobre la misma variante/cabeza, salvo que el usuario desvíe el cambio al merge de NIR-074. Una revisión normal conserva un padre; un merge registra además la revisión fuente como procedencia. | Migración conserva IDs e historial, cada variante tiene exactamente una cabeza, todas las lecturas respetan `ReadScope`, abrir una revisión histórica no altera estado actual y ningún snapshot/import batch puede aplicarse silenciosamente sobre otra variante. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Almacenamiento](docs/architecture/storage.md) |
-| NIR-072 | Pendiente | NIR-071 | Implementar ciclo de vida y commits por variante. | Crear variante desde cualquier revisión, nombrar, renombrar, cambiar variante activa y archivar; commits, stale checks y undo operan contra su cabeza. Prohibir borrar una variante con descendientes o referencias sin una decisión explícita; no permitir dos escritores concurrentes ni sincronización remota. | Dos variantes divergen sin contaminarse, reabrir conserva sus cabezas y un draft basado en otra cabeza queda obsoleto; undo en una variante no cambia la otra. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-073 | Pendiente | NIR-030, NIR-071, NIR-072 | Comparar variantes y revisiones por identidad estable. | Calcular altas, bajas y cambios de campos/relaciones por ID entre dos cabezas o revisiones, con before/after, retcon, procedencia y referencias afectadas. Distinguir mismo objeto modificado de objetos diferentes con igual nombre; permitir abrir ambos lados en modo lectura. | Comparaciones detectan renombre, edición, eliminación y relaciones divergentes sin falsos matches por slug; cada diferencia navega a su revisión y fuente. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Almacenamiento](docs/architecture/storage.md) |
-| NIR-074 | Pendiente | NIR-019–NIR-024, NIR-073 | Implementar merge seguro limitado y resolución manual. | Traducir diferencias de la fuente a un ChangeSet sobre la cabeza destino. Auto-seleccionar solo operaciones sobre objetos/campos no solapados o conmutativas demostradas, como altas con IDs distintos o miembros independientes de un conjunto. Cualquier doble escritura, delete/update, conflicto temporal, claim opuesto o dependencia dudosa crea DecisionPoint manual; no usar CRDT ni “merge semántico” LLM automático. | Fixtures aplican automáticamente cambios independientes, bloquean conflictos solapados y registran fuente/decisiones; confirmar produce una revisión destino normal y nunca mueve ni reescribe la variante fuente. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-075 | Pendiente | NIR-071–NIR-074 | Añadir UI y regresión de variantes/historia. | Incorporar selector y cabeza visible, crear desde revisión, timeline editorial, vista histórica read-only, comparación y resolución de merge en el panel de cambios. Toda búsqueda, URI, contexto, timeline, snapshot e importación muestran el `ReadScope` activo; intentar editar o importar desde otra variante exige cambiar scope o abrir merge. Probar reapertura, branching, divergencia, stale, undo, merge parcial, conflicto manual y navegación histórica. | La GUI nunca confunde variante activa con revisión observada, no edita una vista histórica, no aplica artefactos a otra variante y todos los escenarios conservan cabezas, auditoría y aislamiento después de reabrir. | [Interacción](docs/architecture/interaction-model.md), [Versionado](docs/research/critical-fronts/canon-versioning.md) |
+| NIR-071 | En progreso | NIR-022–NIR-025, NIR-052, NIR-057, NIR-070 | Extender persistencia, lecturas y workflows externos a variantes. | Migrar la cadena existente a variante `main`; añadir `variants`, cabezas explícitas y pertenencia de revisión. Mantener estado actual materializado por variante y versiones inmutables/tombstones suficientes para leer una revisión sin mover la cabeza. Introducir `ReadScope { variant_id, revision_id? }` en búsqueda, URI, contexto y consultas derivadas: sin revisión lee la cabeza; con revisión siempre es read-only. Añadir `variant_id` y cabeza base a manifests de snapshot, `ImportBatch`, drafts y sesiones; artefactos anteriores migran explícitamente a `main`. Reimportar o confirmar se permite solo sobre la misma variante/cabeza, salvo que el usuario desvíe el cambio al merge de NIR-074. Una revisión normal conserva un padre; un merge registra además la revisión fuente como procedencia. | Migración conserva IDs e historial, cada variante tiene exactamente una cabeza, todas las lecturas respetan `ReadScope`, abrir una revisión histórica no altera estado actual y ningún snapshot/import batch puede aplicarse silenciosamente sobre otra variante. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Almacenamiento](docs/architecture/storage.md) |
+| NIR-072 | En progreso | NIR-071 | Implementar ciclo de vida y commits por variante. | Crear variante desde cualquier revisión, nombrar, renombrar, cambiar variante activa y archivar; commits, stale checks y undo operan contra su cabeza. Prohibir borrar una variante con descendientes o referencias sin una decisión explícita; no permitir dos escritores concurrentes ni sincronización remota. | Dos variantes divergen sin contaminarse, reabrir conserva sus cabezas y un draft basado en otra cabeza queda obsoleto; undo en una variante no cambia la otra. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Validación](docs/architecture/validation-pipeline.md) |
+| NIR-073 | En progreso | NIR-030, NIR-071, NIR-072 | Comparar variantes y revisiones por identidad estable. | Calcular altas, bajas y cambios de campos/relaciones por ID entre dos cabezas o revisiones, con before/after, retcon, procedencia y referencias afectadas. Distinguir mismo objeto modificado de objetos diferentes con igual nombre; permitir abrir ambos lados en modo lectura. | Comparaciones detectan renombre, edición, eliminación y relaciones divergentes sin falsos matches por slug; cada diferencia navega a su revisión y fuente. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Almacenamiento](docs/architecture/storage.md) |
+| NIR-074 | En progreso | NIR-019–NIR-024, NIR-073 | Implementar merge seguro limitado y resolución manual. | Traducir diferencias de la fuente a un ChangeSet sobre la cabeza destino. Auto-seleccionar solo operaciones sobre objetos/campos no solapados o conmutativas demostradas, como altas con IDs distintos o miembros independientes de un conjunto. Cualquier doble escritura, delete/update, conflicto temporal, claim opuesto o dependencia dudosa crea DecisionPoint manual; no usar CRDT ni “merge semántico” LLM automático. | Fixtures aplican automáticamente cambios independientes, bloquean conflictos solapados y registran fuente/decisiones; confirmar produce una revisión destino normal y nunca mueve ni reescribe la variante fuente. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Validación](docs/architecture/validation-pipeline.md) |
+| NIR-075 | En progreso | NIR-071–NIR-074 | Añadir UI y regresión de variantes/historia. | Incorporar selector y cabeza visible, crear desde revisión, timeline editorial, vista histórica read-only, comparación y resolución de merge en el panel de cambios. Toda búsqueda, URI, contexto, timeline, snapshot e importación muestran el `ReadScope` activo; intentar editar o importar desde otra variante exige cambiar scope o abrir merge. Probar reapertura, branching, divergencia, stale, undo, merge parcial, conflicto manual y navegación histórica. | La GUI nunca confunde variante activa con revisión observada, no edita una vista histórica, no aplica artefactos a otra variante y todos los escenarios conservan cabezas, auditoría y aislamiento después de reabrir. | [Interacción](docs/architecture/interaction-model.md), [Versionado](docs/research/critical-fronts/canon-versioning.md) |
 
 ## Fase 11 — Calendario ficticio fijo de presentación
 

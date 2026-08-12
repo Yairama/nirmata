@@ -33,6 +33,7 @@ import type {
   ProviderCredentialStatus,
   SearchObjectKind,
   SpecialistRole,
+  WorldSession,
 } from "./types.js";
 import { renderWorkspace, selectUri } from "./workspace.js";
 
@@ -49,7 +50,26 @@ let credentialConfigured = false;
 let streamedText = "";
 let streamElement: HTMLElement | null = null;
 
+function isWriteMode(value: AssistantMode): boolean {
+  return value === "propose" || value === "deep_impact";
+}
+
+function updateAvailability(): void {
+  const readOnly = state.session?.read_only ?? false;
+  assistantProposeMode.disabled = readOnly || activeRequestId !== null;
+  assistantDeepMode.disabled = readOnly || activeRequestId !== null;
+  assistantQueryMode.disabled = activeRequestId !== null;
+  assistantAuditMode.disabled = activeRequestId !== null;
+  assistantSubmit.disabled = activeRequestId !== null
+    || !credentialConfigured
+    || (readOnly && isWriteMode(mode));
+  assistantFinalCritique.disabled = readOnly || activeRequestId !== null || !activeRun;
+}
+
 function updateMode(next: AssistantMode): void {
+  if (state.session?.read_only && isWriteMode(next)) {
+    next = "query";
+  }
   mode = next;
   assistantQueryMode.setAttribute("aria-pressed", String(mode === "query"));
   assistantProposeMode.setAttribute("aria-pressed", String(mode === "propose"));
@@ -64,6 +84,7 @@ function updateMode(next: AssistantMode): void {
     : mode === "propose"
       ? "Generar propuesta"
       : "Preparar roles";
+  updateAvailability();
 }
 
 function updateContextLabel(): void {
@@ -79,18 +100,18 @@ async function refreshCredential(): Promise<void> {
     ? `Credencial configurada · ${humanize(status.persistence)}`
     : "Falta credencial: las acciones de IA están deshabilitadas.";
   assistantCredential.className = `credential-status ${status.configured ? "ready" : "warning"}`;
-  assistantSubmit.disabled = !status.configured || activeRequestId !== null;
   assistantKeyClear.disabled = !status.configured;
   if (status.limitation) {
     assistantCredential.title = status.limitation;
   }
+  updateAvailability();
 }
 
 function setRunning(requestId: string | null): void {
   activeRequestId = requestId;
   assistantCancel.disabled = requestId === null;
-  assistantSubmit.disabled = requestId !== null || !credentialConfigured;
   assistantInput.disabled = requestId !== null;
+  updateAvailability();
 }
 
 function renderQuery(response: AiQueryResponse): void {
@@ -112,7 +133,14 @@ function renderQuery(response: AiQueryResponse): void {
       for (const citation of item.citations) {
         const source = button(citation.source.snippet || citation.source.uri, "ghost");
         source.title = citation.quoteMd;
-        source.addEventListener("click", () => void selectUri(citation.source.uri));
+        source.addEventListener("click", () => void (async () => {
+          const session = await invoke<WorldSession>("set_read_scope", {
+            input: { scope: response.snapshot.readScope },
+          });
+          state.session = session;
+          renderWorkspace();
+          await selectUri(citation.source.uri);
+        })().catch(showError));
         sources.append(source);
       }
       card.append(sources);
@@ -353,6 +381,10 @@ async function executeDeepReview(plan: DeepReviewPlan, roles: SpecialistRole[]):
 }
 
 async function continueIntentBrief(run: AiRunSnapshot): Promise<void> {
+  if (state.session?.read_only) {
+    showError("Vuelve a la cabeza activa antes de continuar una propuesta.");
+    return;
+  }
   if (!run.intentBrief || !credentialConfigured) {
     return;
   }
@@ -383,6 +415,11 @@ async function continueIntentBrief(run: AiRunSnapshot): Promise<void> {
 async function submitAssistant(): Promise<void> {
   const request = assistantInput.value.trim();
   if (!request || !state.session || !credentialConfigured) {
+    return;
+  }
+  if (state.session.read_only && isWriteMode(mode)) {
+    showError("Las propuestas solo pueden iniciarse desde la cabeza activa.");
+    updateMode("query");
     return;
   }
   if (mode !== "query" && activeRun?.reviewKey) {
@@ -449,7 +486,7 @@ assistantCancel.addEventListener("click", () => {
   }
 });
 assistantFinalCritique.addEventListener("click", async () => {
-  if (!activeRun) {
+  if (!activeRun || state.session?.read_only) {
     return;
   }
   const requestId = crypto.randomUUID();
@@ -509,7 +546,14 @@ void listen<ProgressEvent>("deep-review-progress", ({ payload }) => {
   }
 });
 
-window.setInterval(updateContextLabel, 400);
+window.setInterval(() => {
+  updateContextLabel();
+  if (state.session?.read_only && isWriteMode(mode)) {
+    updateMode("query");
+  } else {
+    updateAvailability();
+  }
+}, 400);
 updateMode("query");
 updateContextLabel();
 void refreshCredential().catch(showError);

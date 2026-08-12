@@ -239,7 +239,18 @@ fn migrates_version_seven_to_main_without_changing_ids_or_history() {
     let connection = Connection::open(&path).expect("open project as old build");
     connection
         .execute_batch(
-            "DROP INDEX revisions_variant_parent;
+            "DROP TRIGGER variants_head_world_insert;
+             DROP TRIGGER variants_head_world_update;
+             DROP TRIGGER worlds_active_variant_update;
+             DROP TRIGGER revisions_variant_insert;
+             DROP TRIGGER revisions_variant_update;
+             DROP TRIGGER revisions_source_insert;
+             DROP TRIGGER revisions_source_update;
+             DROP TRIGGER change_sets_variant_insert;
+             DROP TRIGGER change_sets_variant_update;
+             DROP TRIGGER import_batches_variant_insert;
+             DROP TRIGGER import_batches_variant_update;
+             DROP INDEX revisions_variant_parent;
              DROP INDEX revisions_variant_id;
              DROP INDEX change_sets_variant_id;
              DROP INDEX import_batches_variant_id;
@@ -252,7 +263,7 @@ fn migrates_version_seven_to_main_without_changing_ids_or_history() {
              ALTER TABLE import_batches DROP COLUMN variant_id;
              CREATE UNIQUE INDEX revisions_linear_parent ON revisions (parent_revision_id)
                  WHERE parent_revision_id IS NOT NULL;
-             UPDATE schema_migrations SET version = 7 WHERE version = 8;
+             UPDATE schema_migrations SET version = 7 WHERE version = 9;
              PRAGMA user_version = 7;",
         )
         .expect("downgrade fixture to schema seven");
@@ -277,6 +288,59 @@ fn migrates_version_seven_to_main_without_changing_ids_or_history() {
     );
     assert_eq!(migrated.list_revisions().expect("history").len(), 1);
     drop(migrated);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
+fn variant_integrity_triggers_reject_null_and_unknown_revision_links() {
+    let path = project_path("variant-integrity");
+    let world = World::new("Arcadia", "", "Dawn", 1).expect("world");
+    let store = WorldStore::create(&path, &world).expect("create store");
+    let active = store.active_variant().expect("active variant");
+    drop(store);
+
+    let connection = Connection::open(&path).expect("open database");
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .expect("enable foreign keys");
+    assert!(
+        connection
+            .execute(
+                "UPDATE worlds SET active_variant_id = NULL WHERE id = ?1",
+                [world.id().to_string()],
+            )
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute(
+                "UPDATE revisions SET variant_id = NULL WHERE id = ?1",
+                [world.current_revision().to_string()],
+            )
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute(
+                "UPDATE revisions SET source_revision_id = ?1 WHERE id = ?2",
+                params![
+                    RevisionId::new().to_string(),
+                    world.current_revision().to_string()
+                ],
+            )
+            .is_err()
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT active_variant_id FROM worlds WHERE id = ?1",
+                [world.id().to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("active variant remains"),
+        active.id.to_string()
+    );
+    drop(connection);
     fs::remove_file(path).expect("remove project");
 }
 

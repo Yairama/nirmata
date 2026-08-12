@@ -123,6 +123,7 @@ async function refreshVariantPanel(): Promise<void> {
     variants = await invoke<Variant[]>("list_variants");
     const active = state.session.active_variant;
     const scope = currentScope()!;
+    const observed = variants.find((variant) => variant.id === scope.variantId) ?? active;
     variantSelect.replaceChildren(...variants.filter((variant) => !variant.archived).map((variant) => {
       const option = document.createElement("option");
       option.value = variant.id;
@@ -130,7 +131,7 @@ async function refreshVariantPanel(): Promise<void> {
       option.selected = variant.id === active.id;
       return option;
     }));
-    compareVariantSelect.replaceChildren(...variants.filter((variant) => !variant.archived && variant.id !== active.id).map((variant) => {
+    compareVariantSelect.replaceChildren(...variants.filter((variant) => !variant.archived && variant.id !== observed.id).map((variant) => {
       const option = document.createElement("option");
       option.value = variant.id;
       option.textContent = `${variant.name} · ${shortId(variant.headRevisionId)}`;
@@ -138,7 +139,7 @@ async function refreshVariantPanel(): Promise<void> {
     }));
     const head = document.createElement("option");
     head.value = "";
-    head.textContent = `Cabeza · ${shortId(active.headRevisionId)}`;
+    head.textContent = `Cabeza · ${shortId(observed.headRevisionId)}`;
     revisionScopeSelect.replaceChildren(head);
     for (const revision of state.revisionHistory?.revisions ?? []) {
       const option = document.createElement("option");
@@ -149,7 +150,7 @@ async function refreshVariantPanel(): Promise<void> {
     }
     const readOnly = state.session.read_only;
     readScopeLabel.textContent = readOnly
-      ? `Solo lectura: ${active.name} / ${shortId(scope.revisionId ?? active.headRevisionId)}`
+      ? `Solo lectura: ${observed.name} / ${shortId(scope.revisionId ?? observed.headRevisionId)}`
       : `Escritura activa: ${active.name} / ${shortId(active.headRevisionId)}`;
     readScopeLabel.classList.toggle("read-only", readOnly);
     viewActiveHeadButton.disabled = !readOnly;
@@ -189,12 +190,10 @@ revisionScopeSelect.addEventListener("change", async () => {
   try {
     const revisionId = revisionScopeSelect.value || null;
     const scope: ReadScope = {
-      variantId: state.session!.active_variant.id,
+      variantId: state.session!.read_scope.variantId,
       revisionId,
     };
-    state.session = revisionId
-      ? await invoke<WorldSession>("set_read_scope", { input: { scope } })
-      : await invoke<WorldSession>("view_active_head");
+    state.session = await invoke<WorldSession>("set_read_scope", { input: { scope } });
     state.editorMode = null;
     await refreshNavigation();
   } catch (value) {
@@ -218,7 +217,10 @@ createVariantForm.addEventListener("submit", async (event) => {
     return;
   }
   try {
-    const fromRevisionId = state.session.read_scope.revisionId ?? state.session.active_variant.headRevisionId;
+    const observed = variants.find((variant) => variant.id === state.session!.read_scope.variantId);
+    const fromRevisionId = state.session.read_scope.revisionId
+      ?? observed?.headRevisionId
+      ?? state.session.active_variant.headRevisionId;
     await invoke<Variant>("create_variant", { input: { name, fromRevisionId } });
     variantNameInput.value = "";
     await refreshVariantPanel();

@@ -3,7 +3,7 @@ use crate::{
     app::{StoredManualReview, ensure_active_write_scope},
 };
 use nirmata_core::{
-    ChangeOperationId, RevisionId,
+    ChangeOperationId, DecisionPointId, RevisionId,
     change_set::{ChangeOperation, ChangeSetDraft, DecisionPoint, RetconKind},
     claim::Claim,
     document::{DocumentAggregate, ObjectRef},
@@ -12,12 +12,16 @@ use nirmata_core::{
     goal::Goal,
     relation::Relation,
     rule::Rule,
+    validation::canonical_claims_oppose,
 };
 use nirmata_store::{CanonSnapshot, ReadScope};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+
+const KEEP_DESTINATION: &str = "keep_destination";
+const TAKE_SOURCE: &str = "take_source";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,19 +114,38 @@ impl NirmataApp {
                     !destination.contains_key(&dependency) && !created_refs.contains(&dependency)
                 })
             });
-            if overlap || missing_dependency {
+            let opposing_claim = match source_value {
+                Some(MergeValue::Claim(source_claim)) => {
+                    destination.iter().any(|(candidate_ref, candidate)| {
+                        matches!(
+                            candidate,
+                            MergeValue::Claim(destination_claim)
+                                if canonical_claims_oppose(source_claim, destination_claim)
+                                    && base.get(candidate_ref) == source.get(candidate_ref)
+                        )
+                    })
+                }
+                _ => false,
+            };
+            let replacement = operation.retcon() == RetconKind::Replacement;
+            if overlap || missing_dependency || opposing_claim || replacement {
                 let reason = if overlap {
                     "destination changed the same stable object since the common ancestor"
+                } else if opposing_claim {
+                    "source introduces a canonical claim opposed by the destination"
                 } else {
-                    "source operation depends on an object not present in the destination merge"
+                    if missing_dependency {
+                        "source operation depends on an object not present in the destination merge"
+                    } else {
+                        "source removes canon and requires an explicit replacement decision"
+                    }
                 };
-                decisions.push(DecisionPoint::new(
-                    vec![operation_id],
-                    format!(
-                        "Merge {} from revision {}: {reason}. Choose explicitly.",
-                        object_ref, source_revision
-                    ),
-                    vec!["keep_destination".to_owned(), "take_source".to_owned()],
+                decisions.push(merge_decision(
+                    operation_id,
+                    object_ref,
+                    source_revision,
+                    reason,
+                    replacement,
                 )?);
                 decision_operation_ids.push(operation_id.to_string());
             } else {
@@ -136,11 +159,12 @@ impl NirmataApp {
             )
             .into());
         }
+        let sources = destination_sources(&operations, &destination);
         let draft = ChangeSetDraft::new(
             active.session.world_id,
             destination_revision,
             format!("Merge variant revision {source_revision}"),
-            source_changed_refs(&operations),
+            sources,
             vec![
                 format!("merge source revision: {source_revision}"),
                 format!("common ancestor revision: {common_ancestor}"),
@@ -170,6 +194,64 @@ impl NirmataApp {
             review,
         })
     }
+}
+
+pub(crate) fn apply_variant_merge_review_action(
+    review: &ManualReviewSession,
+    action: crate::ManualReviewAction,
+    decided_at_ms: i64,
+    store: &nirmata_store::WorldStore,
+) -> Result<ManualReviewSession, AppError> {
+    let (decision_point_id, alternative) = match &action {
+        crate::ManualReviewAction::ResolveDecision {
+            decision_point_id,
+            alternative,
+        } => (*decision_point_id, alternative.as_str()),
+        _ => return review.apply_action(action, decided_at_ms, store),
+    };
+    let decision = review
+        .original_draft()
+        .decisions()
+        .iter()
+        .find(|decision| decision.decision_point_id() == decision_point_id)
+        .ok_or(AppError::UnknownReviewDecision(decision_point_id))?;
+    if decision.alternatives() != [KEEP_DESTINATION, TAKE_SOURCE] {
+        return review.apply_action(action, decided_at_ms, store);
+    }
+    let operation_ids = decision.operation_ids().to_vec();
+    let selected = alternative == TAKE_SOURCE;
+    let review = review.apply_action(action, decided_at_ms, store)?;
+    review.set_operation_selection(&operation_ids, selected, store)
+}
+
+fn merge_decision(
+    operation_id: ChangeOperationId,
+    object_ref: ObjectRef,
+    source_revision: RevisionId,
+    reason: &str,
+    replacement: bool,
+) -> Result<DecisionPoint, AppError> {
+    let prompt = format!(
+        "Merge {} from revision {}: {reason}. Choose explicitly.",
+        object_ref, source_revision
+    );
+    let alternatives = vec![KEEP_DESTINATION.to_owned(), TAKE_SOURCE.to_owned()];
+    if replacement {
+        return Ok(DecisionPoint::restore(
+            DecisionPointId::new(),
+            vec![operation_id],
+            prompt,
+            alternatives,
+            Some(object_ref),
+            Some(reason.to_owned()),
+            None,
+        )?);
+    }
+    Ok(DecisionPoint::new(
+        vec![operation_id],
+        prompt,
+        alternatives,
+    )?)
 }
 
 fn merge_values(snapshot: &CanonSnapshot) -> BTreeMap<ObjectRef, MergeValue> {
@@ -230,8 +312,12 @@ fn merge_operation(
     destination: Option<&MergeValue>,
 ) -> Result<ChangeOperation, AppError> {
     let operation_id = ChangeOperationId::new();
-    let affected_ids = vec![object_ref];
-    let retcon = RetconKind::Additive;
+    let mut affected_ids = vec![object_ref];
+    if let Some(value) = source.or(destination) {
+        affected_ids.extend(dependencies(value));
+    }
+    affected_ids.sort();
+    affected_ids.dedup();
     macro_rules! operation {
         ($create:ident, $update:ident, $delete:ident, $variant:ident, $version:expr) => {
             match (source, destination) {
@@ -239,7 +325,7 @@ fn merge_operation(
                     operation_id,
                     affected_ids,
                     expected_version: 0,
-                    retcon,
+                    retcon: RetconKind::Additive,
                     after: normalize(after, 1, $version)?,
                 },
                 (Some(MergeValue::$variant(after)), Some(MergeValue::$variant(before))) => {
@@ -247,7 +333,7 @@ fn merge_operation(
                         operation_id,
                         affected_ids,
                         expected_version: $version(before),
-                        retcon,
+                        retcon: RetconKind::Additive,
                         before: before.clone(),
                         after: normalize(after, $version(before) + 1, $version)?,
                     }
@@ -256,7 +342,7 @@ fn merge_operation(
                     operation_id,
                     affected_ids,
                     expected_version: $version(before),
-                    retcon,
+                    retcon: RetconKind::Replacement,
                     before: before.clone(),
                 },
                 _ => {
@@ -390,10 +476,20 @@ fn dependencies(value: &MergeValue) -> Vec<ObjectRef> {
     }
 }
 
-fn source_changed_refs(operations: &[ChangeOperation]) -> Vec<ObjectRef> {
+fn destination_sources(
+    operations: &[ChangeOperation],
+    destination: &BTreeMap<ObjectRef, MergeValue>,
+) -> Vec<ObjectRef> {
     let mut refs = operations
         .iter()
-        .flat_map(|operation| operation.affected_ids().iter().copied())
+        .flat_map(|operation| {
+            operation
+                .affected_ids()
+                .iter()
+                .copied()
+                .filter(|object_ref| *object_ref != operation.primary_ref())
+        })
+        .filter(|object_ref| destination.contains_key(object_ref))
         .collect::<Vec<_>>();
     refs.sort();
     refs.dedup();

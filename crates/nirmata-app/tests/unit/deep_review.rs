@@ -15,7 +15,7 @@ use nirmata_core::{
     document::ObjectRef,
     entity::{Entity, EntityKind},
 };
-use nirmata_store::WorldStore;
+use nirmata_store::{ReadScope, WorldStore};
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -386,6 +386,38 @@ fn explicit_selection_rejects_a_fifth_role_and_wrong_mode_roles() {
         .is_err()
     );
     drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
+fn deep_impact_requires_the_active_head_but_audit_remains_read_only() {
+    let (mut app, path) = app_with_world("historical-scope");
+    let session = app
+        .get_current_world()
+        .expect("session")
+        .expect("open world");
+    let observed = app
+        .create_variant("observed", session.current_revision)
+        .expect("create observed variant");
+    app.set_read_scope(ReadScope::head(observed.id))
+        .expect("observe alternate head");
+    let context = ContextBundleRequest::new(ContextIntent::ImpactAnalysis);
+
+    assert!(matches!(
+        app.prepare_deep_review(
+            DeepReviewMode::DeepImpact,
+            "Analiza el impacto",
+            None,
+            &context,
+        ),
+        Err(AppError::ReadOnlyScope)
+    ));
+    assert!(
+        app.prepare_deep_review(DeepReviewMode::Audit, "Audita el mundo", None, &context)
+            .is_ok()
+    );
+
+    app.close_world().expect("close world");
     fs::remove_file(path).expect("remove project");
 }
 

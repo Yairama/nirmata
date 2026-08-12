@@ -29,6 +29,7 @@ use nirmata_core::{
     rule::Rule,
     validation::{ValidationReport, ValidationSeverity},
 };
+use nirmata_store::ReadScope;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -129,6 +130,7 @@ impl Default for AiRequestOptions {
 pub struct AiContextSnapshot {
     pub world_id: WorldId,
     pub base_revision: RevisionId,
+    pub read_scope: ReadScope,
     pub context: ContextBundle,
 }
 
@@ -979,6 +981,7 @@ impl crate::NirmataApp {
     where
         F: FnMut(AiProposalProgress) + Send,
     {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
         let client = self.provider_client(provider)?;
         self.execute_ai_proposal_run_with(
             &client,
@@ -1001,6 +1004,7 @@ impl crate::NirmataApp {
     where
         F: FnMut(AiProposalProgress) + Send,
     {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
         let request = brief.render_request();
         let prepared = self.prepare_ai_proposal(request.clone(), context_request)?;
         let run = AiRun::running(request, prepared.snapshot);
@@ -1334,6 +1338,7 @@ impl crate::NirmataApp {
         request: impl Into<String>,
         context_request: &ContextBundleRequest,
     ) -> Result<AiProposalInput, AppError> {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
         let snapshot = self.build_ai_context_snapshot(context_request)?;
         let context_object_ids = snapshot.context_object_ids();
         Ok(AiProposalInput {
@@ -1350,6 +1355,7 @@ impl crate::NirmataApp {
         draft: &ChangeSetDraft,
         context_request: &ContextBundleRequest,
     ) -> Result<AiCritiqueInput, AppError> {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
         let mut critique_request = context_request.clone();
         merge_source_anchors(&mut critique_request, draft.sources());
         let snapshot = self.build_ai_context_snapshot(&critique_request)?;
@@ -1422,6 +1428,7 @@ impl crate::NirmataApp {
     where
         F: FnMut(AiProposalProgress) + Send,
     {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
         let client = self.provider_client(provider)?;
         self.execute_ai_proposal_with(
             &client,
@@ -1444,6 +1451,7 @@ impl crate::NirmataApp {
     where
         F: FnMut(AiProposalProgress) + Send,
     {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
         let client = self.provider_client(provider)?;
         self.execute_ai_proposal_from_intent_brief_with(
             &client,
@@ -1491,7 +1499,7 @@ impl crate::NirmataApp {
         let items = output
             .items
             .iter()
-            .map(|item| query_item_from_contract(&active.store, item))
+            .map(|item| query_item_from_contract(&active.store, prepared.snapshot.read_scope, item))
             .collect::<Result<Vec<_>, AppError>>()?;
 
         on_progress(AiQueryProgress::Completed);
@@ -1770,19 +1778,21 @@ impl crate::NirmataApp {
         context_request: &ContextBundleRequest,
     ) -> Result<AiContextSnapshot, AppError> {
         let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let read_scope = active.read_scope;
         let world = active
             .store
-            .read_canon_snapshot_scoped(active.read_scope)?
+            .read_canon_snapshot_scoped(read_scope)?
             .world()
             .clone();
         let context = crate::context_bundle::build_context_bundle_scoped(
             &active.store,
-            active.read_scope,
+            read_scope,
             context_request,
         )?;
         Ok(AiContextSnapshot {
             world_id: world.id(),
             base_revision: world.current_revision(),
+            read_scope,
             context,
         })
     }
@@ -1815,6 +1825,7 @@ impl crate::NirmataApp {
         C: AiModeClient,
         F: FnMut(AiProposalProgress) + Send,
     {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
         let snapshot = self.build_ai_context_snapshot(context_request)?;
         if draft.world_id() != snapshot.world_id || draft.base_revision() != snapshot.base_revision
         {
@@ -1921,6 +1932,7 @@ fn build_proposal_draft_response(
         metadata: critique_metadata,
     } = critique_invocation;
 
+    let read_scope = snapshot.read_scope;
     let mut affected_seen = BTreeSet::new();
     let mut affected_objects = Vec::new();
     let draft_objects = draft
@@ -1949,6 +1961,7 @@ fn build_proposal_draft_response(
                 .map(|object| {
                     resolve_proposal_result(
                         store,
+                        read_scope,
                         object,
                         before.as_ref(),
                         after.as_ref(),
@@ -1982,7 +1995,7 @@ fn build_proposal_draft_response(
         .sources()
         .iter()
         .copied()
-        .map(|source| resolve_search_result(store, source.to_string()))
+        .map(|source| resolve_search_result(store, read_scope, source.to_string()))
         .collect::<Result<Vec<_>, AppError>>()?;
 
     let ready_for_review = !deterministic_blocks_review(&validation_report)
@@ -2009,6 +2022,7 @@ fn build_proposal_draft_response(
 
 fn query_item_from_contract(
     store: &nirmata_store::WorldStore,
+    scope: ReadScope,
     item: &nirmata_ai::contracts::AdvisoryItem,
 ) -> Result<AiQueryItem, AppError> {
     Ok(AiQueryItem {
@@ -2020,7 +2034,7 @@ fn query_item_from_contract(
             .content_references
             .iter()
             .copied()
-            .map(|reference| resolve_search_result(store, String::from(reference)))
+            .map(|reference| resolve_search_result(store, scope, String::from(reference)))
             .collect::<Result<Vec<_>, _>>()?,
         citations: item
             .citations
@@ -2028,7 +2042,7 @@ fn query_item_from_contract(
             .map(|citation| {
                 Ok(AiQueryCitation {
                     quote_md: citation.quote_md.clone(),
-                    source: resolve_search_result(store, String::from(citation.source_uri))?,
+                    source: resolve_search_result(store, scope, String::from(citation.source_uri))?,
                 })
             })
             .collect::<Result<Vec<_>, AppError>>()?,
@@ -2052,7 +2066,7 @@ fn build_intent_brief(
     let entity_results = entities
         .into_iter()
         .take(6)
-        .map(|uri| resolve_search_result(store, uri))
+        .map(|uri| resolve_search_result(store, snapshot.read_scope, uri))
         .collect::<Result<Vec<_>, AppError>>()?;
     let restrictions = snapshot
         .context
@@ -2180,21 +2194,22 @@ fn query_classification(classification: AdvisoryClassification) -> SearchClassif
 
 fn resolve_search_result(
     store: &nirmata_store::WorldStore,
+    scope: ReadScope,
     uri: String,
 ) -> Result<SearchResult, AppError> {
-    crate::search_use_cases::open_uri(store, store.active_read_scope()?, &uri)
-        .map(|response| response.result)
+    crate::search_use_cases::open_uri(store, scope, &uri).map(|response| response.result)
 }
 
 fn resolve_proposal_result(
     store: &nirmata_store::WorldStore,
+    scope: ReadScope,
     object: ObjectRef,
     before: Option<&ManualReviewObjectSnapshot>,
     after: Option<&ManualReviewObjectSnapshot>,
     draft_objects: &BTreeMap<String, ManualReviewObjectSnapshot>,
 ) -> Result<SearchResult, AppError> {
     let uri = object.to_string();
-    resolve_search_result(store, uri.clone()).or_else(|error| match error {
+    resolve_search_result(store, scope, uri.clone()).or_else(|error| match error {
         AppError::ObjectNotFound { .. } => {
             if let Some(snapshot) = after.filter(|snapshot| snapshot.target_uri == uri) {
                 return snapshot_result(snapshot, "draft_after");

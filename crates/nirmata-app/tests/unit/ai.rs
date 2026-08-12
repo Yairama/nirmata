@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ContextIntent, NirmataApp};
+use crate::{ContextIntent, DraftOperationInput, ManualReviewInput, NirmataApp};
 use nirmata_core::{
     ChangeOperationId, Period, World,
     change_set::{ChangeOperation, RetconKind},
@@ -515,6 +515,154 @@ async fn query_streams_citations_and_offers_proposal_action_for_write_requests()
     )));
 
     drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn historical_query_keeps_its_scope_and_proposals_are_blocked_before_model_calls() {
+    let path = project_path("ai-historical-scope");
+    let seeded = seed_world(&path);
+    let mut app = open_app(&path);
+    let baseline = Entity::new(
+        seeded.mara.world_id(),
+        EntityKind::Concept,
+        "Baseline",
+        "baseline",
+        "",
+        "",
+        "{}",
+        vec![],
+        seeded.mara.updated_at_ms() + 1,
+    )
+    .expect("baseline entity");
+    let baseline_review = app
+        .start_manual_review(ManualReviewInput {
+            objective: "Capture historical baseline".to_owned(),
+            sources: vec![],
+            assumptions: vec![],
+            operations: vec![DraftOperationInput::CreateEntity {
+                retcon: RetconKind::Additive,
+                after: baseline,
+            }],
+        })
+        .expect("baseline review");
+    app.confirm_manual_review(&baseline_review)
+        .expect("commit baseline");
+    let session = app
+        .get_current_world()
+        .expect("session")
+        .expect("open world");
+    let historical_revision = session.current_revision;
+    let historical_variant = session.active_variant.id;
+    let future_mara = Entity::restore(
+        seeded.mara.id(),
+        seeded.mara.world_id(),
+        seeded.mara.kind(),
+        "Mara Future",
+        "mara-future",
+        seeded.mara.summary().to_owned(),
+        seeded.mara.body_md().to_owned(),
+        seeded.mara.attributes_json().as_str().to_owned(),
+        seeded.mara.aliases().to_vec(),
+        seeded.mara.version() + 1,
+        seeded.mara.created_at_ms(),
+        seeded.mara.updated_at_ms() + 1,
+    )
+    .expect("future entity");
+    let review = app
+        .start_manual_review(ManualReviewInput {
+            objective: "Advance Mara".to_owned(),
+            sources: vec![ObjectRef::Entity(seeded.mara.id())],
+            assumptions: vec![],
+            operations: vec![DraftOperationInput::UpdateEntity {
+                retcon: RetconKind::Additive,
+                before: seeded.mara.clone(),
+                after: future_mara,
+            }],
+        })
+        .expect("review future rename");
+    app.confirm_manual_review(&review)
+        .expect("commit future rename");
+    app.set_read_scope(ReadScope::historical(
+        historical_variant,
+        historical_revision,
+    ))
+    .expect("observe historical revision");
+
+    let world = WorldStore::open(&path)
+        .expect("open store")
+        .load_world()
+        .expect("load world");
+    let fake = FakeClient::new(
+        advisory_response(vec![nirmata_ai::contracts::AdvisoryItem {
+            item_id: "historical-1".to_owned().try_into().expect("item id"),
+            classification: AdvisoryClassification::Fact,
+            answer: nirmata_ai::contracts::ReferencedMarkdown {
+                markdown: "Mara en la revisión histórica.".to_owned(),
+                content_references: vec![
+                    ObjectRef::Entity(seeded.mara.id())
+                        .to_string()
+                        .try_into()
+                        .expect("uri"),
+                ],
+            },
+            citations: vec![nirmata_ai::contracts::AdvisoryCitation {
+                source_uri: ObjectRef::Entity(seeded.mara.id())
+                    .to_string()
+                    .try_into()
+                    .expect("uri"),
+                quote_md: "Mara histórica".to_owned(),
+            }],
+        }]),
+        draft_for_new_faction(
+            &world,
+            ObjectRef::Entity(seeded.mara.id()),
+            "Guardia Futura",
+            "guardia-futura",
+        ),
+    );
+    let context = context_request(ObjectRef::Entity(seeded.mara.id()));
+    let response = app
+        .execute_ai_query_with(
+            &fake,
+            "¿Quién es Mara?".to_owned(),
+            &context,
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect("historical query");
+    assert_eq!(
+        response.snapshot.read_scope,
+        ReadScope::historical(historical_variant, historical_revision)
+    );
+    assert!(
+        response.items[0].citations[0]
+            .source
+            .snippet
+            .contains("Mara")
+    );
+    assert!(
+        !response.items[0].citations[0]
+            .source
+            .snippet
+            .contains("Mara Future")
+    );
+
+    let error = app
+        .execute_ai_proposal_with(
+            &fake,
+            "Crea una guardia".to_owned(),
+            &context,
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect_err("historical proposal must fail");
+    assert!(matches!(error, AppError::ReadOnlyScope));
+    assert_eq!(fake.proposal_calls(), 0);
+
+    app.close_world().expect("close world");
     fs::remove_file(path).expect("remove project");
 }
 

@@ -567,12 +567,7 @@ pub fn validate_claims(
             continue;
         }
         for other in &claims[..index] {
-            if other.authentication() == ClaimAuthentication::Canonical
-                && other.is_active()
-                && claim.polarity() != other.polarity()
-                && claim.has_same_normalized_proposition(other)
-                && periods_overlap(claim.period(), other.period())
-            {
+            if canonical_claims_oppose(claim, other) {
                 issues.push(ValidationIssue::new(
                     "claim.canonical_opposition",
                     ValidationSeverity::Conflict,
@@ -587,6 +582,16 @@ pub fn validate_claims(
     }
 
     issues
+}
+
+pub fn canonical_claims_oppose(left: &Claim, right: &Claim) -> bool {
+    left.authentication() == ClaimAuthentication::Canonical
+        && right.authentication() == ClaimAuthentication::Canonical
+        && left.is_active()
+        && right.is_active()
+        && left.polarity() != right.polarity()
+        && left.has_same_normalized_proposition(right)
+        && periods_overlap(left.period(), right.period())
 }
 
 pub fn validate_documents(documents: &[Document], entities: &[Entity]) -> Vec<ValidationIssue> {

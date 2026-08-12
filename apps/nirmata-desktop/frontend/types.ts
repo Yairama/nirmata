@@ -525,6 +525,11 @@ export type AiQueryItem = {
 
 export type AiQueryResponse = {
   request: string;
+  snapshot: {
+    worldId: string;
+    baseRevision: string;
+    readScope: ReadScope;
+  };
   items: AiQueryItem[];
 };
 

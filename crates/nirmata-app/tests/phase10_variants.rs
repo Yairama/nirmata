@@ -1,10 +1,11 @@
 use nirmata_app::{
     AppError, CreateWorldInput, DraftOperationInput, ExportSnapshotInput, ImportSnapshotInput,
-    ManualReviewInput, NirmataApp, ReadScope, VariantDiffKind,
+    ManualReviewActionRequest, ManualReviewInput, NirmataApp, ReadScope, VariantDiffKind,
 };
 use nirmata_core::{
-    WorldId,
+    Period, WorldId,
     change_set::RetconKind,
+    claim::{Claim, ClaimAuthentication, ClaimObject, ClaimPolarity},
     document::ObjectRef,
     entity::{Entity, EntityKind},
 };
@@ -55,6 +56,49 @@ fn commit_entity(app: &mut NirmataApp, value: Entity) {
     app.confirm_manual_review(&review).expect("commit entity");
 }
 
+fn commit_claim(app: &mut NirmataApp, value: Claim) {
+    let review = app
+        .start_manual_review(ManualReviewInput {
+            objective: "Create canonical claim".to_owned(),
+            sources: vec![],
+            assumptions: vec![],
+            operations: vec![DraftOperationInput::CreateClaim {
+                retcon: RetconKind::Additive,
+                after: value,
+            }],
+        })
+        .expect("start claim review");
+    app.confirm_manual_review(&review).expect("commit claim");
+}
+
+fn canonical_claim(
+    world_id: WorldId,
+    revision_id: nirmata_core::RevisionId,
+    subject_id: nirmata_core::EntityId,
+    polarity: ClaimPolarity,
+) -> Claim {
+    Claim::new(
+        world_id,
+        subject_id,
+        "gate state",
+        Some("gate.open".to_owned()),
+        Some(ClaimObject::Scalar("true".to_owned())),
+        polarity,
+        ClaimAuthentication::Canonical,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(Period::new(Some(10), Some(10)).expect("period")),
+        revision_id,
+    )
+    .expect("canonical claim")
+}
+
 fn update_entity(
     app: &mut NirmataApp,
     before: &Entity,
@@ -91,6 +135,46 @@ fn update_entity(
         .expect("start update");
     app.confirm_manual_review(&review).expect("commit update");
     after
+}
+
+fn delete_entity(app: &mut NirmataApp, before: &Entity) {
+    let mut review = app
+        .start_manual_review(ManualReviewInput {
+            objective: format!("Delete {}", before.name()),
+            sources: vec![],
+            assumptions: vec![],
+            operations: vec![DraftOperationInput::DeleteEntity {
+                retcon: RetconKind::Replacement,
+                before: before.clone(),
+            }],
+        })
+        .expect("start delete");
+    let operation_id = review.operations()[0].operation_id();
+    let decision_point_id = review.original_draft().decisions()[0].decision_point_id();
+    app.apply_manual_review_action(
+        &mut review,
+        nirmata_app::ManualReviewAction::RecordJudgment {
+            operation_id,
+            judgment: "Remove this object from the source variant.".to_owned(),
+        },
+    )
+    .expect("record delete judgment");
+    app.apply_manual_review_action(
+        &mut review,
+        nirmata_app::ManualReviewAction::ResolveDecision {
+            decision_point_id,
+            alternative: "Apply replacement".to_owned(),
+        },
+    )
+    .expect("resolve delete");
+    assert!(
+        review.ready_to_confirm(),
+        "validation={:?} effective={:?} decisions={:?}",
+        review.validation_report(),
+        review.effective_report(),
+        review.original_draft().decisions()
+    );
+    app.confirm_manual_review(&review).expect("commit delete");
 }
 
 #[test]
@@ -332,4 +416,357 @@ fn overlapping_rename_is_a_sourced_manual_decision_not_a_slug_match() {
     assert_eq!(merge.decision_operation_ids.len(), 1);
     assert!(!merge.review.ready_to_confirm);
     assert_eq!(source_value.id(), shared.id());
+}
+
+#[test]
+fn keep_destination_rejects_only_the_conflicting_source_operation() {
+    let path = project_path("phase10-keep-destination");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path,
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let shared = entity(main.world_id, "Mara", "mara", 2);
+    commit_entity(&mut app, shared.clone());
+    let fork = app.get_current_world().expect("session").expect("open");
+    let branch = app
+        .create_variant("alternate", fork.current_revision)
+        .expect("branch");
+
+    update_entity(&mut app, &shared, "Mara North", "mara-north", 3);
+    let source_only = entity(main.world_id, "Source only", "source-only", 4);
+    commit_entity(&mut app, source_only.clone());
+    app.switch_variant(branch.id).expect("switch destination");
+    update_entity(&mut app, &shared, "Mara South", "mara-south", 5);
+
+    let merge = app
+        .prepare_variant_merge(ReadScope::head(fork.active_variant.id))
+        .expect("prepare merge");
+    assert_eq!(merge.automatic_operation_ids.len(), 1);
+    assert_eq!(merge.decision_operation_ids.len(), 1);
+    let conflicting = merge
+        .review
+        .operations
+        .iter()
+        .find(|operation| operation.target_uri == ObjectRef::Entity(shared.id()).to_string())
+        .expect("conflicting operation");
+    let decision = conflicting.decision_points.first().expect("merge decision");
+    let updated = app
+        .apply_stored_manual_review_action(
+            &merge.review.review_key,
+            ManualReviewActionRequest::ResolveDecision {
+                decision_point_id: decision.decision_point_id.clone(),
+                alternative: "keep_destination".to_owned(),
+            },
+        )
+        .expect("keep destination");
+    let conflicting = updated
+        .operations
+        .iter()
+        .find(|operation| operation.target_uri == ObjectRef::Entity(shared.id()).to_string())
+        .expect("conflicting operation");
+    assert!(!conflicting.selected);
+    assert_eq!(conflicting.decision, "reject");
+    assert!(updated.ready_to_confirm);
+
+    app.confirm_stored_manual_review(&merge.review.review_key)
+        .expect("commit independent source change");
+    let ResolvedObject::Entity(destination_shared) = app
+        .open_uri(&ObjectRef::Entity(shared.id()).to_string())
+        .expect("destination entity")
+        .object
+    else {
+        panic!("expected entity");
+    };
+    assert_eq!(destination_shared.name(), "Mara South");
+    assert!(matches!(
+        app.open_uri(&ObjectRef::Entity(source_only.id()).to_string())
+            .expect("independent source entity")
+            .object,
+        ResolvedObject::Entity(_)
+    ));
+}
+
+#[test]
+fn take_source_keeps_and_applies_the_conflicting_operation() {
+    let path = project_path("phase10-take-source");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path,
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let shared = entity(main.world_id, "Mara", "mara", 2);
+    commit_entity(&mut app, shared.clone());
+    let fork = app.get_current_world().expect("session").expect("open");
+    let branch = app
+        .create_variant("alternate", fork.current_revision)
+        .expect("branch");
+    update_entity(&mut app, &shared, "Mara North", "mara-north", 3);
+    app.switch_variant(branch.id).expect("switch destination");
+    update_entity(&mut app, &shared, "Mara South", "mara-south", 4);
+
+    let merge = app
+        .prepare_variant_merge(ReadScope::head(fork.active_variant.id))
+        .expect("prepare merge");
+    let operation = merge.review.operations.first().expect("merge operation");
+    let decision = operation.decision_points.first().expect("merge decision");
+    let updated = app
+        .apply_stored_manual_review_action(
+            &merge.review.review_key,
+            ManualReviewActionRequest::ResolveDecision {
+                decision_point_id: decision.decision_point_id.clone(),
+                alternative: "take_source".to_owned(),
+            },
+        )
+        .expect("take source");
+    assert!(updated.operations.first().expect("operation").selected);
+    assert!(updated.ready_to_confirm);
+    app.confirm_stored_manual_review(&merge.review.review_key)
+        .expect("commit source value");
+    let ResolvedObject::Entity(destination_shared) = app
+        .open_uri(&ObjectRef::Entity(shared.id()).to_string())
+        .expect("destination entity")
+        .object
+    else {
+        panic!("expected entity");
+    };
+    assert_eq!(destination_shared.name(), "Mara North");
+}
+
+#[test]
+fn revision_history_follows_only_the_observed_variant_lineage() {
+    let path = project_path("phase10-history-lineage");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path,
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    commit_entity(&mut app, entity(main.world_id, "Shared", "shared", 2));
+    let fork = app.get_current_world().expect("session").expect("open");
+    let branch = app
+        .create_variant("alternate", fork.current_revision)
+        .expect("branch");
+    commit_entity(&mut app, entity(main.world_id, "Main only", "main-only", 3));
+    let main_head = app
+        .get_current_world()
+        .expect("session")
+        .expect("open")
+        .current_revision;
+    app.switch_variant(branch.id).expect("switch branch");
+    commit_entity(
+        &mut app,
+        entity(main.world_id, "Branch only", "branch-only", 4),
+    );
+    let branch_head = app
+        .get_current_world()
+        .expect("session")
+        .expect("open")
+        .current_revision;
+
+    app.set_read_scope(ReadScope::head(fork.active_variant.id))
+        .expect("observe main");
+    let main_history = app.list_revision_history().expect("main history");
+    assert_eq!(main_history.current_head_revision_id, main_head.to_string());
+    assert!(main_history.undo_target_revision_id.is_none());
+    assert!(
+        main_history
+            .revisions
+            .iter()
+            .any(|revision| revision.revision_id == main_head.to_string())
+    );
+    assert!(
+        main_history
+            .revisions
+            .iter()
+            .all(|revision| revision.revision_id != branch_head.to_string())
+    );
+
+    app.view_active_head().expect("return to branch head");
+    let branch_history = app.list_revision_history().expect("branch history");
+    assert_eq!(
+        branch_history.current_head_revision_id,
+        branch_head.to_string()
+    );
+    assert!(branch_history.undo_target_revision_id.is_some());
+    assert!(
+        branch_history
+            .revisions
+            .iter()
+            .any(|revision| revision.revision_id == fork.current_revision.to_string())
+    );
+    assert!(
+        branch_history
+            .revisions
+            .iter()
+            .all(|revision| revision.revision_id != main_head.to_string())
+    );
+}
+
+#[test]
+fn opposing_canonical_claim_requires_a_manual_merge_decision() {
+    let path = project_path("phase10-opposing-claim");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path,
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let subject = entity(main.world_id, "Gate", "gate", 2);
+    commit_entity(&mut app, subject.clone());
+    let fork = app.get_current_world().expect("session").expect("open");
+    let branch = app
+        .create_variant("alternate", fork.current_revision)
+        .expect("branch");
+
+    commit_claim(
+        &mut app,
+        canonical_claim(
+            main.world_id,
+            fork.current_revision,
+            subject.id(),
+            ClaimPolarity::Positive,
+        ),
+    );
+    let source_only = entity(main.world_id, "Source only", "source-only", 3);
+    commit_entity(&mut app, source_only.clone());
+    app.switch_variant(branch.id).expect("switch destination");
+    commit_claim(
+        &mut app,
+        canonical_claim(
+            main.world_id,
+            fork.current_revision,
+            subject.id(),
+            ClaimPolarity::Negative,
+        ),
+    );
+    assert!(matches!(
+        app.open_uri(&ObjectRef::Entity(subject.id()).to_string())
+            .expect("destination subject")
+            .object,
+        ResolvedObject::Entity(_)
+    ));
+
+    let merge = app
+        .prepare_variant_merge(ReadScope::head(fork.active_variant.id))
+        .expect("prepare merge");
+    assert_eq!(merge.automatic_operation_ids.len(), 1);
+    assert_eq!(merge.decision_operation_ids.len(), 1);
+    assert!(
+        merge
+            .review
+            .validation_report
+            .conflicts
+            .iter()
+            .any(|issue| issue.code == "claim.canonical_opposition"),
+        "{:?}",
+        merge.review.validation_report
+    );
+    let claim_operation = merge
+        .review
+        .operations
+        .iter()
+        .find(|operation| operation.target_uri.starts_with("nirmata://claim/"))
+        .expect("claim operation");
+    let decision = claim_operation
+        .decision_points
+        .first()
+        .expect("claim decision");
+    let updated = app
+        .apply_stored_manual_review_action(
+            &merge.review.review_key,
+            ManualReviewActionRequest::ResolveDecision {
+                decision_point_id: decision.decision_point_id.clone(),
+                alternative: "keep_destination".to_owned(),
+            },
+        )
+        .expect("keep destination claim");
+    assert!(updated.ready_to_confirm);
+    assert!(updated.effective_report.conflicts.is_empty());
+    app.confirm_stored_manual_review(&merge.review.review_key)
+        .expect("commit independent operation");
+    assert!(matches!(
+        app.open_uri(&ObjectRef::Entity(source_only.id()).to_string())
+            .expect("source entity merged")
+            .object,
+        ResolvedObject::Entity(_)
+    ));
+}
+
+#[test]
+fn source_delete_is_a_reviewed_replacement_and_can_remove_destination_canon() {
+    let path = project_path("phase10-delete-merge");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path,
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let shared = entity(main.world_id, "Obsolete", "obsolete", 2);
+    commit_entity(&mut app, shared.clone());
+    let fork = app.get_current_world().expect("session").expect("open");
+    let branch = app
+        .create_variant("alternate", fork.current_revision)
+        .expect("branch");
+    delete_entity(&mut app, &shared);
+    app.switch_variant(branch.id).expect("switch destination");
+
+    let merge = app
+        .prepare_variant_merge(ReadScope::head(fork.active_variant.id))
+        .expect("prepare delete merge");
+    assert!(merge.automatic_operation_ids.is_empty());
+    assert_eq!(merge.decision_operation_ids.len(), 1);
+    assert!(
+        merge
+            .review
+            .validation_report
+            .errors
+            .iter()
+            .all(|issue| { issue.code != "change_set.retcon.additive_delete" })
+    );
+    let operation = merge.review.operations.first().expect("delete operation");
+    assert!(operation.risk.requires_judgment);
+    let decision = operation.decision_points.first().expect("delete decision");
+    let review_key = merge.review.review_key.clone();
+    app.apply_stored_manual_review_action(
+        &review_key,
+        ManualReviewActionRequest::RecordJudgment {
+            operation_id: operation.operation_id.clone(),
+            judgment: "Apply the reviewed source deletion.".to_owned(),
+        },
+    )
+    .expect("record merge judgment");
+    let updated = app
+        .apply_stored_manual_review_action(
+            &review_key,
+            ManualReviewActionRequest::ResolveDecision {
+                decision_point_id: decision.decision_point_id.clone(),
+                alternative: "take_source".to_owned(),
+            },
+        )
+        .expect("take source deletion");
+    assert!(updated.ready_to_confirm);
+    app.confirm_stored_manual_review(&review_key)
+        .expect("commit merge deletion");
+    assert!(matches!(
+        app.open_uri(&ObjectRef::Entity(shared.id()).to_string()),
+        Err(AppError::ObjectNotFound { .. })
+    ));
 }

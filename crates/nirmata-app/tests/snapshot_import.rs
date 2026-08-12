@@ -17,7 +17,8 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 struct Fixture {
@@ -188,7 +189,18 @@ fn import(app: &mut NirmataApp, path: &Path) -> nirmata_app::ImportSnapshotResul
 
 fn cleanup(mut app: NirmataApp, fixture: &Fixture) {
     app.close_world().expect("close fixture");
-    fs::remove_dir_all(&fixture.parent).expect("remove fixture");
+    let mut last_error = None;
+    for _ in 0..40 {
+        match fs::remove_dir_all(&fixture.parent) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+    panic!("remove fixture: {}", last_error.expect("cleanup error"));
 }
 
 fn entity_body(project: &Path, id: EntityId) -> String {

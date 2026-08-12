@@ -1,6 +1,7 @@
 use crate::schema::{
     CANON_SCHEMA, CHANGE_SET_SCHEMA, INITIAL_SCHEMA, LORE_IMPORT_SCHEMA,
-    REVISION_COMPLETION_SCHEMA, SCHEMA_VERSION, UNDO_SCHEMA, VARIANT_SCHEMA,
+    REVISION_COMPLETION_SCHEMA, SCHEMA_VERSION, UNDO_SCHEMA, VARIANT_INTEGRITY_SCHEMA,
+    VARIANT_SCHEMA,
 };
 use crate::search;
 use nirmata_core::{
@@ -527,9 +528,7 @@ fn initialize(path: &Path, connection: &mut Connection, world: &World) -> Result
     transaction
         .execute_batch(LORE_IMPORT_SCHEMA)
         .map_err(|error| map_database_error(path, error))?;
-    transaction
-        .execute_batch(VARIANT_SCHEMA)
-        .map_err(|error| map_database_error(path, error))?;
+    install_variant_schema(&transaction, path)?;
     transaction
         .execute(
             "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?1, ?2)",
@@ -541,6 +540,15 @@ fn initialize(path: &Path, connection: &mut Connection, world: &World) -> Result
         .map_err(|error| map_database_error(path, error))?;
     transaction
         .commit()
+        .map_err(|error| map_database_error(path, error))
+}
+
+fn install_variant_schema(connection: &Connection, path: &Path) -> Result<(), StoreError> {
+    connection
+        .execute_batch(VARIANT_SCHEMA)
+        .map_err(|error| map_database_error(path, error))?;
+    connection
+        .execute_batch(VARIANT_INTEGRITY_SCHEMA)
         .map_err(|error| map_database_error(path, error))
 }
 
@@ -586,9 +594,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
             transaction
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
-            transaction
-                .execute_batch(VARIANT_SCHEMA)
-                .map_err(|error| map_database_error(path, error))?;
+            install_variant_schema(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -621,9 +627,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
             transaction
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
-            transaction
-                .execute_batch(VARIANT_SCHEMA)
-                .map_err(|error| map_database_error(path, error))?;
+            install_variant_schema(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -691,9 +695,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
             transaction
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
-            transaction
-                .execute_batch(VARIANT_SCHEMA)
-                .map_err(|error| map_database_error(path, error))?;
+            install_variant_schema(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -730,9 +732,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
             transaction
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
-            transaction
-                .execute_batch(VARIANT_SCHEMA)
-                .map_err(|error| map_database_error(path, error))?;
+            install_variant_schema(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -757,9 +757,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
             transaction
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
-            transaction
-                .execute_batch(VARIANT_SCHEMA)
-                .map_err(|error| map_database_error(path, error))?;
+            install_variant_schema(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -781,9 +779,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
             transaction
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
-            transaction
-                .execute_batch(VARIANT_SCHEMA)
-                .map_err(|error| map_database_error(path, error))?;
+            install_variant_schema(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -802,8 +798,27 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
             let transaction = connection
                 .transaction()
                 .map_err(|error| map_database_error(path, error))?;
+            install_variant_schema(&transaction, path)?;
             transaction
-                .execute_batch(VARIANT_SCHEMA)
+                .execute(
+                    "INSERT INTO schema_migrations (version, applied_at_ms)
+                     VALUES (?1, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))",
+                    [SCHEMA_VERSION],
+                )
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .pragma_update(None, "user_version", SCHEMA_VERSION)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .commit()
+                .map_err(|error| map_database_error(path, error))
+        }
+        8 => {
+            let transaction = connection
+                .transaction()
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(VARIANT_INTEGRITY_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             transaction
                 .execute(
@@ -912,7 +927,7 @@ fn verify_schema_version(
                        'canon_fts', 'revision_undos', 'import_batches', 'import_sources',
                        'import_chunks', 'import_candidates'
                    )"
-            } else if version == 8 {
+            } else if version == 8 || version == 9 {
                 "SELECT COUNT(*) FROM sqlite_schema
                  WHERE type = 'table'
                    AND name IN (
@@ -946,7 +961,7 @@ fn verify_schema_version(
         5 => 21,
         6 => 22,
         7 => 26,
-        8 => 28,
+        8 | 9 => 28,
         _ => return Err(StoreError::InvalidFormat(path.to_owned())),
     };
     if required_table_count != expected_table_count {

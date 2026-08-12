@@ -293,6 +293,11 @@ impl crate::NirmataApp {
         explicit_roles: Option<Vec<SpecialistRole>>,
         context_request: &ContextBundleRequest,
     ) -> Result<DeepReviewPlan, AppError> {
+        if mode == DeepReviewMode::DeepImpact {
+            crate::app::ensure_active_write_scope(
+                self.active.as_ref().ok_or(AppError::NoWorldOpen)?,
+            )?;
+        }
         let request = request.into();
         if request.trim().is_empty() {
             return Err(AppError::InvalidDeepReview(
@@ -338,6 +343,11 @@ impl crate::NirmataApp {
     where
         F: FnMut(DeepReviewProgress) + Send,
     {
+        if plan.mode == DeepReviewMode::DeepImpact {
+            crate::app::ensure_active_write_scope(
+                self.active.as_ref().ok_or(AppError::NoWorldOpen)?,
+            )?;
+        }
         let client = self.provider_client(provider)?;
         self.execute_deep_review_with(&client, plan, context_request, cancellation, on_progress)
             .await
@@ -356,6 +366,11 @@ impl crate::NirmataApp {
         F: FnMut(DeepReviewProgress) + Send,
     {
         plan.validate_for_execution()?;
+        if plan.mode == DeepReviewMode::DeepImpact {
+            crate::app::ensure_active_write_scope(
+                self.active.as_ref().ok_or(AppError::NoWorldOpen)?,
+            )?;
+        }
         let snapshot = self.build_ai_context_snapshot(context_request)?;
         let mut run = DeepReviewRun::running(plan, snapshot.clone());
         let run_id = run.id;
