@@ -1,6 +1,7 @@
 use crate::AppError;
 use nirmata_core::{
     EntityId, GoalId, Period,
+    calendar::WorldCalendar,
     claim::{Claim, ClaimAuthentication, ClaimObject},
     document::{DocumentCanonStatus, ObjectRef},
     event::Event,
@@ -176,7 +177,13 @@ pub(crate) fn build_context_bundle_scoped(
     scope: ReadScope,
     request: &ContextBundleRequest,
 ) -> Result<ContextBundle, AppError> {
-    let mut collector = ContextCollector::new(request.budget, &request.perspective_entity_ids);
+    let calendar = store
+        .read_canon_snapshot_scoped(scope)?
+        .world()
+        .calendar()
+        .cloned();
+    let mut collector =
+        ContextCollector::new(request.budget, &request.perspective_entity_ids, calendar);
     if request.budget.max_objects == 0 || request.budget.max_chars == 0 {
         return Ok(collector.finish());
     }
@@ -393,15 +400,21 @@ struct ContextCollector {
     seen: BTreeSet<ObjectRef>,
     context_refs: BTreeSet<ObjectRef>,
     perspective_filter: BTreeSet<EntityId>,
+    calendar: Option<WorldCalendar>,
 }
 
 impl ContextCollector {
-    fn new(budget: ContextBudget, perspective_entity_ids: &[EntityId]) -> Self {
+    fn new(
+        budget: ContextBudget,
+        perspective_entity_ids: &[EntityId],
+        calendar: Option<WorldCalendar>,
+    ) -> Self {
         Self {
             bundle: ContextBundle::with_budget(budget),
             seen: BTreeSet::new(),
             context_refs: BTreeSet::new(),
             perspective_filter: perspective_entity_ids.iter().copied().collect(),
+            calendar,
         }
     }
 
@@ -457,7 +470,9 @@ impl ContextCollector {
         };
 
         let citation = clip_chars(
-            &normalize_text(citation.unwrap_or_else(|| citation_for_object(&object))),
+            &normalize_text(
+                citation.unwrap_or_else(|| citation_for_object(&object, self.calendar.as_ref())),
+            ),
             self.remaining_chars(),
         );
         if citation.is_empty() {
@@ -715,7 +730,10 @@ fn normalize_query_text(value: Option<&str>) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
-pub(crate) fn citation_for_object(object: &ResolvedObject) -> String {
+pub(crate) fn citation_for_object(
+    object: &ResolvedObject,
+    calendar: Option<&WorldCalendar>,
+) -> String {
     match object {
         ResolvedObject::World(world) => {
             preview(&[world.name(), world.premise_md(), world.epoch_label()])
@@ -728,7 +746,14 @@ pub(crate) fn citation_for_object(object: &ResolvedObject) -> String {
             relation.source_reference().unwrap_or_default(),
         ]),
         ResolvedObject::Event(aggregate) => {
-            preview(&[aggregate.event().summary(), aggregate.event().body_md()])
+            let prose = preview(&[aggregate.event().summary(), aggregate.event().body_md()]);
+            match aggregate.event().time().start_tick() {
+                Some(tick) => match calendar_tick_label(calendar, tick) {
+                    Some(label) => format!("{prose} [tick {tick}; {label}]"),
+                    None => format!("{prose} [tick {tick}]"),
+                },
+                None => prose,
+            }
         }
         ResolvedObject::Claim(claim) => preview(&[
             claim.content_md(),
@@ -745,6 +770,24 @@ pub(crate) fn citation_for_object(object: &ResolvedObject) -> String {
             preview(&[aggregate.object().title(), aggregate.object().body_md()])
         }
     }
+}
+
+pub(crate) fn calendar_tick_label(calendar: Option<&WorldCalendar>, tick: i64) -> Option<String> {
+    let calendar = calendar?;
+    let date = calendar.tick_to_date(tick).ok()?;
+    let month = calendar.months().get(date.month.checked_sub(1)? as usize)?;
+    let weekday = calendar.weekday_names().get(date.weekday_index as usize)?;
+    Some(format!(
+        "{} · {} · {} {} (mes {}) · año {} · sub-tick {}/{}",
+        calendar.name(),
+        weekday,
+        month.name(),
+        date.day,
+        date.month,
+        date.year,
+        date.tick_in_day,
+        calendar.ticks_per_day()
+    ))
 }
 
 fn search_seed_text(object: &ResolvedObject) -> Option<String> {

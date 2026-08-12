@@ -5,6 +5,7 @@ use nirmata_app::{
 };
 use nirmata_core::{
     Period, World, WorldId,
+    calendar::{CalendarMonth, WorldCalendar},
     change_set::RetconKind,
     claim::{Claim, ClaimAuthentication, ClaimObject, ClaimPolarity},
     document::ObjectRef,
@@ -208,6 +209,7 @@ fn update_world_premise(app: &mut NirmataApp, premise: &str) {
         before.name(),
         premise,
         before.epoch_label(),
+        before.calendar().cloned(),
         before.current_revision(),
         before.created_at_ms(),
         before.updated_at_ms() + 1,
@@ -227,6 +229,52 @@ fn update_world_premise(app: &mut NirmataApp, premise: &str) {
         .expect("world review");
     app.confirm_manual_review(&review)
         .expect("commit world update");
+}
+
+fn update_world_calendar(app: &mut NirmataApp, calendar: Option<WorldCalendar>) {
+    let session = app
+        .get_current_world()
+        .expect("session")
+        .expect("open world");
+    let before = session.world;
+    let after = World::restore(
+        before.id(),
+        before.name(),
+        before.premise_md(),
+        before.epoch_label(),
+        calendar,
+        before.current_revision(),
+        before.created_at_ms(),
+        before.updated_at_ms() + 1,
+    )
+    .expect("updated calendar");
+    let review = app
+        .start_manual_review(ManualReviewInput {
+            objective: "Update world calendar".to_owned(),
+            sources: vec![],
+            assumptions: vec![],
+            operations: vec![DraftOperationInput::UpdateWorld {
+                retcon: RetconKind::Reinterpretive,
+                before,
+                after,
+            }],
+        })
+        .expect("calendar review");
+    app.confirm_manual_review(&review).expect("commit calendar");
+}
+
+fn fixed_calendar(name: &str, epoch_tick: i64) -> WorldCalendar {
+    WorldCalendar::new(
+        name,
+        epoch_tick,
+        10,
+        vec!["First".to_owned(), "Second".to_owned(), "Third".to_owned()],
+        vec![
+            CalendarMonth::new("Ash", 2).expect("month"),
+            CalendarMonth::new("Rain", 3).expect("month"),
+        ],
+    )
+    .expect("calendar")
 }
 
 fn delete_entity(app: &mut NirmataApp, before: &Entity) {
@@ -1372,4 +1420,122 @@ fn merge_decision_groups_operations_that_depend_on_the_conflicted_object() {
             .iter()
             .all(|issue| { issue.code != "change_set.dependency_missing" })
     );
+}
+
+#[test]
+fn calendar_is_scoped_by_revision_variant_snapshot_and_undo_without_changing_ticks() {
+    let path = project_path("phase11-calendar-history");
+    let export_parent = path.parent().expect("parent").to_path_buf();
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path: path.clone(),
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let mara = entity(main.world_id, "Mara", "mara", 1);
+    commit_entity(&mut app, mara.clone());
+    let shared_event = participant_event(
+        main.world_id,
+        mara.id(),
+        "festival",
+        "Shared festival",
+        120,
+        "actor",
+        2,
+    );
+    let event_id = shared_event.event().id();
+    commit_event(&mut app, shared_event);
+    let without_calendar = app.get_current_world().expect("session").expect("world");
+    let branch = app
+        .create_variant("alternate", without_calendar.current_revision)
+        .expect("branch");
+
+    update_world_calendar(&mut app, Some(fixed_calendar("Imperial", 100)));
+    let main_timeline = app.list_timeline_events().expect("main timeline");
+    let main_event = main_timeline
+        .known
+        .iter()
+        .find(|entry| entry.uri == ObjectRef::Event(event_id).to_string())
+        .expect("main event");
+    assert_eq!(main_event.time.start_tick(), Some(120));
+    assert!(
+        main_event
+            .start_calendar
+            .as_ref()
+            .expect("main label")
+            .label
+            .contains("Imperial")
+    );
+
+    app.set_read_scope(ReadScope::historical(
+        without_calendar.active_variant.id,
+        without_calendar.current_revision,
+    ))
+    .expect("view pre-calendar revision");
+    assert!(
+        app.get_current_world()
+            .expect("session")
+            .expect("world")
+            .world
+            .calendar()
+            .is_none()
+    );
+    assert!(
+        app.list_timeline_events()
+            .expect("historical timeline")
+            .known[0]
+            .start_calendar
+            .is_none()
+    );
+
+    app.view_active_head().expect("main head");
+    app.switch_variant(branch.id).expect("branch");
+    update_world_calendar(&mut app, Some(fixed_calendar("Republic", 90)));
+    let branch_event = app
+        .list_timeline_events()
+        .expect("branch timeline")
+        .known
+        .into_iter()
+        .find(|entry| entry.uri == ObjectRef::Event(event_id).to_string())
+        .expect("branch event");
+    assert_eq!(branch_event.time.start_tick(), Some(120));
+    assert!(
+        branch_event
+            .start_calendar
+            .as_ref()
+            .expect("branch label")
+            .label
+            .contains("Republic")
+    );
+
+    let exported = app
+        .export_vfs_snapshot(ExportSnapshotInput {
+            parent_directory: export_parent,
+            snapshot_name: format!("calendar-{}", branch.id),
+        })
+        .expect("export calendar snapshot");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(exported.path.join("manifest.json")).expect("manifest"))
+            .expect("manifest JSON");
+    let world_metadata = manifest["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .find(|object| object["object_type"] == "world")
+        .expect("world metadata");
+    assert_eq!(world_metadata["metadata"]["calendar"]["name"], "Republic");
+
+    app.undo_last_commit().expect("undo branch calendar");
+    assert!(
+        app.get_current_world()
+            .expect("session")
+            .expect("world")
+            .world
+            .calendar()
+            .is_none()
+    );
+    fs::remove_dir_all(exported.path).expect("remove snapshot");
 }

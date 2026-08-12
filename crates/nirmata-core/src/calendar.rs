@@ -1,10 +1,27 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{error::Error, fmt};
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CalendarMonth {
     name: String,
     days: u32,
+}
+
+impl<'de> Deserialize<'de> for CalendarMonth {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct CalendarMonthData {
+            name: String,
+            days: u32,
+        }
+
+        let data = CalendarMonthData::deserialize(deserializer)?;
+        Self::new(data.name, data.days).map_err(de::Error::custom)
+    }
 }
 
 impl CalendarMonth {
@@ -25,13 +42,40 @@ impl CalendarMonth {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorldCalendar {
     name: String,
     epoch_tick: i64,
     ticks_per_day: i64,
     weekday_names: Vec<String>,
     months: Vec<CalendarMonth>,
+}
+
+impl<'de> Deserialize<'de> for WorldCalendar {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct WorldCalendarData {
+            name: String,
+            epoch_tick: i64,
+            ticks_per_day: i64,
+            weekday_names: Vec<String>,
+            months: Vec<CalendarMonth>,
+        }
+
+        let data = WorldCalendarData::deserialize(deserializer)?;
+        Self::new(
+            data.name,
+            data.epoch_tick,
+            data.ticks_per_day,
+            data.weekday_names,
+            data.months,
+        )
+        .map_err(de::Error::custom)
+    }
 }
 
 impl WorldCalendar {
@@ -316,5 +360,55 @@ mod tests {
                 .date_to_tick(CalendarDate::new(i64::MAX, 1, 1, 0))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn deserializes_calendars_through_validated_constructors() {
+        let calendar: WorldCalendar = serde_json::from_str(
+            r#"{
+                "name": " Imperial ",
+                "epoch_tick": 100,
+                "ticks_per_day": 10,
+                "weekday_names": [" First ", "Second"],
+                "months": [{"name": " Ash ", "days": 2}]
+            }"#,
+        )
+        .expect("valid calendar");
+
+        assert_eq!(calendar.name(), "Imperial");
+        assert_eq!(calendar.weekday_names(), ["First", "Second"]);
+        assert_eq!(calendar.months()[0].name(), "Ash");
+    }
+
+    #[test]
+    fn calendar_month_deserialization_rejects_invalid_and_unknown_fields() {
+        for json in [
+            r#"{"name":"   ","days":1}"#,
+            r#"{"name":"Ash","days":0}"#,
+            r#"{"name":"Ash","days":1,"unknown":true}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<CalendarMonth>(json).is_err(),
+                "accepted invalid month: {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn world_calendar_deserialization_rejects_invalid_and_unknown_fields() {
+        for json in [
+            r#"{"name":" ","epoch_tick":0,"ticks_per_day":1,"weekday_names":["Day"],"months":[{"name":"Month","days":1}]}"#,
+            r#"{"name":"Calendar","epoch_tick":0,"ticks_per_day":0,"weekday_names":["Day"],"months":[{"name":"Month","days":1}]}"#,
+            r#"{"name":"Calendar","epoch_tick":0,"ticks_per_day":-1,"weekday_names":["Day"],"months":[{"name":"Month","days":1}]}"#,
+            r#"{"name":"Calendar","epoch_tick":0,"ticks_per_day":1,"weekday_names":[],"months":[{"name":"Month","days":1}]}"#,
+            r#"{"name":"Calendar","epoch_tick":0,"ticks_per_day":1,"weekday_names":[" "],"months":[{"name":"Month","days":1}]}"#,
+            r#"{"name":"Calendar","epoch_tick":0,"ticks_per_day":1,"weekday_names":["Day"],"months":[]}"#,
+            r#"{"name":"Calendar","epoch_tick":0,"ticks_per_day":1,"weekday_names":["Day"],"months":[{"name":"Month","days":1}],"unknown":true}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<WorldCalendar>(json).is_err(),
+                "accepted invalid calendar: {json}"
+            );
+        }
     }
 }

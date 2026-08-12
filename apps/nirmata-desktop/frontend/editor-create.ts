@@ -48,6 +48,8 @@ function defaultCreateValues(kind: SearchObjectKind): Record<string, string> {
         time_certainty: "certain",
         start_tick: "",
         end_tick: "",
+        start_calendar_date: "",
+        end_calendar_date: "",
         location_entity: selectedEntityUri,
         participants: "",
         affected_goal_ids: "",
@@ -178,6 +180,8 @@ export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
         }),
         createField("start_tick", "Tick inicio", "number", values.start_tick),
         createField("end_tick", "Tick fin", "number", values.end_tick),
+        createField("start_calendar_date", "Fecha inicio (año|mes|día|sub-tick)", "text", values.start_calendar_date),
+        createField("end_calendar_date", "Fecha fin (año|mes|día|sub-tick)", "text", values.end_calendar_date),
         createField("location_entity", "Entidad lugar", "text", values.location_entity, {
           help: "UUID o nirmata://entity/...",
         }),

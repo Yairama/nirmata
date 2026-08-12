@@ -133,6 +133,7 @@ impl<'a> Builder<'a> {
         let name = self.required("name");
         let premise_md = self.value("premise_md");
         let epoch_label = self.value("epoch_label");
+        let calendar = self.build_calendar();
         if !self.issues.is_empty() {
             return Ok(None);
         }
@@ -142,6 +143,7 @@ impl<'a> Builder<'a> {
             name.expect("world name"),
             premise_md,
             epoch_label,
+            calendar,
             self.world.current_revision(),
             self.world.created_at_ms(),
             self.now_ms,
@@ -159,6 +161,71 @@ impl<'a> Builder<'a> {
             },
         });
         Ok(self.map_built("name", built))
+    }
+
+    fn build_calendar(&mut self) -> Option<WorldCalendar> {
+        match self.value_or("calendar_mode", "none").trim() {
+            "none" => None,
+            "fixed" => {
+                let name = self.required("calendar_name");
+                let epoch_tick = self.parse_optional_i64("calendar_epoch_tick");
+                if epoch_tick.is_none() {
+                    self.issue("calendar_epoch_tick", "este campo es obligatorio");
+                }
+                let ticks_per_day = self.parse_optional_i64("calendar_ticks_per_day");
+                if ticks_per_day.is_none() {
+                    self.issue("calendar_ticks_per_day", "este campo es obligatorio");
+                }
+                let weekdays = self.lines("calendar_weekdays");
+                if weekdays.is_empty() {
+                    self.issue("calendar_weekdays", "define al menos un día semanal");
+                }
+                let mut months = Vec::new();
+                for (index, line) in self.lines("calendar_months").iter().enumerate() {
+                    let Some((month_name, days)) = line.split_once('|') else {
+                        self.issue(
+                            "calendar_months",
+                            format!("línea {}: usa nombre|días", index + 1),
+                        );
+                        continue;
+                    };
+                    let Ok(days) = days.trim().parse::<u32>() else {
+                        self.issue(
+                            "calendar_months",
+                            format!("línea {}: días debe ser entero", index + 1),
+                        );
+                        continue;
+                    };
+                    match CalendarMonth::new(month_name, days) {
+                        Ok(month) => months.push(month),
+                        Err(error) => self.issue("calendar_months", error.to_string()),
+                    }
+                }
+                if months.is_empty() {
+                    self.issue("calendar_months", "define al menos un mes nombre|días");
+                }
+                if !self.issues.is_empty() {
+                    return None;
+                }
+                match WorldCalendar::new(
+                    name.expect("calendar name"),
+                    epoch_tick.expect("calendar epoch"),
+                    ticks_per_day.expect("calendar ticks per day"),
+                    weekdays,
+                    months,
+                ) {
+                    Ok(calendar) => Some(calendar),
+                    Err(error) => {
+                        self.issue("calendar_mode", error.to_string());
+                        None
+                    }
+                }
+            }
+            _ => {
+                self.issue("calendar_mode", "usa none o fixed");
+                None
+            }
+        }
     }
 
     fn build_entity(&mut self) -> Result<Option<BuiltOperation>, AppError> {

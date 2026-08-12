@@ -216,10 +216,15 @@ pub(crate) fn open_uri(
     uri: &str,
 ) -> Result<OpenUriResponse, AppError> {
     let object = store.resolve_uri_scoped(scope, uri)?;
+    let calendar = store
+        .read_canon_snapshot_scoped(scope)?
+        .world()
+        .calendar()
+        .cloned();
     Ok(OpenUriResponse {
         result: SearchResult::from_object(
             &object,
-            citation_for_object(&object),
+            citation_for_object(&object, calendar.as_ref()),
             format!("open_uri:{uri}"),
             "uri",
             100_000,

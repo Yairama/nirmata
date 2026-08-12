@@ -46,6 +46,7 @@ Cada archivo cubre una sola responsabilidad y puede referenciarse por su ruta.
 - [`validation/deep-review-regression.md`](validation/deep-review-regression.md): presupuestos, fallos, desacuerdos y frontera NIR-047 del perfil profundo.
 - [`validation/lore-import-e2e.md`](validation/lore-import-e2e.md): ingestion hostil, procedencia, revision estandar, commit y undo offline.
 - [`validation/variants-history.md`](validation/variants-history.md): migracion, aislamiento, historia, comparacion y merge limitado.
+- [`validation/calendar-history.md`](validation/calendar-history.md): conversion por ticks, ChangeSet, variantes, snapshots e historia del calendario fijo.
 
 ## Convencion
 

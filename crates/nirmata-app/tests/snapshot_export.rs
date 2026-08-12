@@ -313,10 +313,15 @@ fn exports_complete_equivalent_snapshots_with_stable_identity_and_no_canon_write
         manifest["base_revision"],
         session.current_revision.to_string()
     );
-    assert_eq!(manifest["canon_schema_version"], 9);
+    assert_eq!(manifest["canon_schema_version"], 10);
     assert_eq!(manifest["logical_hash"], first.logical_hash);
 
     let objects = manifest["objects"].as_array().expect("manifest objects");
+    let world_metadata = objects
+        .iter()
+        .find(|object| object["object_type"] == "world")
+        .expect("world object");
+    assert!(world_metadata["metadata"].get("calendar").is_none());
     assert_eq!(objects.len(), first.object_count);
     let object_types = objects
         .iter()

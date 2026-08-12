@@ -216,13 +216,25 @@ fn validate_manifest_header(
             "snapshot belongs to another variant".to_owned(),
         ));
     }
-    if manifest.canon_schema_version != schema_version {
+    let schema_supported = manifest.canon_schema_version == schema_version
+        || (schema_version == 10 && manifest.canon_schema_version == 9);
+    if !schema_supported {
         return Err(invalid(
             path,
             format!(
                 "canon schema {} is not supported by current schema {schema_version}",
                 manifest.canon_schema_version
             ),
+        ));
+    }
+    if manifest.canon_schema_version == 9
+        && manifest.objects.iter().any(|object| {
+            object.object_type == "world" && object.metadata.get("calendar").is_some()
+        })
+    {
+        return Err(invalid(
+            path,
+            "canon schema 9 snapshots cannot define a world calendar".to_owned(),
         ));
     }
     if manifest.objects.is_empty() || manifest.objects.len() > MAX_OBJECTS {
@@ -1074,6 +1086,7 @@ impl SnapshotValue {
                 value.name(),
                 value.premise_md(),
                 value.epoch_label(),
+                value.calendar().cloned(),
                 value.current_revision(),
                 value.created_at_ms(),
                 value.updated_at_ms(),
@@ -1115,6 +1128,7 @@ impl SnapshotValue {
                 value.name(),
                 value.premise_md(),
                 value.epoch_label(),
+                value.calendar().cloned(),
                 old.current_revision(),
                 old.created_at_ms(),
                 now_ms,

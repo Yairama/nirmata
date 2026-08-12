@@ -1021,13 +1021,14 @@ fn materialize_snapshot(
     transaction
         .execute(
             "UPDATE worlds
-             SET name = ?1, premise_md = ?2, epoch_label = ?3, current_revision = ?4,
-                 updated_at_ms = ?5, active_variant_id = ?6
-             WHERE id = ?7",
+             SET name = ?1, premise_md = ?2, epoch_label = ?3, calendar_json = ?4,
+                 current_revision = ?5, updated_at_ms = ?6, active_variant_id = ?7
+             WHERE id = ?8",
             params![
                 snapshot.world.name(),
                 snapshot.world.premise_md(),
                 snapshot.world.epoch_label(),
+                crate::world_store::serialize_calendar(snapshot.world.calendar())?,
                 snapshot.world.current_revision().to_string(),
                 snapshot.world.updated_at_ms(),
                 variant_id.to_string(),

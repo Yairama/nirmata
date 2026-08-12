@@ -1,4 +1,9 @@
-pub(crate) const SCHEMA_VERSION: i64 = 9;
+pub(crate) const SCHEMA_VERSION: i64 = 10;
+
+pub(crate) const CALENDAR_SCHEMA: &str = "
+    ALTER TABLE worlds ADD COLUMN calendar_json TEXT
+        CHECK (calendar_json IS NULL OR json_valid(calendar_json));
+";
 
 pub(crate) const VARIANT_SCHEMA: &str = "
     CREATE TABLE variants (

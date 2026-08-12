@@ -55,6 +55,7 @@ impl PartialEq for MergeWorld {
             && self.0.name() == other.0.name()
             && self.0.premise_md() == other.0.premise_md()
             && self.0.epoch_label() == other.0.epoch_label()
+            && self.0.calendar() == other.0.calendar()
             && self.0.created_at_ms() == other.0.created_at_ms()
     }
 }
@@ -529,6 +530,7 @@ fn merge_operation(
                         after.0.name(),
                         after.0.premise_md(),
                         after.0.epoch_label(),
+                        after.0.calendar().cloned(),
                         before.0.current_revision(),
                         before.0.created_at_ms(),
                         after.0.updated_at_ms(),

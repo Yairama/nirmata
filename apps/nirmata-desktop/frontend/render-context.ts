@@ -157,7 +157,12 @@ function renderTimelineGroup(title: string, events: TimelineEventEntry[]): HTMLD
     meta.append(badge(humanize(event.kind), "kind"), badge(humanize(event.time.kind), "context"));
     const detail = document.createElement("p");
     detail.className = "linked-button-snippet";
-    detail.textContent = formatEventTime(event.time);
+    const calendar = [event.startCalendar?.label, event.endCalendar?.label]
+      .filter((value): value is string => Boolean(value))
+      .join(" → ");
+    detail.textContent = calendar
+      ? `${formatEventTime(event.time)} · ${calendar}`
+      : formatEventTime(event.time);
     item.append(eventTitle, meta, detail);
     item.addEventListener("click", () => {
       void selectUri(event.uri);

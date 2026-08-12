@@ -203,6 +203,93 @@ fn cleanup(mut app: NirmataApp, fixture: &Fixture) {
     panic!("remove fixture: {}", last_error.expect("cleanup error"));
 }
 
+#[test]
+fn calendar_metadata_imports_as_reviewed_world_update_and_undoes() {
+    let fixture = fixture("calendar");
+    let (mut app, snapshot) = open_and_export(&fixture, "calendar-edit");
+    let session = app.get_current_world().expect("session").expect("world");
+    let mut value = manifest(&snapshot);
+    let world_uri = ObjectRef::World(session.world_id).to_string();
+    let index = object_index(&value, &world_uri);
+    value["objects"][index]["metadata"]["calendar"] = json!({
+        "name": "Imperial",
+        "epoch_tick": 100,
+        "ticks_per_day": 10,
+        "weekday_names": ["First", "Second", "Third"],
+        "months": [
+            { "name": "Ash", "days": 2 },
+            { "name": "Rain", "days": 3 }
+        ]
+    });
+    rehash(&snapshot, &mut value);
+
+    let imported = import(&mut app, &snapshot);
+    assert_eq!(imported.created_count, 0);
+    assert_eq!(imported.updated_count, 1);
+    assert_eq!(imported.deleted_count, 0);
+    assert!(
+        app.get_current_world()
+            .expect("session")
+            .expect("world")
+            .world
+            .calendar()
+            .is_none()
+    );
+    app.confirm_stored_manual_review(&imported.review.review_key)
+        .expect("commit calendar import");
+    assert_eq!(
+        app.get_current_world()
+            .expect("session")
+            .expect("world")
+            .world
+            .calendar()
+            .expect("calendar")
+            .name(),
+        "Imperial"
+    );
+    app.undo_last_commit().expect("undo calendar import");
+    assert!(
+        app.get_current_world()
+            .expect("session")
+            .expect("world")
+            .world
+            .calendar()
+            .is_none()
+    );
+    cleanup(app, &fixture);
+}
+
+#[test]
+fn schema_nine_snapshot_without_calendar_remains_importable() {
+    let fixture = fixture("schema-nine-calendar-compat");
+    let (mut app, snapshot) = open_and_export(&fixture, "schema-nine");
+    let mut value = manifest(&snapshot);
+    value["canon_schema_version"] = Value::from(9);
+    let world_index = value["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .position(|object| object["object_type"] == "world")
+        .expect("world");
+    assert!(
+        value["objects"][world_index]["metadata"]
+            .get("calendar")
+            .is_none()
+    );
+    replace_prose(
+        &snapshot,
+        &value,
+        &ObjectRef::Entity(fixture.actor.id()).to_string(),
+        "Edited by a schema nine snapshot.",
+    );
+    rehash(&snapshot, &mut value);
+
+    let imported = import(&mut app, &snapshot);
+    assert_eq!(imported.updated_count, 1);
+    assert!(imported.review.ready_to_confirm);
+    cleanup(app, &fixture);
+}
+
 fn entity_body(project: &Path, id: EntityId) -> String {
     WorldStore::open(project)
         .expect("open entity store")

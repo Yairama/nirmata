@@ -16,7 +16,7 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
 
 ## Estado actual
 
-- NIR-001–NIR-076 están completadas (76 de 89; 85,4 % del backlog general y
+- NIR-001–NIR-078 están completadas (78 de 89; 87,6 % del backlog general y
   100 % del fundamento funcional).
 - El workspace Rust incluye `nirmata-core`, `nirmata-store`, `nirmata-ai`,
   `nirmata-app` y la aplicación Tauri.
@@ -26,13 +26,15 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
   perspectivas, FTS5 y WordNet local con ranking y fuentes navegables.
 - La frontera de IA incluye credenciales seguras, streaming, contratos
   estrictos, modo `Consultar` y generación validada de propuestas.
-- La siguiente tarea funcional es NIR-077, persistir y presentar el calendario
-  fijo sin cambiar la autoridad de los ticks.
+- La siguiente tarea funcional es NIR-079, definir escenarios externos al canon
+  para facciones y recursos discretos.
 - El esquema 9 protege por constraints ejecutables la pertenencia de cabezas,
   revisiones, ChangeSets e import batches. Las consultas IA conservan el scope
   observado y las propuestas no se ejecutan fuera de la cabeza activa.
-- La regresión actual ejecuta 228 pruebas offline: 228 pasaron y 1 smoke test de
-  red quedó omitido. Frontend build, 6 checks de seguridad y desktop build
+- El esquema 10 persiste un calendario fijo opcional dentro de `World`; timeline,
+  citas, variantes, historia y snapshots derivan etiquetas sin alterar ticks.
+- La regresión actual ejecuta 236 pruebas offline: 236 pasaron y 1 smoke test de
+  red quedó omitido. Frontend build, 7 checks de seguridad y desktop build
   también pasaron.
 - NIR-055 integró WordNet en la ruta activa después de las etapas autoritativas
   y FTS5. Sobre `nir-053-v1` mantuvo 25 % de recall de paráfrasis (3/12), 100 %
@@ -501,8 +503,8 @@ cambiar el orden temporal canónico ni crear un lenguaje calendárico universal.
 | Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
 | NIR-076 | Completado | NIR-011, NIR-052 | Definir un modelo de calendario fijo por mundo. | Añadir opcionalmente nombre, tick de epoch, ticks por día, días por semana, nombres de weekdays y una secuencia anual de meses con longitudes fijas. Implementar conversión pura tick a fecha/fecha a tick para valores exactos, incluidos ticks negativos. No incluir leap rules, astronomía, zonas horarias, calendarios múltiples ni DSL. | Pruebas de frontera cubren cambio de día/mes/año, epoch, ticks negativos, configuración inválida y round-trip exacto; quitar el calendario no modifica eventos ni ticks. | [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md), [Modelo](docs/domain/model.md) |
-| NIR-077 | En progreso | NIR-036, NIR-076 | Integrar fechas ficticias en edición, timeline y citas. | Permitir configurar el calendario como ChangeSet, mostrar tick y etiqueta convertida, ingresar una fecha exacta convertida a tick y conservar precisión/certidumbre. Eventos `unknown`, aproximados u ongoing muestran la etiqueta posible sin inventar extremos. Exportar snapshots incluye configuración y ticks canónicos. | Cambiar nombres de meses solo cambia presentación, ordenar timeline sigue usando ticks y una fecha ambigua o inválida no persiste un tick inventado. | [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md), [Interacción](docs/architecture/interaction-model.md) |
-| NIR-078 | Pendiente | NIR-076, NIR-077 | Validar calendario y compatibilidad histórica. | Probar mundos sin calendario, configuración posterior, variantes con calendarios distintos, revisiones históricas, export/import snapshot y fechas en respuestas citadas. | El mismo evento conserva tick e identidad en todos los casos, cada vista usa la configuración de su variante/revisión y ningún cambio de display altera validación causal. | [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md), [Versionado](docs/research/critical-fronts/canon-versioning.md) |
+| NIR-077 | Completado | NIR-036, NIR-076 | Integrar fechas ficticias en edición, timeline y citas. | Permitir configurar el calendario como ChangeSet, mostrar tick y etiqueta convertida, ingresar una fecha exacta convertida a tick y conservar precisión/certidumbre. Eventos `unknown`, aproximados u ongoing muestran la etiqueta posible sin inventar extremos. Exportar snapshots incluye configuración y ticks canónicos. | Cambiar nombres de meses solo cambia presentación, ordenar timeline sigue usando ticks y una fecha ambigua o inválida no persiste un tick inventado. | [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md), [Interacción](docs/architecture/interaction-model.md) |
+| NIR-078 | Completado | NIR-076, NIR-077 | Validar calendario y compatibilidad histórica. | Probar mundos sin calendario, configuración posterior, variantes con calendarios distintos, revisiones históricas, export/import snapshot y fechas en respuestas citadas. | El mismo evento conserva tick e identidad en todos los casos, cada vista usa la configuración de su variante/revisión y ningún cambio de display altera validación causal. | [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md), [Versionado](docs/research/critical-fronts/canon-versioning.md) |
 
 ## Fase 12 — Simulación limitada de facciones y recursos
 

@@ -1,5 +1,5 @@
 use crate::ai::{AiRun, AiRunId, AiRunStatus};
-use crate::context_bundle::build_context_bundle_scoped;
+use crate::context_bundle::{build_context_bundle_scoped, calendar_tick_label};
 use crate::deep_review::{DeepReviewRun, DeepReviewRunId};
 use crate::manual_review::{
     ManualReviewFreshnessSnapshot, annotate_report_with_change_operations, create_undo_review,
@@ -59,6 +59,16 @@ pub struct TimelineEventEntry {
     pub summary: String,
     pub kind: String,
     pub time: nirmata_core::time::EventTime,
+    pub start_calendar: Option<CalendarTickPresentation>,
+    pub end_calendar: Option<CalendarTickPresentation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarTickPresentation {
+    pub tick: i64,
+    pub label: String,
+    pub date_input: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -402,7 +412,7 @@ impl NirmataApp {
     pub fn set_read_scope(&mut self, scope: ReadScope) -> Result<WorldSession, AppError> {
         let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
         let revision = active.store.resolve_scope(scope)?;
-        active.store.read_canon_snapshot_scoped(scope)?;
+        let observed = active.store.read_canon_snapshot_scoped(scope)?;
         active.read_scope = scope;
         active.session.read_scope = if scope.revision_id.is_some() {
             ReadScope::historical(scope.variant_id, revision)
@@ -411,6 +421,7 @@ impl NirmataApp {
         };
         active.session.read_only =
             scope.revision_id.is_some() || scope.variant_id != active.session.active_variant.id;
+        active.session.world = observed.world().clone();
         Ok(active.session.clone())
     }
 
@@ -419,6 +430,7 @@ impl NirmataApp {
         active.read_scope = ReadScope::head(active.session.active_variant.id);
         active.session.read_scope = active.read_scope;
         active.session.read_only = false;
+        active.session.world = active.store.load_world()?;
         Ok(active.session.clone())
     }
 
@@ -760,18 +772,28 @@ impl NirmataApp {
 
     pub fn list_timeline_events(&self) -> Result<TimelineOverview, AppError> {
         let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let snapshot = active.store.read_canon_snapshot_scoped(active.read_scope)?;
+        let calendar = snapshot.world().calendar();
         let mut known = Vec::new();
         let mut unknown = Vec::new();
-        for aggregate in active
-            .store
-            .read_canon_snapshot_scoped(active.read_scope)?
-            .events()
-        {
+        for aggregate in snapshot.events() {
+            let start_calendar = aggregate
+                .event()
+                .time()
+                .start_tick()
+                .and_then(|tick| calendar_tick_presentation(calendar, tick));
+            let end_calendar = aggregate
+                .event()
+                .time()
+                .end_tick()
+                .and_then(|tick| calendar_tick_presentation(calendar, tick));
             let entry = TimelineEventEntry {
                 uri: format!("nirmata://event/{}", aggregate.event().id()),
                 summary: aggregate.event().summary().to_owned(),
                 kind: aggregate.event().kind().to_owned(),
                 time: *aggregate.event().time(),
+                start_calendar,
+                end_calendar,
             };
             if aggregate.event().time().start_tick().is_some() {
                 known.push(entry);
@@ -972,6 +994,22 @@ impl NirmataApp {
     }
 }
 
+fn calendar_tick_presentation(
+    calendar: Option<&nirmata_core::calendar::WorldCalendar>,
+    tick: i64,
+) -> Option<CalendarTickPresentation> {
+    let calendar = calendar?;
+    let date = calendar.tick_to_date(tick).ok()?;
+    Some(CalendarTickPresentation {
+        tick,
+        label: calendar_tick_label(Some(calendar), tick)?,
+        date_input: format!(
+            "{}|{}|{}|{}",
+            date.year, date.month, date.day, date.tick_in_day
+        ),
+    })
+}
+
 fn timeline_sort_key(time: &nirmata_core::time::EventTime, summary: &str) -> (i64, i64, String) {
     (
         time.start_tick().unwrap_or(i64::MAX),
@@ -999,8 +1037,17 @@ fn refresh_active_world(active: &mut ActiveWorld) -> Result<(), AppError> {
     let world = active.store.load_world()?;
     active.session.world_id = world.id();
     active.session.current_revision = world.current_revision();
-    active.session.world = world;
     active.session.active_variant = active.store.active_variant()?;
+    active.session.world = if active.read_scope == ReadScope::head(active.session.active_variant.id)
+    {
+        world
+    } else {
+        active
+            .store
+            .read_canon_snapshot_scoped(active.read_scope)?
+            .world()
+            .clone()
+    };
     Ok(())
 }
 

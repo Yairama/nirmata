@@ -174,6 +174,7 @@ fn committing_and_undoing_world_and_event_causality_round_trips() {
         "Arcadia Prime",
         "Una ciudad que recuerda cada juramento.",
         "Second Dawn",
+        None,
         world.current_revision(),
         world.created_at_ms(),
         20,

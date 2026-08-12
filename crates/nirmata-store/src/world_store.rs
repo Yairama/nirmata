@@ -1,11 +1,12 @@
 use crate::schema::{
-    CANON_SCHEMA, CHANGE_SET_SCHEMA, INITIAL_SCHEMA, LORE_IMPORT_SCHEMA,
+    CALENDAR_SCHEMA, CANON_SCHEMA, CHANGE_SET_SCHEMA, INITIAL_SCHEMA, LORE_IMPORT_SCHEMA,
     REVISION_COMPLETION_SCHEMA, SCHEMA_VERSION, UNDO_SCHEMA, VARIANT_INTEGRITY_SCHEMA,
     VARIANT_SCHEMA,
 };
 use crate::search;
 use nirmata_core::{
     DomainError, RevisionId, VariantId, World, WorldId,
+    calendar::WorldCalendar,
     claim::Claim,
     document::{ContentReference, DocumentAggregate},
     entity::Entity,
@@ -96,6 +97,7 @@ impl CanonSnapshot {
             self.world.name(),
             self.world.premise_md(),
             self.world.epoch_label(),
+            self.world.calendar().cloned(),
             revision_id,
             self.world.created_at_ms(),
             self.world.updated_at_ms(),
@@ -203,7 +205,7 @@ impl WorldStore {
         let values = self
             .connection
             .query_row(
-                "SELECT id, name, premise_md, epoch_label, current_revision,
+                "SELECT id, name, premise_md, epoch_label, calendar_json, current_revision,
                         created_at_ms, updated_at_ms
                  FROM worlds",
                 [],
@@ -213,9 +215,10 @@ impl WorldStore {
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, i64>(5)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, String>(5)?,
                         row.get::<_, i64>(6)?,
+                        row.get::<_, i64>(7)?,
                     ))
                 },
             )
@@ -223,7 +226,8 @@ impl WorldStore {
 
         let world_id = WorldId::from_str(&values.0)
             .map_err(|_| StoreError::InvalidFormat(self.path.clone()))?;
-        let revision_id = RevisionId::from_str(&values.4)
+        let calendar = parse_calendar_json(&self.path, values.4.as_deref())?;
+        let revision_id = RevisionId::from_str(&values.5)
             .map_err(|_| StoreError::InvalidFormat(self.path.clone()))?;
 
         World::restore(
@@ -231,9 +235,10 @@ impl WorldStore {
             values.1,
             values.2,
             values.3,
+            calendar,
             revision_id,
-            values.5,
             values.6,
+            values.7,
         )
         .map_err(|_| StoreError::InvalidFormat(self.path.clone()))
     }
@@ -273,7 +278,7 @@ pub(crate) fn read_canon_snapshot_from_connection(
 ) -> Result<CanonSnapshot, StoreError> {
     let values = connection
         .query_row(
-            "SELECT id, name, premise_md, epoch_label, current_revision,
+            "SELECT id, name, premise_md, epoch_label, calendar_json, current_revision,
                     created_at_ms, updated_at_ms FROM worlds",
             [],
             |row| {
@@ -282,9 +287,10 @@ pub(crate) fn read_canon_snapshot_from_connection(
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, i64>(5)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
                     row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
                 ))
             },
         )
@@ -297,12 +303,13 @@ pub(crate) fn read_canon_snapshot_from_connection(
         values.1,
         values.2,
         values.3,
+        parse_calendar_json(path, values.4.as_deref())?,
         values
-            .4
+            .5
             .parse()
             .map_err(|_| StoreError::InvalidFormat(path.to_owned()))?,
-        values.5,
         values.6,
+        values.7,
     )
     .map_err(|_| StoreError::InvalidFormat(path.to_owned()))?;
     let ids = |table: &str| -> Result<Vec<String>, StoreError> {
@@ -353,6 +360,28 @@ pub(crate) fn read_canon_snapshot_from_connection(
         ),
         content_references: crate::content::load_all(connection, path, world_id)?,
     })
+}
+
+pub(crate) fn serialize_calendar(
+    calendar: Option<&WorldCalendar>,
+) -> Result<Option<String>, StoreError> {
+    calendar
+        .map(|calendar| {
+            serde_json::to_string(calendar)
+                .map_err(|error| StoreError::InvalidAggregate(error.to_string()))
+        })
+        .transpose()
+}
+
+fn parse_calendar_json(
+    path: &Path,
+    value: Option<&str>,
+) -> Result<Option<WorldCalendar>, StoreError> {
+    value
+        .map(|value| {
+            serde_json::from_str(value).map_err(|_| StoreError::InvalidFormat(path.to_owned()))
+        })
+        .transpose()
 }
 
 fn current_time_ms() -> i64 {
@@ -551,6 +580,9 @@ fn install_variant_schema(connection: &Connection, path: &Path) -> Result<(), St
         .map_err(|error| map_database_error(path, error))?;
     connection
         .execute_batch(VARIANT_INTEGRITY_SCHEMA)
+        .map_err(|error| map_database_error(path, error))?;
+    connection
+        .execute_batch(CALENDAR_SCHEMA)
         .map_err(|error| map_database_error(path, error))
 }
 
@@ -842,6 +874,31 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
             transaction
                 .execute_batch(VARIANT_INTEGRITY_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(CALENDAR_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            initialize_variant_history(&transaction, path)?;
+            transaction
+                .execute(
+                    "INSERT INTO schema_migrations (version, applied_at_ms)
+                     VALUES (?1, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))",
+                    [SCHEMA_VERSION],
+                )
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .pragma_update(None, "user_version", SCHEMA_VERSION)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .commit()
+                .map_err(|error| map_database_error(path, error))
+        }
+        9 => {
+            let transaction = connection
+                .transaction()
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(CALENDAR_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
             initialize_variant_history(&transaction, path)?;
             transaction
                 .execute(
@@ -950,7 +1007,7 @@ fn verify_schema_version(
                        'canon_fts', 'revision_undos', 'import_batches', 'import_sources',
                        'import_chunks', 'import_candidates'
                    )"
-            } else if version == 8 || version == 9 {
+            } else if version == 8 || version == 9 || version == 10 {
                 "SELECT COUNT(*) FROM sqlite_schema
                  WHERE type = 'table'
                    AND name IN (
@@ -984,7 +1041,7 @@ fn verify_schema_version(
         5 => 21,
         6 => 22,
         7 => 26,
-        8 | 9 => 28,
+        8 | 9 | 10 => 28,
         _ => return Err(StoreError::InvalidFormat(path.to_owned())),
     };
     if required_table_count != expected_table_count {

@@ -456,25 +456,35 @@ pub(super) fn current_head(connection: &Connection, path: &Path) -> Result<Revis
 pub(super) fn update_world_in_tx(
     transaction: &Transaction<'_>,
     path: &Path,
-    world: &World,
+    before: &World,
+    after: &World,
 ) -> Result<(), StoreError> {
+    let before_calendar = crate::world_store::serialize_calendar(before.calendar())?;
     let changed = transaction
         .execute(
             "UPDATE worlds
-             SET name = ?1, premise_md = ?2, epoch_label = ?3, updated_at_ms = ?4
-             WHERE id = ?5",
+             SET name = ?1, premise_md = ?2, epoch_label = ?3, calendar_json = ?4,
+                 updated_at_ms = ?5
+             WHERE id = ?6 AND name = ?7 AND premise_md = ?8 AND epoch_label = ?9
+               AND calendar_json IS ?10 AND current_revision = ?11",
             params![
-                world.name(),
-                world.premise_md(),
-                world.epoch_label(),
-                world.updated_at_ms(),
-                world.id().to_string(),
+                after.name(),
+                after.premise_md(),
+                after.epoch_label(),
+                crate::world_store::serialize_calendar(after.calendar())?,
+                after.updated_at_ms(),
+                after.id().to_string(),
+                before.name(),
+                before.premise_md(),
+                before.epoch_label(),
+                before_calendar,
+                before.current_revision().to_string(),
             ],
         )
         .map_err(|error| map_database_error(path, error))?;
     if changed == 0 {
         return Err(StoreError::InvalidChangeSet(
-            "world metadata update could not find the target world".to_owned(),
+            "world metadata changed after the reviewed snapshot".to_owned(),
         ));
     }
     Ok(())
@@ -530,7 +540,9 @@ pub(super) fn apply_change_operation(
     operation: &ChangeOperation,
 ) -> Result<(), StoreError> {
     match operation {
-        ChangeOperation::UpdateWorld { after, .. } => update_world_in_tx(transaction, path, after),
+        ChangeOperation::UpdateWorld { before, after, .. } => {
+            update_world_in_tx(transaction, path, before, after)
+        }
         ChangeOperation::CreateEntity { after, .. } => {
             crate::entity::insert_entity_in_tx(transaction, path, after)
         }

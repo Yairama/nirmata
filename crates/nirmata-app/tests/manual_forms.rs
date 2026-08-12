@@ -272,6 +272,117 @@ fn previewing_manual_event_create_supports_causal_links() {
 }
 
 #[test]
+fn calendar_configuration_and_exact_date_input_flow_through_review() {
+    let path = project_path("manual-form-calendar");
+    let world = base_world(&path);
+    let mut app = open_app(&path);
+    let world_uri = ObjectRef::World(world.id()).to_string();
+    let calendar = app
+        .preview_manual_draft(ManualDraftRequest {
+            object_type: "world".to_owned(),
+            objective: Some("Configurar calendario fijo".to_owned()),
+            source_uris: vec![],
+            assumptions: vec![],
+            existing_uri: Some(world_uri.clone()),
+            values: BTreeMap::from([
+                ("name".to_owned(), world.name().to_owned()),
+                ("premise_md".to_owned(), world.premise_md().to_owned()),
+                ("epoch_label".to_owned(), world.epoch_label().to_owned()),
+                ("calendar_mode".to_owned(), "fixed".to_owned()),
+                ("calendar_name".to_owned(), "Imperial".to_owned()),
+                ("calendar_epoch_tick".to_owned(), "100".to_owned()),
+                ("calendar_ticks_per_day".to_owned(), "10".to_owned()),
+                (
+                    "calendar_weekdays".to_owned(),
+                    "First\nSecond\nThird".to_owned(),
+                ),
+                ("calendar_months".to_owned(), "Ash|2\nRain|3".to_owned()),
+            ]),
+        })
+        .expect("calendar preview");
+    assert!(calendar.field_issues.is_empty());
+    let review = calendar.review.expect("calendar review");
+    assert!(review.ready_to_confirm);
+    app.confirm_stored_manual_review(&review.review_key)
+        .expect("commit calendar");
+    let configured = app.get_current_world().expect("session").expect("world");
+    assert_eq!(
+        configured.world.calendar().expect("calendar").name(),
+        "Imperial"
+    );
+
+    let event = app
+        .preview_manual_draft(ManualDraftRequest {
+            object_type: "event".to_owned(),
+            objective: Some("Crear evento por fecha".to_owned()),
+            source_uris: vec![],
+            assumptions: vec![],
+            existing_uri: None,
+            values: BTreeMap::from([
+                ("kind".to_owned(), "festival".to_owned()),
+                ("summary".to_owned(), "Festival de la lluvia".to_owned()),
+                ("time_kind".to_owned(), "instant".to_owned()),
+                ("time_precision".to_owned(), "exact".to_owned()),
+                ("time_certainty".to_owned(), "certain".to_owned()),
+                ("start_calendar_date".to_owned(), "0|2|1|0".to_owned()),
+            ]),
+        })
+        .expect("event date preview");
+    assert!(event.field_issues.is_empty());
+    let event_review = event.review.expect("event review");
+    app.confirm_stored_manual_review(&event_review.review_key)
+        .expect("commit dated event");
+    let timeline = app.list_timeline_events().expect("timeline");
+    let festival = timeline
+        .known
+        .iter()
+        .find(|entry| entry.summary == "Festival de la lluvia")
+        .expect("festival");
+    assert_eq!(festival.time.start_tick(), Some(120));
+    assert!(
+        festival
+            .start_calendar
+            .as_ref()
+            .expect("calendar label")
+            .label
+            .contains("Rain 1")
+    );
+    let citation = app
+        .open_uri(&event_review.review_key)
+        .expect("open cited event");
+    assert!(citation.result.snippet.contains("Imperial"));
+    assert!(citation.result.snippet.contains("tick 120"));
+
+    let invalid = app
+        .preview_manual_draft(ManualDraftRequest {
+            object_type: "event".to_owned(),
+            objective: None,
+            source_uris: vec![],
+            assumptions: vec![],
+            existing_uri: None,
+            values: BTreeMap::from([
+                ("kind".to_owned(), "festival".to_owned()),
+                ("summary".to_owned(), "Fecha imposible".to_owned()),
+                ("time_kind".to_owned(), "instant".to_owned()),
+                ("time_precision".to_owned(), "exact".to_owned()),
+                ("time_certainty".to_owned(), "certain".to_owned()),
+                ("start_calendar_date".to_owned(), "0|2|4|0".to_owned()),
+            ]),
+        })
+        .expect("invalid date response");
+    assert!(invalid.draft.is_none());
+    assert!(
+        invalid
+            .field_issues
+            .iter()
+            .any(|issue| issue.field == "start_calendar_date")
+    );
+
+    app.close_world().expect("close");
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
 fn previewing_manual_document_update_supports_content_reference_reordering() {
     let path = project_path("manual-form-document-references");
     let world = base_world(&path);

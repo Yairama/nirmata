@@ -100,3 +100,11 @@ test("lore import uses standard AI and explicit review without deep-review coupl
   assert.doesNotMatch(importModule, /prepare_deep_review|execute_deep_review/u);
   assert.match(importModule, /original permanecen intactos/u);
 });
+
+test("calendar UI delegates conversion to Rust and preserves canonical ticks", () => {
+  assert.match(frontendSource, /calendar_mode/u);
+  assert.match(frontendSource, /calendar_months/u);
+  assert.match(frontendSource, /start_calendar_date/u);
+  assert.match(frontendSource, /año\|mes\|día\|sub-tick/u);
+  assert.doesNotMatch(frontendSource, /function\s+(tickToDate|dateToTick)/u);
+});

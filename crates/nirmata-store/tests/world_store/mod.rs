@@ -82,13 +82,14 @@ fn downgrade_to_schema_seven(path: &Path) {
              DROP TABLE revision_snapshots;
              DROP TABLE variants;
              ALTER TABLE worlds DROP COLUMN active_variant_id;
+             ALTER TABLE worlds DROP COLUMN calendar_json;
              ALTER TABLE revisions DROP COLUMN source_revision_id;
              ALTER TABLE revisions DROP COLUMN variant_id;
              ALTER TABLE change_sets DROP COLUMN variant_id;
              ALTER TABLE import_batches DROP COLUMN variant_id;
              CREATE UNIQUE INDEX revisions_linear_parent ON revisions (parent_revision_id)
                  WHERE parent_revision_id IS NOT NULL;
-             UPDATE schema_migrations SET version = 7 WHERE version = 9;
+             UPDATE schema_migrations SET version = 7 WHERE version = 10;
              PRAGMA user_version = 7;",
         )
         .expect("downgrade fixture to schema seven");
@@ -394,6 +395,42 @@ fn variant_integrity_triggers_reject_null_and_unknown_revision_links() {
             .expect("active variant remains"),
         active.id.to_string()
     );
+    drop(connection);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
+fn migrates_schema_nine_world_to_optional_calendar_column() {
+    let path = project_path("calendar-migration");
+    let world = World::new("Arcadia", "", "Dawn", 1).expect("world");
+    let store = WorldStore::create(&path, &world).expect("create store");
+    drop(store);
+    let connection = Connection::open(&path).expect("open old schema fixture");
+    connection
+        .execute_batch(
+            "ALTER TABLE worlds DROP COLUMN calendar_json;
+             UPDATE schema_migrations SET version = 9 WHERE version = 10;
+             PRAGMA user_version = 9;",
+        )
+        .expect("downgrade to schema nine");
+    drop(connection);
+
+    let migrated = WorldStore::open(&path).expect("migrate calendar schema");
+    assert!(migrated.load_world().expect("world").calendar().is_none());
+    drop(migrated);
+    let connection = Connection::open(&path).expect("inspect schema");
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("version");
+    assert_eq!(version, 10);
+    let calendar_column: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('worlds') WHERE name = 'calendar_json'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("calendar column");
+    assert_eq!(calendar_column, 1);
     drop(connection);
     fs::remove_file(path).expect("remove project");
 }

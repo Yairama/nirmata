@@ -78,6 +78,27 @@ fn world_snapshot(world: &World) -> ManualReviewObjectSnapshot {
         lines: vec![
             line_item("Premisa", preview(world.premise_md())),
             line_item("Epoch", preview(world.epoch_label())),
+            line_item(
+                "Calendario",
+                world
+                    .calendar()
+                    .map(|calendar| {
+                        format!(
+                            "{} · epoch {} · {} ticks/día · weekdays {} · meses {}",
+                            calendar.name(),
+                            calendar.epoch_tick(),
+                            calendar.ticks_per_day(),
+                            calendar.weekday_names().join(", "),
+                            calendar
+                                .months()
+                                .iter()
+                                .map(|month| format!("{}|{}", month.name(), month.days()))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })
+                    .unwrap_or_else(|| "Sin calendario".to_owned()),
+            ),
             line_item("Revisión", world.current_revision().to_string()),
         ],
     }

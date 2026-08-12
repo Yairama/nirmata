@@ -1,9 +1,46 @@
 fn world_values(world: &World) -> BTreeMap<String, String> {
-    BTreeMap::from([
+    let mut values = BTreeMap::from([
         ("name".to_owned(), world.name().to_owned()),
         ("premise_md".to_owned(), world.premise_md().to_owned()),
         ("epoch_label".to_owned(), world.epoch_label().to_owned()),
-    ])
+    ]);
+    if let Some(calendar) = world.calendar() {
+        values.insert("calendar_mode".to_owned(), "fixed".to_owned());
+        values.insert("calendar_name".to_owned(), calendar.name().to_owned());
+        values.insert(
+            "calendar_epoch_tick".to_owned(),
+            calendar.epoch_tick().to_string(),
+        );
+        values.insert(
+            "calendar_ticks_per_day".to_owned(),
+            calendar.ticks_per_day().to_string(),
+        );
+        values.insert(
+            "calendar_weekdays".to_owned(),
+            calendar.weekday_names().join("\n"),
+        );
+        values.insert(
+            "calendar_months".to_owned(),
+            calendar
+                .months()
+                .iter()
+                .map(|month| format!("{}|{}", month.name(), month.days()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    } else {
+        values.insert("calendar_mode".to_owned(), "none".to_owned());
+        for field in [
+            "calendar_name",
+            "calendar_epoch_tick",
+            "calendar_ticks_per_day",
+            "calendar_weekdays",
+            "calendar_months",
+        ] {
+            values.insert(field.to_owned(), String::new());
+        }
+    }
+    values
 }
 
 fn entity_values(entity: &Entity) -> BTreeMap<String, String> {

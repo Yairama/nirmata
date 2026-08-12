@@ -264,6 +264,16 @@ impl<'a> Builder<'a> {
         let certainty = self.parse_certainty("time_certainty");
         let start_tick = self.parse_optional_i64("start_tick");
         let end_tick = self.parse_optional_i64("end_tick");
+        let start_date_tick = self.parse_calendar_date("start_calendar_date");
+        let end_date_tick = self.parse_calendar_date("end_calendar_date");
+        if start_tick.is_some() && start_date_tick.is_some() && start_tick != start_date_tick {
+            self.issue("start_calendar_date", "la fecha no coincide con start_tick");
+        }
+        if end_tick.is_some() && end_date_tick.is_some() && end_tick != end_date_tick {
+            self.issue("end_calendar_date", "la fecha no coincide con end_tick");
+        }
+        let start_tick = start_date_tick.or(start_tick);
+        let end_tick = end_date_tick.or(end_tick);
         if !self.issues.is_empty() {
             return None;
         }
@@ -289,6 +299,39 @@ impl<'a> Builder<'a> {
             }
             Err(other) => {
                 self.issue("time_kind", other.to_string());
+                None
+            }
+        }
+    }
+
+    fn parse_calendar_date(&mut self, field: &str) -> Option<i64> {
+        let value = self.optional(field)?;
+        let Some(calendar) = self.world.calendar() else {
+            self.issue(field, "el mundo no tiene calendario configurado");
+            return None;
+        };
+        let parts = value
+            .split('|')
+            .map(str::trim)
+            .collect::<Vec<_>>();
+        if parts.len() != 4 {
+            self.issue(field, "usa año|mes|día|sub-tick");
+            return None;
+        }
+        let parsed = (
+            parts[0].parse::<i64>(),
+            parts[1].parse::<u32>(),
+            parts[2].parse::<u32>(),
+            parts[3].parse::<i64>(),
+        );
+        let (Ok(year), Ok(month), Ok(day), Ok(tick_in_day)) = parsed else {
+            self.issue(field, "año, mes, día y sub-tick deben ser enteros");
+            return None;
+        };
+        match calendar.date_to_tick(CalendarDate::new(year, month, day, tick_in_day)) {
+            Ok(tick) => Some(tick),
+            Err(error) => {
+                self.issue(field, error.to_string());
                 None
             }
         }

@@ -1,3 +1,4 @@
+use crate::calendar::WorldCalendar;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt, str::FromStr};
 use uuid::Uuid;
@@ -149,6 +150,8 @@ pub struct World {
     name: String,
     premise_md: String,
     epoch_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    calendar: Option<WorldCalendar>,
     current_revision: RevisionId,
     created_at_ms: i64,
     updated_at_ms: i64,
@@ -166,6 +169,7 @@ impl World {
             name,
             premise_md,
             epoch_label,
+            None,
             RevisionId::new(),
             now_ms,
             now_ms,
@@ -177,6 +181,7 @@ impl World {
         name: impl Into<String>,
         premise_md: impl Into<String>,
         epoch_label: impl Into<String>,
+        calendar: Option<WorldCalendar>,
         current_revision: RevisionId,
         created_at_ms: i64,
         updated_at_ms: i64,
@@ -198,6 +203,7 @@ impl World {
             name,
             premise_md,
             epoch_label,
+            calendar,
             current_revision,
             created_at_ms,
             updated_at_ms,
@@ -218,6 +224,10 @@ impl World {
 
     pub fn epoch_label(&self) -> &str {
         &self.epoch_label
+    }
+
+    pub fn calendar(&self) -> Option<&WorldCalendar> {
+        self.calendar.as_ref()
     }
 
     pub fn current_revision(&self) -> RevisionId {

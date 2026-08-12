@@ -9,6 +9,8 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+    thread,
+    time::Duration,
 };
 
 pub(crate) const SNAPSHOT_FORMAT: &str = "nirmata-vfs-snapshot";
@@ -486,12 +488,33 @@ fn publish_atomically(
     let mut staging = StagingDirectory::create(parent)?;
     write(staging.path())?;
     ensure_destination_available(&destination)?;
-    fs::rename(staging.path(), &destination).map_err(|source| AppError::SnapshotIo {
-        path: destination,
-        source,
-    })?;
+    rename_with_retry(staging.path(), &destination)?;
     staging.published = true;
     Ok(())
+}
+
+fn rename_with_retry(source: &Path, destination: &Path) -> Result<(), AppError> {
+    for attempt in 0..40 {
+        match fs::rename(source, destination) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt < 39
+                    && matches!(
+                        error.kind(),
+                        io::ErrorKind::PermissionDenied | io::ErrorKind::WouldBlock
+                    ) =>
+            {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(source) => {
+                return Err(AppError::SnapshotIo {
+                    path: destination.to_path_buf(),
+                    source,
+                });
+            }
+        }
+    }
+    unreachable!("bounded rename loop always returns")
 }
 
 struct StagingDirectory {

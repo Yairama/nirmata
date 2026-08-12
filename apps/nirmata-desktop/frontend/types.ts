@@ -3,6 +3,7 @@ export type World = {
   name: string;
   premise_md: string;
   epoch_label: string;
+  calendar?: WorldCalendar | null;
   current_revision: string;
   created_at_ms: number;
   updated_at_ms: number;
@@ -16,6 +17,19 @@ export type WorldSession = {
   active_variant: Variant;
   read_scope: ReadScope;
   read_only: boolean;
+};
+
+export type CalendarMonth = {
+  name: string;
+  days: number;
+};
+
+export type WorldCalendar = {
+  name: string;
+  epoch_tick: number;
+  ticks_per_day: number;
+  weekday_names: string[];
+  months: CalendarMonth[];
 };
 
 export type ReadScope = {
@@ -452,6 +466,14 @@ export type TimelineEventEntry = {
   summary: string;
   kind: string;
   time: EventTime;
+  startCalendar: CalendarTickPresentation | null;
+  endCalendar: CalendarTickPresentation | null;
+};
+
+export type CalendarTickPresentation = {
+  tick: number;
+  label: string;
+  dateInput: string;
 };
 
 export type TimelineOverview = {

@@ -133,11 +133,7 @@ function buildWorldEditor(): EditorMode | null {
     objective: `Update world ${world.name}`,
     sourceUrisText: worldUri,
     assumptionsText: "",
-    fields: [
-      createField("name", "Nombre", "text", world.name, { required: true }),
-      createField("premise_md", "Premisa", "textarea", world.premise_md, { rows: 6 }),
-      createField("epoch_label", "Etiqueta del epoch", "text", world.epoch_label),
-    ],
+    fields: worldFields(world),
     metadata: [
       { label: "URI", value: worldUri },
       { label: "Revisión base", value: world.current_revision },
@@ -167,11 +163,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       objective: `Update world ${object.world.name}`,
       sourceUrisText,
       assumptionsText: "",
-      fields: [
-        createField("name", "Nombre", "text", object.world.name, { required: true }),
-        createField("premise_md", "Premisa", "textarea", object.world.premise_md, { rows: 6 }),
-        createField("epoch_label", "Etiqueta del epoch", "text", object.world.epoch_label),
-      ],
+      fields: worldFields(object.world),
       metadata: [{ label: "URI", value: result.uri }],
       warnings,
       links: [],
@@ -366,6 +358,8 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
         }),
         createField("start_tick", "Tick inicio", "number", event.time.start_tick?.toString() ?? ""),
         createField("end_tick", "Tick fin", "number", event.time.end_tick?.toString() ?? ""),
+        createField("start_calendar_date", "Fecha inicio (año|mes|día|sub-tick)", "text", ""),
+        createField("end_calendar_date", "Fecha fin (año|mes|día|sub-tick)", "text", ""),
         createField("location_entity", "Entidad lugar", "text", event.location_entity_id ?? "", {
           help: "UUID o nirmata://entity/...",
         }),
@@ -731,4 +725,36 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
     links: dedupeLinks(links),
   });
   return restorePendingValues(editor, state.pendingDrafts.get(result.uri));
+}
+
+function worldFields(world: import("./types.js").World): EditorField[] {
+  const calendar = world.calendar ?? null;
+  return [
+    createField("name", "Nombre", "text", world.name, { required: true }),
+    createField("premise_md", "Premisa", "textarea", world.premise_md, { rows: 6 }),
+    createField("epoch_label", "Etiqueta del epoch", "text", world.epoch_label),
+    createField("calendar_mode", "Calendario", "select", calendar ? "fixed" : "none", {
+      options: [
+        { value: "none", label: "Sin calendario" },
+        { value: "fixed", label: "Calendario fijo" },
+      ],
+    }),
+    createField("calendar_name", "Nombre del calendario", "text", calendar?.name ?? ""),
+    createField("calendar_epoch_tick", "Tick del epoch", "text", String(calendar?.epoch_tick ?? 0)),
+    createField("calendar_ticks_per_day", "Ticks por día", "text", String(calendar?.ticks_per_day ?? 1)),
+    createField(
+      "calendar_weekdays",
+      "Weekdays (uno por línea)",
+      "textarea",
+      calendar?.weekday_names.join("\n") ?? "",
+      { rows: 4 },
+    ),
+    createField(
+      "calendar_months",
+      "Meses (nombre|días)",
+      "textarea",
+      calendar?.months.map((month) => `${month.name}|${month.days}`).join("\n") ?? "",
+      { rows: 5 },
+    ),
+  ];
 }

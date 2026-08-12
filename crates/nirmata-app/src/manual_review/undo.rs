@@ -258,6 +258,7 @@ fn restored_world(
         snapshot.name(),
         snapshot.premise_md(),
         snapshot.epoch_label(),
+        snapshot.calendar().cloned(),
         current_revision,
         snapshot.created_at_ms(),
         now_ms,
