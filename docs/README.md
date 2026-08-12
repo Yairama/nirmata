@@ -40,6 +40,12 @@ Cada archivo cubre una sola responsabilidad y puede referenciarse por su ruta.
 - [`roadmap/phases.md`](roadmap/phases.md): orden recomendado de construccion.
 - [`validation/vertical-slice.md`](validation/vertical-slice.md): escenario que valida la tesis del producto.
 - [`validation/ai-regression-suite.md`](validation/ai-regression-suite.md): casos para validar generador y critico.
+- [`validation/foundation-acceptance.md`](validation/foundation-acceptance.md): aceptacion ejecutable del fundamento funcional.
+- [`validation/retrieval-benchmark.md`](validation/retrieval-benchmark.md): corpus, metricas y gate semantico de recuperacion.
+- [`validation/retrieval-snapshot-e2e.md`](validation/retrieval-snapshot-e2e.md): aceptacion unida de recuperacion activa y snapshots.
+- [`validation/deep-review-regression.md`](validation/deep-review-regression.md): presupuestos, fallos, desacuerdos y frontera NIR-047 del perfil profundo.
+- [`validation/lore-import-e2e.md`](validation/lore-import-e2e.md): ingestion hostil, procedencia, revision estandar, commit y undo offline.
+- [`validation/variants-history.md`](validation/variants-history.md): migracion, aislamiento, historia, comparacion y merge limitado.
 
 ## Convencion
 

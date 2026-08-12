@@ -1,12 +1,15 @@
 use crate::{
     AppError, ContextBudgetUsage, ContextBundleRequest, ContextEntry, ContextStage,
-    context_bundle::{build_context_bundle, citation_for_object},
+    context_bundle::citation_for_object,
 };
 use nirmata_core::{
     claim::ClaimAuthentication,
     document::{DocumentCanonStatus, ObjectRef},
 };
-use nirmata_store::{ResolvedObject, StructuredSearchKind, StructuredSearchQuery, WorldStore};
+use nirmata_store::{
+    ReadScope, ResolvedObject, StructuredSearchKind, StructuredSearchQuery, StructuredSearchStage,
+    WorldStore,
+};
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -51,10 +54,22 @@ pub struct SearchResult {
     pub authority: SearchAuthority,
     pub classification: SearchClassification,
     pub provenance: String,
+    pub stage: String,
+    pub score: u32,
+    pub rank: usize,
+    pub score_explanation: String,
 }
 
 impl SearchResult {
-    fn from_object(object: &ResolvedObject, snippet: String, provenance: String) -> Self {
+    fn from_object(
+        object: &ResolvedObject,
+        snippet: String,
+        provenance: String,
+        stage: impl Into<String>,
+        score: u32,
+        rank: usize,
+        score_explanation: String,
+    ) -> Self {
         let object_ref = object.object_ref();
         let (authority, classification) = authority_and_classification(object);
         Self {
@@ -66,6 +81,10 @@ impl SearchResult {
             authority,
             classification,
             provenance,
+            stage: stage.into(),
+            score,
+            rank,
+            score_explanation,
         }
     }
 }
@@ -160,17 +179,25 @@ impl RelatedContextResponse {
 
 pub(crate) fn search_world(
     store: &WorldStore,
+    scope: ReadScope,
     request: &SearchWorldRequest,
 ) -> Result<SearchWorldResponse, AppError> {
     let hits = store
-        .search_structured(&request.query)?
+        .search_structured_scoped(scope, &request.query)?
         .into_iter()
-        .map(|hit| {
-            let object = store.resolve_object_ref(hit.object)?;
+        .enumerate()
+        .map(|(index, hit)| {
+            let object = store.resolve_object_ref_scoped(scope, hit.object)?;
+            let score = hit.score();
+            let score_explanation = hit.score_explanation();
             Ok(SearchResult::from_object(
                 &object,
                 hit.fragment,
                 hit.provenance,
+                structured_stage_name(hit.stage),
+                score,
+                index + 1,
+                score_explanation,
             ))
         })
         .collect::<Result<Vec<_>, AppError>>()?;
@@ -183,13 +210,21 @@ pub(crate) fn search_world(
     })
 }
 
-pub(crate) fn open_uri(store: &WorldStore, uri: &str) -> Result<OpenUriResponse, AppError> {
-    let object = store.resolve_uri(uri)?;
+pub(crate) fn open_uri(
+    store: &WorldStore,
+    scope: ReadScope,
+    uri: &str,
+) -> Result<OpenUriResponse, AppError> {
+    let object = store.resolve_uri_scoped(scope, uri)?;
     Ok(OpenUriResponse {
         result: SearchResult::from_object(
             &object,
             citation_for_object(&object),
             format!("open_uri:{uri}"),
+            "uri",
+            100_000,
+            1,
+            "explicit URI resolution".to_owned(),
         ),
         object,
     })
@@ -197,9 +232,10 @@ pub(crate) fn open_uri(store: &WorldStore, uri: &str) -> Result<OpenUriResponse,
 
 pub(crate) fn get_related_context(
     store: &WorldStore,
+    scope: ReadScope,
     request: &RelatedContextRequest,
 ) -> Result<RelatedContextResponse, AppError> {
-    let bundle = build_context_bundle(store, &request.bundle)?;
+    let bundle = crate::context_bundle::build_context_bundle_scoped(store, scope, &request.bundle)?;
     let canon = map_context_entries(bundle.canon, &request.kinds);
     let perspectives = map_context_entries(bundle.perspectives, &request.kinds);
     let desires = map_context_entries(bundle.desires, &request.kinds);
@@ -241,10 +277,43 @@ fn map_context_entries(
         .into_iter()
         .filter(|entry| matches_kind_filter(kinds, entry.object_ref()))
         .map(|entry| RelatedContextEntry {
-            result: SearchResult::from_object(&entry.object, entry.citation, entry.provenance),
+            result: SearchResult::from_object(
+                &entry.object,
+                entry.citation,
+                entry.provenance,
+                context_stage_name(entry.stage),
+                entry.score,
+                entry.rank,
+                entry.score_explanation,
+            ),
             stage: entry.stage,
         })
         .collect()
+}
+
+fn structured_stage_name(stage: StructuredSearchStage) -> &'static str {
+    match stage {
+        StructuredSearchStage::Type => "structured_sql",
+        StructuredSearchStage::Alias => "alias",
+        StructuredSearchStage::Neighbor => "relation",
+        StructuredSearchStage::Goal => "goal",
+        StructuredSearchStage::Perspective => "perspective",
+        StructuredSearchStage::Temporal => "time",
+        StructuredSearchStage::Text => "fts5",
+        StructuredSearchStage::Semantic => "semantic",
+    }
+}
+
+fn context_stage_name(stage: ContextStage) -> &'static str {
+    match stage {
+        ContextStage::Selection => "selection",
+        ContextStage::Relation => "relation",
+        ContextStage::Temporal => "time",
+        ContextStage::Goal => "goal",
+        ContextStage::Perspective => "perspective",
+        ContextStage::Search => "fts5",
+        ContextStage::Semantic => "semantic",
+    }
 }
 
 fn matches_kind_filter(kinds: &[StructuredSearchKind], object: ObjectRef) -> bool {

@@ -73,6 +73,7 @@ impl<'a> Builder<'a> {
             });
         };
         let review = ManualReviewSession::create(
+            self.store.active_variant()?.id,
             self.session.world_id,
             self.session.current_revision,
             ManualReviewInput {

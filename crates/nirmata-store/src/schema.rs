@@ -1,4 +1,110 @@
-pub(crate) const SCHEMA_VERSION: i64 = 6;
+pub(crate) const SCHEMA_VERSION: i64 = 8;
+
+pub(crate) const VARIANT_SCHEMA: &str = "
+    CREATE TABLE variants (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL,
+        name TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(name)) > 0),
+        head_revision_id TEXT NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+        created_from_revision_id TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        UNIQUE (world_id, name),
+        FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE,
+        FOREIGN KEY (head_revision_id) REFERENCES revisions(id),
+        FOREIGN KEY (created_from_revision_id) REFERENCES revisions(id)
+    );
+
+    CREATE TABLE revision_snapshots (
+        revision_id TEXT PRIMARY KEY,
+        snapshot_json TEXT NOT NULL,
+        FOREIGN KEY (revision_id) REFERENCES revisions(id) ON DELETE CASCADE
+    );
+
+    ALTER TABLE worlds ADD COLUMN active_variant_id TEXT;
+    ALTER TABLE revisions ADD COLUMN variant_id TEXT;
+    ALTER TABLE revisions ADD COLUMN source_revision_id TEXT;
+    ALTER TABLE change_sets ADD COLUMN variant_id TEXT;
+    ALTER TABLE import_batches ADD COLUMN variant_id TEXT;
+    DROP INDEX revisions_linear_parent;
+    CREATE UNIQUE INDEX revisions_variant_parent
+        ON revisions (variant_id, parent_revision_id)
+        WHERE parent_revision_id IS NOT NULL;
+    CREATE INDEX revisions_variant_id ON revisions (variant_id, created_at_ms);
+    CREATE INDEX change_sets_variant_id ON change_sets (variant_id, created_at_ms);
+    CREATE INDEX import_batches_variant_id ON import_batches (variant_id, created_at_ms);
+";
+
+pub(crate) const LORE_IMPORT_SCHEMA: &str = "
+    CREATE TABLE import_batches (
+        id TEXT PRIMARY KEY,
+        world_id TEXT NOT NULL,
+        target_revision_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+            status IN ('ready', 'extracting', 'reviewing', 'cancelled')
+        ),
+        created_at_ms INTEGER NOT NULL,
+        FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE,
+        FOREIGN KEY (target_revision_id) REFERENCES revisions(id)
+    );
+
+    CREATE TABLE import_sources (
+        id TEXT PRIMARY KEY,
+        batch_id TEXT NOT NULL,
+        source_path TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        format TEXT NOT NULL CHECK (format IN ('markdown', 'text')),
+        content_hash TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+        content_utf8 TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('ready', 'replaced')),
+        UNIQUE (batch_id, source_path),
+        FOREIGN KEY (batch_id) REFERENCES import_batches(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE import_chunks (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL,
+        source_hash TEXT NOT NULL,
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        byte_start INTEGER NOT NULL CHECK (byte_start >= 0),
+        byte_end INTEGER NOT NULL CHECK (byte_end >= byte_start),
+        line_start INTEGER NOT NULL CHECK (line_start >= 1),
+        line_end INTEGER NOT NULL CHECK (line_end >= line_start),
+        heading TEXT,
+        content_utf8 TEXT NOT NULL,
+        UNIQUE (source_id, source_hash, ordinal),
+        FOREIGN KEY (source_id) REFERENCES import_sources(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE import_candidates (
+        id TEXT PRIMARY KEY,
+        batch_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        source_hash TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (
+            kind IN ('entity', 'relation', 'event', 'claim', 'rule')
+        ),
+        payload_json TEXT NOT NULL,
+        citations_json TEXT NOT NULL,
+        technical_confidence REAL NOT NULL CHECK (
+            technical_confidence >= 0.0 AND technical_confidence <= 1.0
+        ),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'selected', 'rejected')),
+        identity_decision TEXT CHECK (
+            identity_decision IS NULL OR identity_decision IN ('exact', 'ambiguous', 'new')
+        ),
+        canonical_uri TEXT,
+        contradiction_key TEXT,
+        FOREIGN KEY (batch_id) REFERENCES import_batches(id) ON DELETE CASCADE,
+        FOREIGN KEY (source_id) REFERENCES import_sources(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX import_batches_world_id ON import_batches (world_id, created_at_ms);
+    CREATE INDEX import_sources_batch_id ON import_sources (batch_id, id);
+    CREATE INDEX import_chunks_source_id ON import_chunks (source_id, source_hash, ordinal);
+    CREATE INDEX import_candidates_batch_id ON import_candidates (batch_id, status, id);
+";
 
 pub(crate) const INITIAL_SCHEMA: &str = "
     CREATE TABLE schema_migrations (

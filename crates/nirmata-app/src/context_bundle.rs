@@ -6,7 +6,10 @@ use nirmata_core::{
     event::Event,
     time::{EventTime, EventTimeKind},
 };
-use nirmata_store::{ResolvedObject, StructuredSearchQuery, StructuredSearchTemporal, WorldStore};
+use nirmata_store::{
+    ReadScope, ResolvedObject, StructuredSearchQuery, StructuredSearchStage,
+    StructuredSearchTemporal, WorldStore,
+};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -28,6 +31,7 @@ pub enum ContextStage {
     Goal,
     Perspective,
     Search,
+    Semantic,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -102,6 +106,9 @@ pub struct ContextEntry {
     pub citation: String,
     pub provenance: String,
     pub stage: ContextStage,
+    pub score: u32,
+    pub rank: usize,
+    pub score_explanation: String,
 }
 
 impl ContextEntry {
@@ -164,8 +171,9 @@ impl ContextBundle {
     }
 }
 
-pub(crate) fn build_context_bundle(
+pub(crate) fn build_context_bundle_scoped(
     store: &WorldStore,
+    scope: ReadScope,
     request: &ContextBundleRequest,
 ) -> Result<ContextBundle, AppError> {
     let mut collector = ContextCollector::new(request.budget, &request.perspective_entity_ids);
@@ -178,7 +186,7 @@ pub(crate) fn build_context_bundle(
     let mut context_seed_refs = anchor_refs.clone();
 
     for anchor in anchor_refs {
-        let resolved = store.resolve_object_ref(anchor)?;
+        let resolved = store.resolve_object_ref_scoped(scope, anchor)?;
         collector.add(
             resolved.clone(),
             ContextStage::Selection,
@@ -192,7 +200,7 @@ pub(crate) fn build_context_bundle(
             if collector.is_exhausted() {
                 continue;
             }
-            let related_resolved = store.resolve_object_ref(related)?;
+            let related_resolved = store.resolve_object_ref_scoped(scope, related)?;
             collector.add(
                 related_resolved,
                 ContextStage::Relation,
@@ -206,10 +214,13 @@ pub(crate) fn build_context_bundle(
     }
 
     if !collector.is_exhausted() && !context_seed_refs.is_empty() {
-        let bundle = store.load_anchor_context(&nirmata_store::AnchorContextQuery {
-            anchors: dedup_refs(&context_seed_refs),
-            relation_limit: request.relation_limit,
-        })?;
+        let bundle = store.load_anchor_context_scoped(
+            scope,
+            &nirmata_store::AnchorContextQuery {
+                anchors: dedup_refs(&context_seed_refs),
+                relation_limit: request.relation_limit,
+            },
+        )?;
 
         for entry in bundle.relations {
             collector.add(
@@ -275,12 +286,15 @@ pub(crate) fn build_context_bundle(
 
     if !collector.is_exhausted() {
         if let Some(temporal) = effective_temporal(request, &resolved_anchors, &collector.bundle) {
-            for hit in store.search_structured(&StructuredSearchQuery {
-                temporal: Some(temporal),
-                limit: stage_fetch_limit(&collector),
-                ..Default::default()
-            })? {
-                let resolved = store.resolve_object_ref(hit.object)?;
+            for hit in store.search_structured_scoped(
+                scope,
+                &StructuredSearchQuery {
+                    temporal: Some(temporal),
+                    limit: stage_fetch_limit(&collector),
+                    ..Default::default()
+                },
+            )? {
+                let resolved = store.resolve_object_ref_scoped(scope, hit.object)?;
                 if !is_related_to_context(&resolved, collector.context_refs()) {
                     continue;
                 }
@@ -299,12 +313,15 @@ pub(crate) fn build_context_bundle(
     if !collector.is_exhausted() {
         let goal_ids = goal_ids_from_bundle(&collector.bundle);
         if !goal_ids.is_empty() {
-            for hit in store.search_structured(&StructuredSearchQuery {
-                goal_ids,
-                limit: stage_fetch_limit(&collector),
-                ..Default::default()
-            })? {
-                let resolved = store.resolve_object_ref(hit.object)?;
+            for hit in store.search_structured_scoped(
+                scope,
+                &StructuredSearchQuery {
+                    goal_ids,
+                    limit: stage_fetch_limit(&collector),
+                    ..Default::default()
+                },
+            )? {
+                let resolved = store.resolve_object_ref_scoped(scope, hit.object)?;
                 collector.add(
                     resolved,
                     ContextStage::Goal,
@@ -320,12 +337,15 @@ pub(crate) fn build_context_bundle(
     if !collector.is_exhausted() && request.wants_perspectives() {
         let perspective_entity_ids = perspective_ids_from_bundle(request, &collector.bundle);
         if !perspective_entity_ids.is_empty() {
-            for hit in store.search_structured(&StructuredSearchQuery {
-                perspective_entity_ids,
-                limit: stage_fetch_limit(&collector),
-                ..Default::default()
-            })? {
-                let resolved = store.resolve_object_ref(hit.object)?;
+            for hit in store.search_structured_scoped(
+                scope,
+                &StructuredSearchQuery {
+                    perspective_entity_ids,
+                    limit: stage_fetch_limit(&collector),
+                    ..Default::default()
+                },
+            )? {
+                let resolved = store.resolve_object_ref_scoped(scope, hit.object)?;
                 collector.add(
                     resolved,
                     ContextStage::Perspective,
@@ -340,15 +360,22 @@ pub(crate) fn build_context_bundle(
 
     if !collector.is_exhausted() {
         if let Some(text) = effective_query_text(request, &resolved_anchors, &collector.bundle) {
-            for hit in store.search_structured(&StructuredSearchQuery {
-                text: Some(text),
-                limit: stage_fetch_limit(&collector),
-                ..Default::default()
-            })? {
-                let resolved = store.resolve_object_ref(hit.object)?;
+            for hit in store.search_structured_scoped(
+                scope,
+                &StructuredSearchQuery {
+                    text: Some(text),
+                    limit: stage_fetch_limit(&collector),
+                    ..Default::default()
+                },
+            )? {
+                let resolved = store.resolve_object_ref_scoped(scope, hit.object)?;
                 collector.add(
                     resolved,
-                    ContextStage::Search,
+                    if hit.stage == StructuredSearchStage::Semantic {
+                        ContextStage::Semantic
+                    } else {
+                        ContextStage::Search
+                    },
                     hit.provenance,
                     Some(hit.fragment),
                     request.wants_perspectives(),
@@ -443,12 +470,18 @@ impl ContextCollector {
         self.bundle.usage.used_objects += 1;
         self.bundle.usage.used_chars += citation.chars().count();
 
+        let rank = self.bundle.usage.used_objects;
+        let score = context_score(stage, &provenance);
+
         let entry = ContextEntry {
             uri: object_ref.to_string(),
             object,
             citation,
             provenance,
             stage,
+            score,
+            rank,
+            score_explanation: context_score_explanation(stage, score),
         };
         match section {
             ContextSection::Canon => self.bundle.canon.push(entry),
@@ -462,6 +495,34 @@ impl ContextCollector {
 
     fn finish(self) -> ContextBundle {
         self.bundle
+    }
+}
+
+fn context_score(stage: ContextStage, provenance: &str) -> u32 {
+    match stage {
+        ContextStage::Selection => 100_000,
+        ContextStage::Relation => 90_000,
+        ContextStage::Temporal => 80_000,
+        ContextStage::Goal => 70_000,
+        ContextStage::Perspective => 60_000,
+        ContextStage::Search => 30_000,
+        ContextStage::Semantic => {
+            10_000
+                + provenance
+                    .rsplit_once("matched_bps=")
+                    .and_then(|(_, value)| value.parse::<u32>().ok())
+                    .unwrap_or(0)
+        }
+    }
+}
+
+fn context_score_explanation(stage: ContextStage, score: u32) -> String {
+    match stage {
+        ContextStage::Semantic => format!(
+            "semantic WordNet concept match; {} basis points",
+            score.saturating_sub(10_000)
+        ),
+        _ => format!("fixed deterministic priority for {stage:?} context"),
     }
 }
 

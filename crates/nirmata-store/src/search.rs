@@ -15,9 +15,10 @@ use nirmata_core::{
 use rusqlite::{Connection, Row, params};
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::Path,
     str::FromStr,
+    sync::OnceLock,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -61,7 +62,12 @@ pub enum StructuredSearchStage {
     Perspective,
     Temporal,
     Text,
+    Semantic,
 }
+
+pub const SEMANTIC_MODEL_ID: &str = "wordnet-en-offline";
+pub const SEMANTIC_MODEL_VERSION: u32 = 1;
+const MAX_SEMANTIC_RESULTS: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StructuredSearchQuery {
@@ -96,6 +102,34 @@ pub struct StructuredSearchHit {
     pub fragment: String,
     pub provenance: String,
     pub stage: StructuredSearchStage,
+}
+
+impl StructuredSearchHit {
+    pub fn score(&self) -> u32 {
+        match self.stage {
+            StructuredSearchStage::Alias => 70_000,
+            StructuredSearchStage::Neighbor => 65_000,
+            StructuredSearchStage::Goal => 60_000,
+            StructuredSearchStage::Perspective => 55_000,
+            StructuredSearchStage::Temporal => 50_000,
+            StructuredSearchStage::Type => 45_000,
+            StructuredSearchStage::Text => 30_000,
+            StructuredSearchStage::Semantic => 10_000 + semantic_score(&self.provenance),
+        }
+    }
+
+    pub fn score_explanation(&self) -> String {
+        match self.stage {
+            StructuredSearchStage::Semantic => format!(
+                "semantic model {SEMANTIC_MODEL_ID} v{SEMANTIC_MODEL_VERSION}; {} basis points of query concepts matched",
+                semantic_score(&self.provenance)
+            ),
+            stage => format!(
+                "fixed deterministic priority for {} retrieval",
+                stage_name(stage)
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -262,6 +296,21 @@ impl WorldStore {
         &self,
         query: &StructuredSearchQuery,
     ) -> Result<Vec<StructuredSearchHit>, StoreError> {
+        self.search_structured_inner(query, true)
+    }
+
+    pub fn search_structured_fts(
+        &self,
+        query: &StructuredSearchQuery,
+    ) -> Result<Vec<StructuredSearchHit>, StoreError> {
+        self.search_structured_inner(query, false)
+    }
+
+    fn search_structured_inner(
+        &self,
+        query: &StructuredSearchQuery,
+        include_semantic: bool,
+    ) -> Result<Vec<StructuredSearchHit>, StoreError> {
         if query.limit == 0 {
             return Ok(vec![]);
         }
@@ -287,12 +336,25 @@ impl WorldStore {
             stages.push(self.search_by_temporal(temporal)?);
         }
         if let Some(text) = normalize_filter(query.text.as_deref()) {
-            let hits = self.search_by_text(&text)?;
-            if !hits.is_empty() {
-                stages.push(hits);
-            } else {
+            let mut lexical_hits = BTreeMap::new();
+            for hit in self.search_by_text(&text)? {
+                lexical_hits.insert(hit.object, hit);
+            }
+            if include_semantic {
+                // Semantic retrieval is derived evidence. Its failure cannot replace or
+                // invalidate deterministic SQL/FTS results.
+                if let Ok(hits) =
+                    self.search_semantic(&text, &query.kinds, query.limit.min(MAX_SEMANTIC_RESULTS))
+                {
+                    for hit in hits {
+                        lexical_hits.entry(hit.object).or_insert(hit);
+                    }
+                }
+            }
+            if lexical_hits.is_empty() {
                 return Ok(vec![]);
             }
+            stages.push(lexical_hits.into_values().collect());
         }
 
         if stages.is_empty() {
@@ -337,17 +399,139 @@ impl WorldStore {
         results.sort_by(|left, right| {
             (
                 stage_priority(left.stage),
+                std::cmp::Reverse(left.score()),
                 left.object.kind(),
                 object_id(left.object),
             )
                 .cmp(&(
                     stage_priority(right.stage),
+                    std::cmp::Reverse(right.score()),
                     right.object.kind(),
                     object_id(right.object),
                 ))
         });
         results.truncate(query.limit);
         Ok(results)
+    }
+
+    pub fn search_semantic(
+        &self,
+        text: &str,
+        kinds: &[StructuredSearchKind],
+        limit: usize,
+    ) -> Result<Vec<StructuredSearchHit>, StoreError> {
+        #[cfg(test)]
+        if self.fail_semantic_search {
+            return Err(StoreError::Database(
+                self.path.clone(),
+                "simulated semantic derived failure".to_owned(),
+            ));
+        }
+        if limit == 0 {
+            return Ok(vec![]);
+        }
+        let query_tokens = semantic_tokens(text);
+        if query_tokens.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut query_features = BTreeMap::new();
+        for token in &query_tokens {
+            let synonyms = wordnet()
+                .get(token)
+                .into_iter()
+                .flatten()
+                .flat_map(|synonym| semantic_tokens(&synonym))
+                .collect::<BTreeSet<_>>();
+            query_features.insert(token.clone(), synonyms);
+        }
+
+        let mut scored = self
+            .semantic_canon_texts()?
+            .into_iter()
+            .filter(|(object, _)| matches_kind_filter(kinds, *object))
+            .filter_map(|(object, text)| {
+                semantic_chunks(&text)
+                    .into_iter()
+                    .filter_map(|chunk| {
+                        let chunk_tokens = semantic_tokens(&chunk);
+                        let matched = query_features
+                            .iter()
+                            .filter(|(token, synonyms)| {
+                                chunk_tokens.contains(*token)
+                                    || chunk_tokens.iter().any(|word| synonyms.contains(word))
+                            })
+                            .count();
+                        let score_bps = matched * 10_000 / query_tokens.len();
+                        // Broad WordNet senses need support from at least half the query concepts.
+                        (matched > 0 && score_bps >= 5_000).then_some((score_bps, chunk))
+                    })
+                    .max_by(|(left_score, left), (right_score, right)| {
+                        left_score.cmp(right_score).then_with(|| right.cmp(left))
+                    })
+                    .map(|(score_bps, chunk)| {
+                        (
+                            score_bps,
+                            StructuredSearchHit {
+                                object,
+                                fragment: preview(&[chunk]),
+                                provenance: format!(
+                                    "semantic:{SEMANTIC_MODEL_ID}:v{SEMANTIC_MODEL_VERSION}:matched_bps={score_bps}"
+                                ),
+                                stage: StructuredSearchStage::Semantic,
+                            },
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        scored.sort_by(|(left_score, left), (right_score, right)| {
+            right_score.cmp(left_score).then_with(|| {
+                (left.object.kind(), object_id(left.object))
+                    .cmp(&(right.object.kind(), object_id(right.object)))
+            })
+        });
+        scored.truncate(limit);
+        Ok(scored.into_iter().map(|(_, hit)| hit).collect())
+    }
+
+    fn semantic_canon_texts(&self) -> Result<Vec<(ObjectRef, String)>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT object_type, object_id, content
+                 FROM (
+                     SELECT 'rule' AS object_type, id AS object_id,
+                            statement_md || ' ' || ifnull(source, '') AS content
+                     FROM rules WHERE world_id = ?1
+                     UNION ALL
+                     SELECT 'entity', id, name || ' ' || summary || ' ' || body_md
+                     FROM entities WHERE world_id = ?1
+                     UNION ALL
+                     SELECT 'relation', id, kind || ' ' || ifnull(source_reference, '')
+                     FROM relations WHERE world_id = ?1
+                     UNION ALL
+                     SELECT 'event', id, kind || ' ' || summary || ' ' || body_md
+                     FROM events WHERE world_id = ?1
+                     UNION ALL
+                     SELECT 'claim', id, content_md || ' ' || ifnull(source, '')
+                     FROM claims WHERE world_id = ?1
+                     UNION ALL
+                     SELECT 'goal', id, desired_state_md || ' ' || ifnull(source, '')
+                     FROM goals WHERE world_id = ?1
+                     UNION ALL
+                     SELECT 'document', id, title || ' ' || body_md
+                     FROM documents WHERE world_id = ?1
+                 )
+                 ORDER BY object_type, object_id",
+            )
+            .map_err(|error| map_schema_error(&self.path, error))?;
+        statement
+            .query_map([self.world_id.to_string()], |row| {
+                Ok((object_ref_from_row(row)?, row.get::<_, String>(2)?))
+            })
+            .map_err(|error| map_schema_error(&self.path, error))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| map_schema_error(&self.path, error))
     }
 
     pub fn resolve_uri(&self, uri: &str) -> Result<ResolvedObject, StoreError> {
@@ -966,8 +1150,103 @@ fn stage_priority(stage: StructuredSearchStage) -> u8 {
         StructuredSearchStage::Perspective => 3,
         StructuredSearchStage::Temporal => 4,
         StructuredSearchStage::Text => 5,
-        StructuredSearchStage::Type => 6,
+        StructuredSearchStage::Semantic => 6,
+        StructuredSearchStage::Type => 7,
     }
+}
+
+fn stage_name(stage: StructuredSearchStage) -> &'static str {
+    match stage {
+        StructuredSearchStage::Type => "structured SQL",
+        StructuredSearchStage::Alias => "alias",
+        StructuredSearchStage::Neighbor => "relation",
+        StructuredSearchStage::Goal => "goal",
+        StructuredSearchStage::Perspective => "perspective",
+        StructuredSearchStage::Temporal => "time",
+        StructuredSearchStage::Text => "FTS5",
+        StructuredSearchStage::Semantic => "semantic",
+    }
+}
+
+fn semantic_score(provenance: &str) -> u32 {
+    provenance
+        .rsplit_once("matched_bps=")
+        .and_then(|(_, score)| score.parse().ok())
+        .unwrap_or(0)
+}
+
+fn semantic_tokens(value: &str) -> BTreeSet<String> {
+    value
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter_map(|word| {
+            let word = word.to_ascii_lowercase();
+            if word.len() < 3 || is_semantic_stop_word(&word) {
+                None
+            } else {
+                Some(english_lemma(word))
+            }
+        })
+        .collect()
+}
+
+fn semantic_chunks(value: &str) -> Vec<String> {
+    const MAX_CHARS: usize = 800;
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for word in value.split_whitespace() {
+        let separator = usize::from(!current.is_empty());
+        if !current.is_empty()
+            && current.chars().count() + separator + word.chars().count() > MAX_CHARS
+        {
+            chunks.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+fn wordnet() -> &'static HashMap<String, Vec<String>> {
+    static WORDNET: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+    WORDNET.get_or_init(thesaurus::dict)
+}
+
+fn english_lemma(mut word: String) -> String {
+    if word.len() > 4 && word.ends_with("ies") {
+        word.truncate(word.len() - 3);
+        word.push('y');
+    } else if word.len() > 4
+        && ["sses", "xes", "zes", "ches", "shes"]
+            .iter()
+            .any(|suffix| word.ends_with(suffix))
+    {
+        word.truncate(word.len() - 2);
+    } else if word.len() > 3 && word.ends_with('s') && !word.ends_with("ss") {
+        word.pop();
+    }
+    word
+}
+
+fn is_semantic_stop_word(word: &str) -> bool {
+    matches!(
+        word,
+        "the"
+            | "against"
+            | "and"
+            | "for"
+            | "from"
+            | "into"
+            | "not"
+            | "over"
+            | "that"
+            | "this"
+            | "with"
+    )
 }
 
 fn entity_group_name(kind: EntityKind) -> &'static str {

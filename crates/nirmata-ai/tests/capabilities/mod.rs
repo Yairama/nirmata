@@ -302,18 +302,127 @@ async fn critic_uses_a_dedicated_prompt() {
         .expect("capture lock")
         .clone()
         .expect("captured request body");
-    assert!(
-        body["instructions"]
-            .as_str()
-            .expect("system prompt")
-            .contains("critique_report")
-    );
-    assert!(
-        !body["instructions"]
-            .as_str()
-            .expect("system prompt")
-            .contains("change_set_draft")
+    assert_eq!(
+        body["instructions"].as_str().expect("system prompt"),
+        concat!(
+            "Modo critic de Nirmata. ",
+            "Responde solo con JSON critique_report. ",
+            "Evalua solo el draft, reporte determinista, reglas semanticas, subgrafo y fuentes recibidos. ",
+            "Revisa tambien contradicciones en Markdown, continuidad temporal y espacial, causalidad, objetivos y acceso epistemico. ",
+            "Distingue canon de creencias, deseos, rumores y perspectivas; una creencia o deseo no es ley ni conocimiento. ",
+            "La negacion explicita no es un dato desconocido, y la ausencia de datos significa desconocido bajo mundo abierto salvo cierre declarado. ",
+            "Una fecha aproximada no es exacta, un evento aislado es como maximo warning y una discontinuidad explicada puede ser valida. ",
+            "Respeta excepciones mas especificas, excepciones intencionales trazables y retcons reinterpretativos que preservan la perspectiva anterior. ",
+            "Cada issue debe citar affectedOperationIds y evidencia nirmata:// del contexto, y distinguir rebuts de undercuts cuando aplique. ",
+            "Usa solo severidad conflict, warning o info; un hallazgo del modelo nunca es error duro. ",
+            "No edites operaciones, no produzcas un draft alternativo y devuelve {\"issues\":[]} si no hay evidencia de problemas."
+        )
     );
     assert_eq!(result.metadata.prompt_version, CRITIC_PROMPT_VERSION);
     assert_eq!(result.output.issues.len(), 1);
+}
+
+#[tokio::test]
+async fn deep_capabilities_use_fixed_prompts_tokens_and_no_tools() {
+    let specialist_output = json!({
+        "specialist": "economist",
+        "sources": ["nirmata://entity/11111111-1111-1111-1111-111111111111"],
+        "findings": [{
+            "findingId": "resource-shortage",
+            "summary": {
+                "markdown": "The mine shortage affects trade.",
+                "contentReferences": ["nirmata://entity/11111111-1111-1111-1111-111111111111"]
+            },
+            "affectedObjectUris": ["nirmata://entity/11111111-1111-1111-1111-111111111111"],
+            "candidateConsequences": [],
+            "assumptions": [],
+            "evidence": [{
+                "sourceUri": "nirmata://entity/11111111-1111-1111-1111-111111111111",
+                "excerptMd": "The city has one mine."
+            }],
+            "confidence": 0.8,
+            "unresolvedQuestions": [],
+            "decisionPosition": null
+        }]
+    });
+    let client = test_client(SimulatedTransport::new(move |request| {
+        let specialist_output = specialist_output.clone();
+        async move {
+            assert_eq!(request.body["max_output_tokens"], 2_048);
+            assert!(request.body.get("tools").is_none());
+            assert!(request.body.get("functions").is_none());
+            let instructions = request.body["instructions"].as_str().expect("prompt");
+            assert!(instructions.contains("especialista aislado de solo lectura"));
+            assert!(instructions.contains("No emitas operaciones"));
+            assert!(instructions.contains("delegaciones"));
+            Ok(json_response(json!({
+                "model": "gpt-5.6-terra",
+                "status": "completed",
+                "output_text": specialist_output.to_string()
+            })))
+        }
+    }));
+    let specialist = client
+        .specialist(
+            &TestPayload {
+                mode: "deep_impact",
+                base_revision: "rev-1",
+                context_object_ids: vec!["nirmata://entity/1"],
+            },
+            vec!["nirmata://entity/11111111-1111-1111-1111-111111111111".to_owned()],
+            RequestOptions::default(),
+        )
+        .await
+        .expect("specialist report");
+    assert_eq!(
+        specialist.metadata.prompt_version,
+        SPECIALIST_PROMPT_VERSION
+    );
+    assert_eq!(
+        specialist.output.specialist,
+        crate::contracts::SpecialistRole::Economist
+    );
+
+    let draft: Value = serde_json::from_str(include_str!(
+        "../fixtures/ai_contracts/change_set_valid.json"
+    ))
+    .expect("draft fixture");
+    let operation_id = draft["operations"][0]["create_entity"]["operation_id"].clone();
+    let synthesis_output = json!({
+        "draft": draft,
+        "operationOrigins": [{
+            "operationId": operation_id,
+            "findingIds": ["resource-shortage"]
+        }],
+        "decisionOrigins": []
+    });
+    let synthesis_client = test_client(SimulatedTransport::new(move |request| {
+        let synthesis_output = synthesis_output.clone();
+        async move {
+            assert_eq!(request.body["max_output_tokens"], 4_096);
+            assert!(request.body.get("tools").is_none());
+            let instructions = request.body["instructions"].as_str().expect("prompt");
+            assert!(instructions.contains("sintetizador unico"));
+            assert!(instructions.contains("no resuelvas desacuerdos silenciosamente"));
+            Ok(json_response(json!({
+                "model": "gpt-5.6-terra",
+                "status": "completed",
+                "output_text": synthesis_output.to_string()
+            })))
+        }
+    }));
+    let synthesis = synthesis_client
+        .synthesize(
+            &TestPayload {
+                mode: "deep_impact",
+                base_revision: "rev-1",
+                context_object_ids: vec!["nirmata://entity/1"],
+            },
+            vec!["nirmata://entity/11111111-1111-1111-1111-111111111111".to_owned()],
+            RequestOptions::default(),
+        )
+        .await
+        .expect("deep synthesis");
+    assert_eq!(synthesis.metadata.prompt_version, SYNTHESIS_PROMPT_VERSION);
+    assert_eq!(synthesis.output.operation_origins.len(), 1);
 }

@@ -158,6 +158,11 @@ fn credential_store_sets_reads_and_clears_keys() {
         .expect("set provider key");
     assert_eq!(status.source, CredentialSource::SystemSecureStore);
     assert_eq!(store.clone_api_key().as_deref(), Some("super-secret"));
+    assert!(
+        !serde_json::to_string(&status)
+            .expect("serialize credential status")
+            .contains("super-secret")
+    );
 
     let cleared = store.clear_provider_api_key().expect("clear provider key");
     assert!(!cleared.configured);
@@ -328,14 +333,18 @@ async fn cancels_requests_explicitly() {
 }
 
 #[tokio::test]
-async fn invalid_http_errors_are_sanitized() {
+async fn invalid_http_errors_do_not_expose_api_keys_or_lore_bodies() {
     let secret = "super-secret-key";
+    let lore_body = "The Moonvault consumes every remembered name.";
     let client = test_client(SimulatedTransport::new(move |_| {
         let leaked = secret.to_owned();
         async move {
             Ok(json_response(
                 422,
-                json!({ "message": format!("invalid request for {leaked}") }),
+                json!({
+                    "message": format!("invalid request for {leaked}"),
+                    "echo": lore_body,
+                }),
             ))
         }
     }));
@@ -349,6 +358,60 @@ async fn invalid_http_errors_are_sanitized() {
         AiError::InvalidHttpStatus { status: 422, .. }
     ));
     assert_secret_redacted(&error, secret);
+    assert!(!error.to_string().contains(lore_body));
+    assert!(!format!("{error:?}").contains(secret));
+    assert!(!format!("{error:?}").contains(lore_body));
+}
+
+#[tokio::test]
+async fn cancelling_an_active_stream_discards_partial_output_and_allows_retry() {
+    let secret = "super-secret-key";
+    let cancellation = CancellationToken::new();
+    let cancel_after = cancellation.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        cancel_after.cancel();
+    });
+    let client = test_client(SimulatedTransport::new(|_| async {
+        Ok(TransportResponse {
+            status: 200,
+            headers: vec![("x-request-id".to_owned(), "req-cancelled-stream".to_owned())],
+            body: stream::iter([Ok(Bytes::from(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial lore\"}\n\n",
+            ))])
+            .chain(stream::pending::<Result<Bytes, TransportError>>())
+            .boxed(),
+        })
+    }));
+    let mut deltas = Vec::new();
+
+    let error = client
+        .stream_response(
+            secret,
+            test_request(),
+            RequestOptions::new(Duration::from_secs(1)).with_cancellation(cancellation),
+            |delta| deltas.push(delta.delta),
+        )
+        .await
+        .expect_err("active stream must cancel");
+    assert!(matches!(error, AiError::RequestCancelled));
+    assert_eq!(deltas, vec!["partial lore"]);
+    assert_secret_redacted(&error, secret);
+    assert!(!error.to_string().contains("partial lore"));
+
+    let retry_client = test_client(SimulatedTransport::new(|_| async {
+        Ok(sse_response(vec![
+            Ok("data: {\"type\":\"response.output_text.delta\",\"delta\":\"retry ok\"}\n\n"),
+            Ok(
+                "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+            ),
+        ]))
+    }));
+    let retry = retry_client
+        .stream_response(secret, test_request(), RequestOptions::default(), |_| {})
+        .await
+        .expect("stream can be retried after cancellation");
+    assert_eq!(retry.output_text, "retry ok");
 }
 
 #[tokio::test]

@@ -1,4 +1,6 @@
 use super::*;
+use crate::{DocumentAggregate, StructuredSearchKind, StructuredSearchQuery};
+use nirmata_core::document::{Document, DocumentCanonStatus, ObjectRef as SearchObjectRef};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn project_path(label: &str) -> PathBuf {
@@ -139,6 +141,51 @@ fn creates_schema_and_reopens_same_world() {
 }
 
 #[test]
+fn semantic_failure_falls_back_to_fts_without_changing_canon() {
+    let path = project_path("semantic-failure-fallback");
+    let world = World::new("Arcadia", "", "Dawn", 1).expect("world");
+    let mut store = WorldStore::create(&path, &world).expect("store");
+    let document = Document::new(
+        world.id(),
+        "Senate Record",
+        "minutes",
+        None,
+        None,
+        DocumentCanonStatus::Canonical,
+        "The senate refuses the border pact.",
+        1,
+    )
+    .expect("document");
+    store
+        .insert_document(&DocumentAggregate::new(document.clone(), vec![]))
+        .expect("insert document");
+    store.fail_semantic_search = true;
+
+    let hits = store
+        .search_structured(&StructuredSearchQuery {
+            kinds: vec![StructuredSearchKind::Document],
+            text: Some("senate refuses pact".to_owned()),
+            limit: 5,
+            ..Default::default()
+        })
+        .expect("FTS fallback");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].object, SearchObjectRef::Document(document.id()));
+    assert_eq!(hits[0].provenance, "fts5");
+    assert_eq!(
+        store
+            .get_document(document.id())
+            .expect("read canon")
+            .expect("document remains")
+            .object(),
+        &document
+    );
+
+    drop(store);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
 fn migrates_initial_schema_to_complete_canon() {
     let path = project_path("initial-migration");
     let world = World::new("Arcadia", "# Premise", "First Dawn", 42).expect("valid world");
@@ -173,6 +220,64 @@ fn migrates_initial_schema_to_complete_canon() {
     );
     drop(store);
     fs::remove_file(path).expect("remove test project");
+}
+
+#[test]
+fn migrates_version_seven_to_main_without_changing_ids_or_history() {
+    let path = project_path("variant-migration");
+    let world = World::new("Arcadia", "", "Dawn", 42).expect("world");
+    let store = WorldStore::create(&path, &world).expect("create current project");
+    let entity_id = nirmata_core::EntityId::new();
+    insert_entity(
+        &store.connection,
+        &world.id().to_string(),
+        &entity_id.to_string(),
+        "mara",
+    );
+    drop(store);
+
+    let connection = Connection::open(&path).expect("open project as old build");
+    connection
+        .execute_batch(
+            "DROP INDEX revisions_variant_parent;
+             DROP INDEX revisions_variant_id;
+             DROP INDEX change_sets_variant_id;
+             DROP INDEX import_batches_variant_id;
+             DROP TABLE revision_snapshots;
+             DROP TABLE variants;
+             ALTER TABLE worlds DROP COLUMN active_variant_id;
+             ALTER TABLE revisions DROP COLUMN source_revision_id;
+             ALTER TABLE revisions DROP COLUMN variant_id;
+             ALTER TABLE change_sets DROP COLUMN variant_id;
+             ALTER TABLE import_batches DROP COLUMN variant_id;
+             CREATE UNIQUE INDEX revisions_linear_parent ON revisions (parent_revision_id)
+                 WHERE parent_revision_id IS NOT NULL;
+             UPDATE schema_migrations SET version = 7 WHERE version = 8;
+             PRAGMA user_version = 7;",
+        )
+        .expect("downgrade fixture to schema seven");
+    drop(connection);
+
+    let migrated = WorldStore::open(&path).expect("migrate variants");
+    let variant = migrated.active_variant().expect("main variant");
+    assert_eq!(variant.name, "main");
+    assert_eq!(variant.head_revision_id, world.current_revision());
+    assert_eq!(migrated.list_variants().expect("variants").len(), 1);
+    assert_eq!(migrated.load_world().expect("world").id(), world.id());
+    assert_eq!(
+        migrated
+            .read_canon_snapshot_scoped(crate::ReadScope::historical(
+                variant.id,
+                world.current_revision(),
+            ))
+            .expect("historical root")
+            .entities()[0]
+            .id(),
+        entity_id
+    );
+    assert_eq!(migrated.list_revisions().expect("history").len(), 1);
+    drop(migrated);
+    fs::remove_file(path).expect("remove project");
 }
 
 #[test]
@@ -360,6 +465,12 @@ fn rejects_newer_schema() {
     let world = World::new("Arcadia", "", "", 42).expect("valid world");
     drop(WorldStore::create(&path, &world).expect("create project"));
     let connection = Connection::open(&path).expect("open raw database");
+    let original_head: String = connection
+        .query_row("SELECT current_revision FROM worlds", [], |row| row.get(0))
+        .expect("head before future schema");
+    let original_revisions: i64 = connection
+        .query_row("SELECT COUNT(*) FROM revisions", [], |row| row.get(0))
+        .expect("revisions before future schema");
     connection
         .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
         .expect("set newer schema");
@@ -373,6 +484,44 @@ fn rejects_newer_schema() {
             ..
         }) if found == SCHEMA_VERSION + 1 && supported == SCHEMA_VERSION
     ));
+
+    let connection = Connection::open(&path).expect("inspect rejected future schema");
+    assert_eq!(
+        connection
+            .query_row("SELECT current_revision FROM worlds", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .expect("head after rejection"),
+        original_head
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM revisions", [], |row| row
+                .get::<_, i64>(0))
+            .expect("revisions after rejection"),
+        original_revisions
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM change_operation_audits", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("audits after rejection"),
+        0
+    );
+    connection
+        .pragma_update(None, "user_version", SCHEMA_VERSION)
+        .expect("restore supported fixture version");
+    drop(connection);
+    let reopened = WorldStore::open(&path).expect("reopen after restoring supported version");
+    assert_eq!(
+        reopened
+            .load_world()
+            .expect("reopened world")
+            .current_revision(),
+        world.current_revision()
+    );
+    drop(reopened);
     fs::remove_file(path).expect("remove test project");
 }
 
@@ -388,3 +537,5 @@ fn invalid_project_is_not_overwritten() {
     assert_eq!(fs::read(&path).expect("read original file"), b"not sqlite");
     fs::remove_file(path).expect("remove test project");
 }
+
+include!("durability.rs");

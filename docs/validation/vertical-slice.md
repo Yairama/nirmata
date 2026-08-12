@@ -1,6 +1,7 @@
 # Corte vertical de validacion
 
-**Estado:** escenario propuesto.
+**Estado:** implementado en
+`crates/nirmata-app/tests/vertical_slice.rs`.
 
 ## Escenario
 

@@ -143,6 +143,16 @@ El historial conversacional ayuda al usuario, pero no es canon.
 - Una propuesta rechazada permanece como historial, no como estado.
 - Las conversaciones pueden eliminarse sin afectar el mundo.
 
+La barra editorial muestra por separado la variante activa de escritura y la
+revision observada. Una revision historica se rotula `Solo lectura`, deshabilita
+edicion y permite volver explicitamente a la cabeza. Busqueda, URI, contexto,
+timeline, VFS y exportacion muestran el mismo scope observado.
+
+Comparar dos scopes lista diferencias por ID con acciones para abrir cada lado.
+Preparar merge siempre toma otra variante como fuente y la cabeza activa como
+destino. Operaciones independientes y `DecisionPoint`s aparecen en el panel de
+cambios normal; no existe un boton que aplique directamente la comparacion.
+
 ## Streaming
 
 El streaming es adecuado para respuestas de consulta. En edicion, puede mostrar

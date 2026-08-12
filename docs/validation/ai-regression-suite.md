@@ -1,6 +1,8 @@
 # Suite de regresion para IA
 
-**Estado:** requisito previo a implementar edicion asistida.
+**Estado:** implementada como suite offline en
+`crates/nirmata-app/tests/ai_regression_suite.rs`, con respuestas semanticas
+grabadas en `crates/nirmata-app/tests/fixtures/ai_regression/`.
 
 ## Objetivo
 

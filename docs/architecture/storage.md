@@ -65,9 +65,12 @@ El `ordinal` se recalcula en la misma transaccion que modifica el Markdown.
 `decision_points` guarda alternativas incompatibles propuestas por
 especialistas. No forma parte del commit hasta que el usuario elige una opcion.
 
-Cada `revision` tiene `parent_revision_id`. En el MVP existe una sola cabeza:
-la cadena padre-hijo sirve para trazabilidad y control de drafts obsoletos, no
-para exponer ramas.
+Cada `revision` tiene `parent_revision_id`. Desde NIR-071 tambien registra la
+variante que creo la revision y una revision fuente opcional de merge. Cada fila
+de `variants` contiene una unica cabeza no nula; el nombre es unico por mundo.
+`revision_snapshots` conserva el estado completo e inmutable necesario para
+lectura historica. No es event sourcing: el canon activo sigue materializado y
+cada commit escribe el snapshot resultante en su misma transaccion.
 
 ### `entities`
 
@@ -237,23 +240,78 @@ un resolvedor de URI y consultas que produzcan el arbol.
 
 ## Exportacion fisica
 
-Cuando los usuarios necesiten Git o editores externos, se puede materializar el
-VFS:
+NIR-056 materializa el VFS mediante el caso de uso explicito
+`export_vfs_snapshot`. El usuario elige un directorio padre existente y un
+nombre nuevo; la aplicacion no observa ni sincroniza el resultado. SQLite sigue
+siendo la unica autoridad.
 
 ```text
 my-world/
 |-- manifest.json
-|-- entities/.../*.md
-|-- events/.../*.md
-`-- documents/.../*.md
+|-- worlds/<world-id>.md
+|-- entities/<entity-id>.md
+|-- relations/<relation-id>.md
+|-- events/<event-id>.md
+|-- claims/<claim-id>.md
+|-- rules/<rule-id>.md
+|-- goals/<goal-id>.md
+`-- documents/<document-id>.md
 ```
 
-Los archivos exportados pueden incluir frontmatter con IDs y metadatos. La
-primera version debe tratar esto como exportacion/importacion, no como escritura
-bidireccional en vivo; sincronizar DB y archivos introduce conflictos que el
-MVP no necesita.
+Los nombres visibles y slugs nunca forman rutas: cada archivo usa el UUID
+estable y declara su URI `nirmata://`. `manifest.json` version 1 registra mundo,
+variante `main`, revision base, version del esquema SQLite, algoritmo de hash,
+metadata estructurada sin duplicar la prosa, referencias de contenido por URI,
+hash SHA-256 de cada Markdown/metadata y un hash logico del conjunto. El hash
+logico excluye ruta de destino y tiempo de exportacion, por lo que dos
+exportaciones de la misma revision y contenido son equivalentes.
 
-## Historial y deshacer
+Desde NIR-071 el manifest conserva tanto nombre como ID de variante. Un
+manifest version 1 anterior sin ID se interpreta explicitamente como `main`;
+ningun snapshot puede generar o confirmar operaciones sobre otra variante.
+
+La lectura de canon ocurre dentro de una transaccion de lectura SQLite. La
+escritura usa solo directorios de tipo fijos y UUIDs, crea archivos con
+`create_new` dentro de un staging oculto y hermano del destino, sincroniza cada
+archivo y publica con un unico rename en el mismo padre. Un destino existente,
+un nombre no seguro o un padre inexistente/symlink se rechaza; cualquier fallo
+previo al rename elimina staging y no deja un directorio presentado como
+snapshot completo.
+
+La prosa Markdown se conserva como datos UTF-8, sin ejecutar HTML, enlaces ni
+scripts. NIR-057 completa el ciclo mediante `import_vfs_snapshot`: recibe un
+directorio elegido explicitamente y genera una `ManualReviewSession` almacenada,
+nunca una escritura directa. Compara por ID el snapshot editado con la
+representacion canonica vigente y produce operaciones tipadas de alta, cambio y
+baja. Los cambios de un `Document` incluyen su lista ordenada de
+`ContentReference`, no solo la cantidad de enlaces.
+
+El importador trata todo el arbol como no confiable. Exige exactamente
+`manifest.json`, los ocho directorios fijos y los archivos declarados; rechaza
+entradas extra o ausentes, duplicados, symlinks, subdirectorios, rutas no
+canonicas, traversal, UUID/URI/tipo inconsistentes, otro mundo o variante, una
+revision base inexistente y otra version de formato o esquema. Manifest y cada
+Markdown tienen limites de tamano. Los Markdown deben ser UTF-8 sin NUL y
+conservar el header generado; HTML, scripts y enlaces permanecen texto y nunca
+se abren ni ejecutan.
+
+Los hashes SHA-256 describen el estado editado completo. Por eso una herramienta
+externa que cambie prosa, metadata, referencias, altas o bajas debe actualizar
+`content_hash`, `metadata_hash` y finalmente `logical_hash`; una edicion parcial
+o un hash manipulado se rechaza. La metadata se deserializa al tipo de dominio,
+se vuelve a serializar para detectar campos desconocidos y se valida con los
+constructores de core. IDs y `world_id` son inmutables; versiones y timestamps
+editoriales no provienen del archivo, sino que se normalizan como en una edicion
+manual.
+
+Una base distinta de la cabeza actual se presenta como `stale`, no puede
+confirmarse ni rebasarse automaticamente: el usuario debe exportar e importar
+un snapshot nuevo. Rechazar operaciones o descartar la sesion no cambia SQLite.
+Confirmar usa la revalidacion y transaccion atomica existentes, deja auditoria
+before/after y puede deshacerse con el undo lineal normal. No existe watcher,
+montaje ni sincronizacion bidireccional viva.
+
+## Historial, variantes y deshacer
 
 No se recomienda event sourcing completo.
 
@@ -271,11 +329,45 @@ Esto permite auditoria y deshacer sin reconstruir todo el mundo reproduciendo
 eventos desde el origen.
 
 El tiempo valido pertenece al mundo; el tiempo editorial se expresa mediante
-revisiones. El MVP conserva estado actual, auditoria y undo, pero no promete
-consultas arbitrarias "como estaba el canon en la revision X".
+revisiones. `ReadScope` resuelve una cabeza de variante o un snapshot historico
+ancestro. Busqueda, URI, contexto, timeline y VFS usan ese mismo scope. Una vista
+historica no puede crear drafts, importar ni confirmar. El undo crea un
+ChangeSet inverso sobre la variante activa y no considera commits heredados de
+otra variante.
 
 Las relaciones temporales derivables se calculan en Rust y no se guardan. Un
 calendario ficticio sera una futura capa de conversion `tick <-> etiqueta`.
+
+## Staging de importacion de lore
+
+NIR-065–NIR-070 agregan cuatro tablas no canonicas dentro del mismo archivo
+SQLite: `import_batches`, `import_sources`, `import_chunks` e
+`import_candidates`. No son una segunda ruta de persistencia del mundo. Un lote
+solo conserva material externo copiado como UTF-8 inerte, hashes, rangos y
+candidatos; entrar al canon sigue requiriendo el `ChangeSet` y la transaccion de
+NIR-047.
+
+La seleccion recibe una raiz absoluta elegida por el usuario y archivos
+absolutos confinados debajo de ella. Se rechazan symlinks, traversal, archivos
+no regulares, extensiones distintas de `.md`, `.markdown` y `.txt`, UTF-8
+invalido, controles binarios y fuentes mayores de 1 MiB. Todas las fuentes se
+leen y validan antes de insertar el lote. El contenido copiado y el SHA-256 son
+la evidencia estable aunque el original desaparezca; la interfaz informa por
+separado si el archivo actual todavia coincide.
+
+Los chunks cubren rangos contiguos de bytes originales, sin normalizar la cita.
+Conservan ordinal, lineas y encabezado Markdown, y sus IDs dependen de
+`source_id`, hash, ordinal y rango. Reemplazar una fuente borra en la misma
+transaccion sus chunks y candidatos antes de insertar la nueva generacion. Una
+constraint de la escritura candidata exige el hash actual de la fuente, por lo
+que no pueden mezclarse generaciones.
+
+La traza candidato-operacion-chunks se persiste junto al ChangeSet confirmado y
+los audits usan fuente `lore_import`. Campos de dominio con procedencia propia,
+como `Claim.source`, `Rule.source` y `Relation.source_reference`, reciben ademas
+un URI `import://<batch>/<source>/<chunk>?hash=<sha256>`. Borrar el staging no
+borra la auditoria ni el canon confirmado. Descartar o borrar antes de confirmar
+elimina la revision pendiente y no toca originales ni tablas canonicas.
 
 ## Indices derivados
 
@@ -285,6 +377,22 @@ FTS y futuros embeddings son caches reconstruibles:
 - se invalidan cuando cambia el contenido fuente;
 - almacenan el hash del contenido y version del modelo;
 - nunca participan como autoridad de escritura.
+
+El prototipo semantico de NIR-054 no necesita persistencia: proyecta texto
+canonico en chunks acotados y los compara en memoria con un vocabulario WordNet
+offline. Por ello no cambia la version del esquema ni agrega tablas. Borrar las
+filas de FTS5 o perder cualquier estado en memoria no altera canon; FTS5 se
+reconstruye desde las tablas fuente y la representacion semantica se recalcula
+en la siguiente consulta.
+
+NIR-055 mantiene deliberadamente esa representacion sin cache de contenido. El
+modelo compilado tiene ID `wordnet-en-offline` y version `1`; cada busqueda lee
+el texto canonico vigente, por lo que update y delete se observan de inmediato.
+No se almacena un `content_hash` ficticio cuando no existe un derivado semantico
+persistido que invalidar. Un rebuild completo reconstruye `canon_fts`; la ruta
+WordNet se recalcula en la proxima consulta y un cambio de modelo no puede
+heredar estado de otra version. Si esa ruta falla, SQL y FTS5 siguen disponibles
+y ninguna transaccion canonica depende del resultado semantico.
 
 ## Archivos grandes
 

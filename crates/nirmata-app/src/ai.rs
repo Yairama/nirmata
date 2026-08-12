@@ -12,8 +12,9 @@ use nirmata_ai::{
         AzureFoundryCapabilityClient, CapabilityError, CapabilityInvocation, InvocationMetadata,
     },
     contracts::{
-        AdvisoryClassification, AdvisoryResponse, CritiqueReport, StructuredOutputDiagnostic,
-        StructuredOutputError, StructuredOutputErrorKind,
+        AdvisoryClassification, AdvisoryResponse, CritiqueReport, DeepSynthesis, ImportExtraction,
+        SpecialistReport, StructuredOutputDiagnostic, StructuredOutputError,
+        StructuredOutputErrorKind,
     },
 };
 use nirmata_core::{
@@ -39,7 +40,7 @@ use std::{
     time::Duration,
 };
 
-type ClientFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+pub(crate) type ClientFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +48,8 @@ pub enum AiMode {
     Query,
     Propose,
     Critic,
+    DeepImpact,
+    Audit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
@@ -107,7 +110,7 @@ impl AiRequestOptions {
         self
     }
 
-    fn into_request_options(self) -> RequestOptions {
+    pub(crate) fn into_request_options(self) -> RequestOptions {
         match self.cancellation {
             Some(cancellation) => RequestOptions::new(self.timeout).with_cancellation(cancellation),
             None => RequestOptions::new(self.timeout),
@@ -733,7 +736,7 @@ impl AiRun {
     }
 }
 
-trait AiModeClient {
+pub(crate) trait AiModeClient {
     fn run_query<'a, F>(
         &'a self,
         payload: Value,
@@ -757,6 +760,48 @@ trait AiModeClient {
         context_object_ids: Vec<String>,
         options: RequestOptions,
     ) -> ClientFuture<'a, Result<CapabilityInvocation<CritiqueReport>, CapabilityError>>;
+
+    fn run_specialist<'a>(
+        &'a self,
+        payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<SpecialistReport>, CapabilityError>> {
+        let _ = (payload, context_object_ids, options);
+        Box::pin(async {
+            Err(CapabilityError::Ai(AiError::InvalidResponse(
+                "specialist capability is not available".to_owned(),
+            )))
+        })
+    }
+
+    fn run_synthesis<'a>(
+        &'a self,
+        payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<DeepSynthesis>, CapabilityError>> {
+        let _ = (payload, context_object_ids, options);
+        Box::pin(async {
+            Err(CapabilityError::Ai(AiError::InvalidResponse(
+                "deep synthesis capability is not available".to_owned(),
+            )))
+        })
+    }
+
+    fn run_import_extraction<'a>(
+        &'a self,
+        payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<ImportExtraction>, CapabilityError>> {
+        let _ = (payload, context_object_ids, options);
+        Box::pin(async {
+            Err(CapabilityError::Ai(AiError::InvalidResponse(
+                "import extraction capability is not available".to_owned(),
+            )))
+        })
+    }
 }
 
 impl AiModeClient for AzureFoundryCapabilityClient {
@@ -792,6 +837,36 @@ impl AiModeClient for AzureFoundryCapabilityClient {
         options: RequestOptions,
     ) -> ClientFuture<'a, Result<CapabilityInvocation<CritiqueReport>, CapabilityError>> {
         Box::pin(async move { self.critic(&payload, context_object_ids, options).await })
+    }
+
+    fn run_specialist<'a>(
+        &'a self,
+        payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<SpecialistReport>, CapabilityError>> {
+        Box::pin(async move { self.specialist(&payload, context_object_ids, options).await })
+    }
+
+    fn run_synthesis<'a>(
+        &'a self,
+        payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<DeepSynthesis>, CapabilityError>> {
+        Box::pin(async move { self.synthesize(&payload, context_object_ids, options).await })
+    }
+
+    fn run_import_extraction<'a>(
+        &'a self,
+        payload: Value,
+        context_object_ids: Vec<String>,
+        options: RequestOptions,
+    ) -> ClientFuture<'a, Result<CapabilityInvocation<ImportExtraction>, CapabilityError>> {
+        Box::pin(async move {
+            self.extract_import(&payload, context_object_ids, options)
+                .await
+        })
     }
 }
 
@@ -1016,7 +1091,7 @@ impl crate::NirmataApp {
             .await
     }
 
-    async fn revalidate_ai_run_with<C, F>(
+    pub(crate) async fn revalidate_ai_run_with<C, F>(
         &mut self,
         run_id: AiRunId,
         client: &C,
@@ -1182,7 +1257,7 @@ impl crate::NirmataApp {
         Ok(run.snapshot())
     }
 
-    fn complete_ai_proposal_run(
+    pub(crate) fn complete_ai_proposal_run(
         &mut self,
         run_id: AiRunId,
         response: AiProposalResponse,
@@ -1200,6 +1275,7 @@ impl crate::NirmataApp {
             AiProposalResponse::Draft(proposal) => {
                 let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
                 let review = crate::manual_review::ManualReviewSession::from_draft(
+                    active.session.active_variant.id,
                     proposal.draft.clone(),
                     &active.store,
                 )?;
@@ -1689,13 +1765,21 @@ impl crate::NirmataApp {
         Ok((critique_input, critique_invocation))
     }
 
-    fn build_ai_context_snapshot(
+    pub(crate) fn build_ai_context_snapshot(
         &self,
         context_request: &ContextBundleRequest,
     ) -> Result<AiContextSnapshot, AppError> {
         let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
-        let world = active.store.load_world()?;
-        let context = crate::context_bundle::build_context_bundle(&active.store, context_request)?;
+        let world = active
+            .store
+            .read_canon_snapshot_scoped(active.read_scope)?
+            .world()
+            .clone();
+        let context = crate::context_bundle::build_context_bundle_scoped(
+            &active.store,
+            active.read_scope,
+            context_request,
+        )?;
         Ok(AiContextSnapshot {
             world_id: world.id(),
             base_revision: world.current_revision(),
@@ -1703,7 +1787,7 @@ impl crate::NirmataApp {
         })
     }
 
-    fn provider_client(
+    pub(crate) fn provider_client(
         &self,
         provider: &AiProviderConfig,
     ) -> Result<AzureFoundryCapabilityClient, AppError> {
@@ -1713,6 +1797,108 @@ impl crate::NirmataApp {
             .ok_or(AiError::MissingProviderApiKey)?;
         AzureFoundryCapabilityClient::new(&provider.base_url, api_key, &provider.model)
             .map_err(Into::into)
+    }
+}
+
+impl crate::NirmataApp {
+    pub(crate) async fn hand_external_draft_to_standard_review<C, F>(
+        &mut self,
+        client: &C,
+        request: String,
+        draft: ChangeSetDraft,
+        generator_metadata: InvocationMetadata,
+        context_request: &ContextBundleRequest,
+        options: AiRequestOptions,
+        mut on_progress: F,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        C: AiModeClient,
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        let snapshot = self.build_ai_context_snapshot(context_request)?;
+        if draft.world_id() != snapshot.world_id || draft.base_revision() != snapshot.base_revision
+        {
+            return Err(AppError::AiBaseRevisionMismatch {
+                draft_base_revision: draft.base_revision(),
+                current_revision: snapshot.base_revision,
+            });
+        }
+        let invocation = CapabilityInvocation {
+            output: draft,
+            metadata: generator_metadata,
+        };
+        let (critique_input, critique) = self
+            .evaluate_ai_proposal_with(
+                client,
+                &request,
+                &invocation.output,
+                context_request,
+                &options,
+                &mut on_progress,
+            )
+            .await?;
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let proposal = build_proposal_draft_response(
+            &active.store,
+            request.clone(),
+            snapshot.clone(),
+            invocation,
+            critique_input.deterministic_report,
+            critique,
+            0,
+            None,
+        )?;
+        let run = AiRun::running(request, snapshot);
+        let run_id = run.id;
+        self.ai_runs.insert(run_id, run);
+        self.complete_ai_proposal_run(run_id, AiProposalResponse::Draft(proposal))?;
+        self.read_ai_run(run_id)
+    }
+
+    pub(crate) async fn hand_deep_synthesis_to_standard_review<C, F>(
+        &mut self,
+        client: &C,
+        request: String,
+        snapshot: AiContextSnapshot,
+        synthesis: CapabilityInvocation<DeepSynthesis>,
+        context_request: &ContextBundleRequest,
+        options: AiRequestOptions,
+        mut on_progress: F,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        C: AiModeClient,
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        let draft_invocation = CapabilityInvocation {
+            output: synthesis.output.draft,
+            metadata: synthesis.metadata,
+        };
+        let (critique_input, critique) = self
+            .evaluate_ai_proposal_with(
+                client,
+                &request,
+                &draft_invocation.output,
+                context_request,
+                &options,
+                &mut on_progress,
+            )
+            .await?;
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let proposal = build_proposal_draft_response(
+            &active.store,
+            request.clone(),
+            snapshot.clone(),
+            draft_invocation,
+            critique_input.deterministic_report,
+            critique,
+            0,
+            None,
+        )?;
+        let run = AiRun::running(request, snapshot);
+        let run_id = run.id;
+        self.ai_runs.insert(run_id, run);
+        self.complete_ai_proposal_run(run_id, AiProposalResponse::Draft(proposal))?;
+        self.read_ai_run(run_id)
     }
 }
 
@@ -1737,6 +1923,19 @@ fn build_proposal_draft_response(
 
     let mut affected_seen = BTreeSet::new();
     let mut affected_objects = Vec::new();
+    let draft_objects = draft
+        .operations()
+        .iter()
+        .flat_map(|operation| {
+            [
+                operation_object_snapshot_before(operation),
+                operation_object_snapshot_after(operation),
+            ]
+            .into_iter()
+            .flatten()
+        })
+        .map(|snapshot| (snapshot.target_uri.clone(), snapshot))
+        .collect::<BTreeMap<_, _>>();
     let operations = draft
         .operations()
         .iter()
@@ -1748,7 +1947,13 @@ fn build_proposal_draft_response(
                 .iter()
                 .copied()
                 .map(|object| {
-                    resolve_proposal_result(store, object, before.as_ref(), after.as_ref())
+                    resolve_proposal_result(
+                        store,
+                        object,
+                        before.as_ref(),
+                        after.as_ref(),
+                        &draft_objects,
+                    )
                 })
                 .collect::<Result<Vec<_>, AppError>>()?;
             for result in &affected {
@@ -1977,7 +2182,8 @@ fn resolve_search_result(
     store: &nirmata_store::WorldStore,
     uri: String,
 ) -> Result<SearchResult, AppError> {
-    crate::search_use_cases::open_uri(store, &uri).map(|response| response.result)
+    crate::search_use_cases::open_uri(store, store.active_read_scope()?, &uri)
+        .map(|response| response.result)
 }
 
 fn resolve_proposal_result(
@@ -1985,6 +2191,7 @@ fn resolve_proposal_result(
     object: ObjectRef,
     before: Option<&ManualReviewObjectSnapshot>,
     after: Option<&ManualReviewObjectSnapshot>,
+    draft_objects: &BTreeMap<String, ManualReviewObjectSnapshot>,
 ) -> Result<SearchResult, AppError> {
     let uri = object.to_string();
     resolve_search_result(store, uri.clone()).or_else(|error| match error {
@@ -1994,6 +2201,9 @@ fn resolve_proposal_result(
             }
             if let Some(snapshot) = before.filter(|snapshot| snapshot.target_uri == uri) {
                 return snapshot_result(snapshot, "draft_before");
+            }
+            if let Some(snapshot) = draft_objects.get(&uri) {
+                return snapshot_result(snapshot, "draft_dependency");
             }
             Err(error)
         }
@@ -2022,6 +2232,10 @@ fn snapshot_result(
         authority: SearchAuthority::Canonical,
         classification: SearchClassification::Fact,
         provenance: provenance.to_owned(),
+        stage: "draft".to_owned(),
+        score: 100_000,
+        rank: 1,
+        score_explanation: "explicit draft object".to_owned(),
     })
 }
 
@@ -2088,7 +2302,7 @@ fn operation_consequence(
     }
 }
 
-fn serialize_payload<T: Serialize>(payload: &T, label: &str) -> Result<Value, AppError> {
+pub(crate) fn serialize_payload<T: Serialize>(payload: &T, label: &str) -> Result<Value, AppError> {
     serde_json::to_value(payload).map_err(|error| {
         AppError::Ai(AiError::InvalidResponse(format!(
             "could not serialize AI {label} payload: {error}"
@@ -2096,7 +2310,7 @@ fn serialize_payload<T: Serialize>(payload: &T, label: &str) -> Result<Value, Ap
     })
 }
 
-fn map_capability_error(error: CapabilityError) -> AppError {
+pub(crate) fn map_capability_error(error: CapabilityError) -> AppError {
     match error {
         CapabilityError::Ai(error) => error.into(),
         CapabilityError::Serialization(message) => AppError::Ai(AiError::InvalidResponse(message)),

@@ -4,7 +4,7 @@ fn rejects_a_second_revision_head() {
     let world = World::new("Arcadia", "", "First Dawn", 1).expect("world");
     let mut store = WorldStore::create(&path, &world).expect("store");
 
-    let (_entity, first_operation) = create_entity_change_operation(&world, 2);
+    let (first_entity, first_operation) = create_entity_change_operation(&world, 2);
     let first_change_set = ChangeSet::new(
         world.id(),
         world.current_revision(),
@@ -15,6 +15,7 @@ fn rejects_a_second_revision_head() {
         vec![],
     )
     .expect("first change set");
+    let first_change_set_id = first_change_set.id();
     let first_revision = StoredRevision::new(
         world.id(),
         Some(world.current_revision()),
@@ -46,7 +47,7 @@ fn rejects_a_second_revision_head() {
         )
         .expect("commit first change set");
 
-    let (_entity, stale_operation) = create_entity_change_operation(&world, 4);
+    let (stale_entity, stale_operation) = create_entity_change_operation(&world, 4);
     let stale_change_set = ChangeSet::new(
         world.id(),
         world.current_revision(),
@@ -57,6 +58,7 @@ fn rejects_a_second_revision_head() {
         vec![],
     )
     .expect("stale change set");
+    let stale_change_set_id = stale_change_set.id();
     let stale_revision = StoredRevision::restore(
         RevisionId::new(),
         world.id(),
@@ -104,6 +106,43 @@ fn rejects_a_second_revision_head() {
     );
 
     drop(store);
+    let reopened = WorldStore::open(&path).expect("reopen after stale revision failure");
+    assert_eq!(
+        reopened
+            .load_world()
+            .expect("reopened world after stale failure")
+            .current_revision(),
+        first_revision.id()
+    );
+    assert_eq!(reopened.list_revisions().expect("coherent revisions").len(), 2);
+    assert_eq!(
+        reopened
+            .get_committed_change_set(first_change_set_id)
+            .expect("first committed record")
+            .expect("stored first committed record")
+            .audits()
+            .len(),
+        1
+    );
+    assert_eq!(
+        reopened
+            .get_committed_change_set(stale_change_set_id)
+            .expect("stale committed record lookup"),
+        None
+    );
+    assert_eq!(
+        reopened
+            .get_entity(first_entity.id())
+            .expect("first entity after stale failure"),
+        Some(first_entity)
+    );
+    assert_eq!(
+        reopened
+            .get_entity(stale_entity.id())
+            .expect("stale entity after failure"),
+        None
+    );
+    drop(reopened);
     fs::remove_file(path).expect("remove project");
 }
 

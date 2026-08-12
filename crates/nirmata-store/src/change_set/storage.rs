@@ -48,8 +48,9 @@ pub(super) fn insert_change_set_row(
             "INSERT INTO change_sets (
                 id, world_id, kind, base_revision_id, result_revision_id, objective,
                 source_refs_json, assumptions_json, deterministic_report_json,
-                created_at_ms, updated_at_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                created_at_ms, updated_at_ms, variant_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                (SELECT active_variant_id FROM worlds WHERE id = ?2))",
             params![
                 id.to_string(),
                 world_id.to_string(),
@@ -223,8 +224,10 @@ pub(super) fn insert_revision(
     transaction
         .execute(
             "INSERT INTO revisions (
-                id, world_id, parent_revision_id, created_at_ms, author, summary, change_set_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                id, world_id, parent_revision_id, created_at_ms, author, summary, change_set_id,
+                variant_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                (SELECT active_variant_id FROM worlds WHERE id = ?2))",
             params![
                 revision.id().to_string(),
                 revision.world_id().to_string(),

@@ -1,5 +1,6 @@
 use crate::ai::{AiRun, AiRunId, AiRunStatus};
-use crate::context_bundle::build_context_bundle;
+use crate::context_bundle::build_context_bundle_scoped;
+use crate::deep_review::{DeepReviewRun, DeepReviewRunId};
 use crate::manual_review::{
     ManualReviewFreshnessSnapshot, annotate_report_with_change_operations, create_undo_review,
     object_snapshot_from_change_value,
@@ -18,7 +19,10 @@ use nirmata_core::{
     change_set::ChangeSet,
     validation::{ValidationIssue, ValidationReport},
 };
-use nirmata_store::{CommittedChangeSetRecord, OperationAudit, StoredRevision, WorldStore};
+use nirmata_store::{
+    CommittedChangeSetRecord, OperationAudit, ReadScope, StoredRevision, Variant,
+    VariantComparison, WorldStore,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -42,6 +46,9 @@ pub struct WorldSession {
     pub world_id: WorldId,
     pub current_revision: RevisionId,
     pub world: World,
+    pub active_variant: Variant,
+    pub read_scope: ReadScope,
+    pub read_only: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -100,6 +107,7 @@ pub struct RevisionAuditOperationSnapshot {
 pub(crate) struct ActiveWorld {
     pub(crate) store: WorldStore,
     pub(crate) session: WorldSession,
+    pub(crate) read_scope: ReadScope,
 }
 
 #[derive(Clone)]
@@ -107,6 +115,8 @@ pub(crate) struct StoredManualReview {
     pub(crate) review: ManualReviewSession,
     pub(crate) freshness: StoredManualReviewFreshness,
     pub(crate) ai_run_id: Option<AiRunId>,
+    pub(crate) revalidation_allowed: bool,
+    pub(crate) merge_source_revision: Option<RevisionId>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -120,6 +130,8 @@ pub struct NirmataApp {
     pub(crate) active: Option<ActiveWorld>,
     pub(crate) manual_reviews: HashMap<String, StoredManualReview>,
     pub(crate) ai_runs: HashMap<AiRunId, AiRun>,
+    pub(crate) deep_review_runs: HashMap<DeepReviewRunId, DeepReviewRun>,
+    pub(crate) import_review_traces: HashMap<String, Value>,
     pub(crate) provider_credentials: ProviderCredentialStore,
 }
 
@@ -129,17 +141,31 @@ impl Default for NirmataApp {
             active: None,
             manual_reviews: HashMap::new(),
             ai_runs: HashMap::new(),
+            deep_review_runs: HashMap::new(),
+            import_review_traces: HashMap::new(),
             provider_credentials: ProviderCredentialStore::new(),
         }
     }
 }
 
 impl StoredManualReview {
-    fn new(review: ManualReviewSession) -> Self {
+    pub(crate) fn new(review: ManualReviewSession) -> Self {
         Self {
             review,
             freshness: StoredManualReviewFreshness::Current,
             ai_run_id: None,
+            revalidation_allowed: true,
+            merge_source_revision: None,
+        }
+    }
+
+    pub(crate) fn from_snapshot_import(review: ManualReviewSession) -> Self {
+        Self {
+            review,
+            freshness: StoredManualReviewFreshness::Current,
+            ai_run_id: None,
+            revalidation_allowed: false,
+            merge_source_revision: None,
         }
     }
 
@@ -148,6 +174,8 @@ impl StoredManualReview {
             review,
             freshness: StoredManualReviewFreshness::Current,
             ai_run_id: Some(ai_run_id),
+            revalidation_allowed: true,
+            merge_source_revision: None,
         }
     }
 
@@ -164,11 +192,20 @@ impl StoredManualReview {
         };
     }
 
-    fn snapshot(&self, review_key: &str) -> ManualReviewSnapshot {
-        self.review.snapshot(
+    pub(crate) fn snapshot(&self, review_key: &str) -> ManualReviewSnapshot {
+        let mut snapshot = self.review.snapshot(
             review_key,
             self.freshness.snapshot(self.review.draft().base_revision()),
-        )
+        );
+        if !self.revalidation_allowed
+            && snapshot.freshness.status != ManualReviewFreshnessStatus::Current
+        {
+            snapshot.freshness.can_revalidate = false;
+            snapshot.freshness.message =
+                "El snapshot se basa en otra revisión; exporta e importa una copia nueva."
+                    .to_owned();
+        }
+        snapshot
     }
 }
 
@@ -207,7 +244,7 @@ impl NirmataApp {
         validate_project_path(&input.path)?;
         let world = World::new(input.name, input.premise_md, input.epoch_label, now_ms()?)?;
         let store = WorldStore::create(&input.path, &world)?;
-        Ok(self.activate(input.path, store, world))
+        self.activate(input.path, store, world)
     }
 
     pub fn open_world(&mut self, path: PathBuf) -> Result<WorldSession, AppError> {
@@ -215,7 +252,7 @@ impl NirmataApp {
         validate_project_path(&path)?;
         let store = WorldStore::open(&path)?;
         let world = store.load_world()?;
-        Ok(self.activate(path, store, world))
+        self.activate(path, store, world)
     }
 
     pub fn get_current_world(&mut self) -> Result<Option<WorldSession>, AppError> {
@@ -231,7 +268,7 @@ impl NirmataApp {
         request: &ContextBundleRequest,
     ) -> Result<ContextBundle, AppError> {
         let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
-        build_context_bundle(&active.store, request)
+        build_context_bundle_scoped(&active.store, active.read_scope, request)
     }
 
     pub fn search_world(
@@ -239,13 +276,13 @@ impl NirmataApp {
         request: &SearchWorldRequest,
     ) -> Result<SearchWorldResponse, AppError> {
         let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
-        crate::search_use_cases::search_world(&active.store, request)
+        crate::search_use_cases::search_world(&active.store, active.read_scope, request)
     }
 
     pub fn open_uri(&self, uri: &str) -> Result<OpenUriResponse, AppError> {
         let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
         let uri = validate_object_uri(uri)?;
-        crate::search_use_cases::open_uri(&active.store, uri)
+        crate::search_use_cases::open_uri(&active.store, active.read_scope, uri)
     }
 
     pub fn get_related_context(
@@ -253,12 +290,15 @@ impl NirmataApp {
         request: &RelatedContextRequest,
     ) -> Result<RelatedContextResponse, AppError> {
         let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
-        crate::search_use_cases::get_related_context(&active.store, request)
+        crate::search_use_cases::get_related_context(&active.store, active.read_scope, request)
     }
 
     pub fn read_logical_vfs(&self) -> Result<LogicalVfsDirectory, AppError> {
         let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
-        active.store.read_logical_vfs().map_err(Into::into)
+        active
+            .store
+            .read_logical_vfs_scoped(active.read_scope)
+            .map_err(Into::into)
     }
 
     pub fn preview_manual_draft(
@@ -266,6 +306,7 @@ impl NirmataApp {
         request: ManualDraftRequest,
     ) -> Result<ManualDraftResponse, AppError> {
         let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        ensure_active_write_scope(active)?;
         let world = active.store.load_world()?;
         active.session.world_id = world.id();
         active.session.current_revision = world.current_revision();
@@ -293,7 +334,96 @@ impl NirmataApp {
         self.active.take().ok_or(AppError::NoWorldOpen)?;
         self.manual_reviews.clear();
         self.ai_runs.clear();
+        self.import_review_traces.clear();
         Ok(())
+    }
+
+    pub fn list_variants(&self) -> Result<Vec<Variant>, AppError> {
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        active.store.list_variants().map_err(Into::into)
+    }
+
+    pub fn create_variant(
+        &mut self,
+        name: &str,
+        from_revision: RevisionId,
+    ) -> Result<Variant, AppError> {
+        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        active
+            .store
+            .create_variant(name, from_revision, now_ms()?)
+            .map_err(Into::into)
+    }
+
+    pub fn rename_variant(
+        &mut self,
+        id: nirmata_core::VariantId,
+        name: &str,
+    ) -> Result<Variant, AppError> {
+        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        active.store.rename_variant(id, name).map_err(Into::into)
+    }
+
+    pub fn archive_variant(
+        &mut self,
+        id: nirmata_core::VariantId,
+        allow_referenced: bool,
+    ) -> Result<(), AppError> {
+        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        active
+            .store
+            .archive_variant(id, allow_referenced)
+            .map_err(Into::into)
+    }
+
+    pub fn switch_variant(
+        &mut self,
+        id: nirmata_core::VariantId,
+    ) -> Result<WorldSession, AppError> {
+        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        let variant = active.store.switch_variant(id)?;
+        active.read_scope = ReadScope::head(variant.id);
+        active.session.active_variant = variant;
+        active.session.read_scope = active.read_scope;
+        active.session.read_only = false;
+        refresh_active_world(active)?;
+        self.manual_reviews.clear();
+        self.ai_runs.clear();
+        self.deep_review_runs.clear();
+        self.import_review_traces.clear();
+        Ok(active.session.clone())
+    }
+
+    pub fn set_read_scope(&mut self, scope: ReadScope) -> Result<WorldSession, AppError> {
+        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        let revision = active.store.resolve_scope(scope)?;
+        active.store.read_canon_snapshot_scoped(scope)?;
+        active.read_scope = scope;
+        active.session.read_scope = if scope.revision_id.is_some() {
+            ReadScope::historical(scope.variant_id, revision)
+        } else {
+            scope
+        };
+        active.session.read_only =
+            scope.revision_id.is_some() || scope.variant_id != active.session.active_variant.id;
+        Ok(active.session.clone())
+    }
+
+    pub fn view_active_head(&mut self) -> Result<WorldSession, AppError> {
+        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        active.read_scope = ReadScope::head(active.session.active_variant.id);
+        active.session.read_scope = active.read_scope;
+        active.session.read_only = false;
+        Ok(active.session.clone())
+    }
+
+    pub fn compare_scopes(
+        &self,
+        left: ReadScope,
+        right: ReadScope,
+    ) -> Result<VariantComparison, AppError> {
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        active.store.compare_scopes(left, right).map_err(Into::into)
     }
 
     pub fn get_provider_credential_status(&self) -> ProviderCredentialStatus {
@@ -341,10 +471,12 @@ impl NirmataApp {
         let updated_review = review
             .review
             .apply_action(action, now_ms()?, &active.store)?;
-        let mut updated = match review.ai_run_id {
-            Some(run_id) => StoredManualReview::from_ai(updated_review, run_id),
-            None => StoredManualReview::new(updated_review),
+        let mut updated = match (review.ai_run_id, review.revalidation_allowed) {
+            (Some(run_id), _) => StoredManualReview::from_ai(updated_review, run_id),
+            (None, false) => StoredManualReview::from_snapshot_import(updated_review),
+            (None, true) => StoredManualReview::new(updated_review),
         };
+        updated.merge_source_revision = review.merge_source_revision;
         updated.sync_with_revision(active.session.current_revision);
         self.manual_reviews.insert(review_key.to_owned(), updated);
         if let Some(run_id) = review.ai_run_id
@@ -385,6 +517,16 @@ impl NirmataApp {
         ))
     }
 
+    pub fn discard_stored_manual_review(&mut self, review_key: &str) -> Result<(), AppError> {
+        validate_review_key(review_key)?;
+        self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        self.manual_reviews
+            .remove(review_key)
+            .ok_or_else(|| AppError::ReviewSessionNotFound(review_key.to_owned()))?;
+        self.import_review_traces.remove(review_key);
+        Ok(())
+    }
+
     pub fn begin_stored_manual_review_edit(
         &mut self,
         review_key: &str,
@@ -412,6 +554,15 @@ impl NirmataApp {
             .manual_reviews
             .get(review_key)
             .and_then(|stored| stored.ai_run_id);
+        let revalidation_allowed = self
+            .manual_reviews
+            .get(review_key)
+            .map(|stored| stored.revalidation_allowed)
+            .unwrap_or(true);
+        let merge_source_revision = self
+            .manual_reviews
+            .get(review_key)
+            .and_then(|stored| stored.merge_source_revision);
         let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
         refresh_active_world(active)?;
         let Some(stored) = self.manual_reviews.get_mut(review_key) else {
@@ -449,10 +600,12 @@ impl NirmataApp {
             now_ms()?,
             &active.store,
         )?;
-        *stored = match ai_run_id {
-            Some(run_id) => StoredManualReview::from_ai(updated, run_id),
-            None => StoredManualReview::new(updated),
+        *stored = match (ai_run_id, revalidation_allowed) {
+            (Some(run_id), _) => StoredManualReview::from_ai(updated, run_id),
+            (None, false) => StoredManualReview::from_snapshot_import(updated),
+            (None, true) => StoredManualReview::new(updated),
         };
+        stored.merge_source_revision = merge_source_revision;
         stored.sync_with_revision(active.session.current_revision);
         let snapshot = stored.snapshot(review_key);
         let response = ManualDraftResponse {
@@ -495,6 +648,9 @@ impl NirmataApp {
             .manual_reviews
             .get_mut(review_key)
             .ok_or_else(|| AppError::ReviewSessionNotFound(review_key.to_owned()))?;
+        if !review.revalidation_allowed {
+            return Err(AppError::ManualReviewRevalidationFailed);
+        }
         let live_head = active.session.current_revision;
         match review.freshness {
             StoredManualReviewFreshness::Stale { current_revision }
@@ -532,7 +688,7 @@ impl NirmataApp {
         validate_review_key(review_key)?;
         let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
         refresh_active_world(active)?;
-        let (review, ai_run_id) = {
+        let (review, ai_run_id, merge_source_revision) = {
             let review = self
                 .manual_reviews
                 .get_mut(review_key)
@@ -544,7 +700,11 @@ impl NirmataApp {
                     current_revision: active.session.current_revision,
                 });
             }
-            (review.review.clone(), review.ai_run_id)
+            (
+                review.review.clone(),
+                review.ai_run_id,
+                review.merge_source_revision,
+            )
         };
         let ai_trace = ai_run_id
             .map(|run_id| {
@@ -554,21 +714,28 @@ impl NirmataApp {
                     .commit_trace(review_key, review.draft())
             })
             .transpose()?;
+        let import_trace = self.import_review_traces.get(review_key).cloned();
+        let is_import = import_trace.is_some();
         let session = commit_review(
             active,
             &review,
-            if ai_run_id.is_some() {
+            if is_import {
+                "lore_import"
+            } else if ai_run_id.is_some() {
                 "ai_review"
             } else {
                 "manual_review"
             },
-            if ai_run_id.is_some() {
+            if is_import {
+                "lore_import"
+            } else if ai_run_id.is_some() {
                 "ai_review"
             } else {
                 "manual_review"
             },
             None,
-            ai_trace,
+            import_trace.or(ai_trace),
+            merge_source_revision,
         )?;
         if let Some(run_id) = ai_run_id {
             self.ai_runs
@@ -577,6 +744,7 @@ impl NirmataApp {
                 .mark_committed(session.current_revision)?;
         }
         self.manual_reviews.remove(review_key);
+        self.import_review_traces.remove(review_key);
         Ok(session)
     }
 
@@ -584,7 +752,11 @@ impl NirmataApp {
         let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
         let mut known = Vec::new();
         let mut unknown = Vec::new();
-        for aggregate in active.store.list_events()? {
+        for aggregate in active
+            .store
+            .read_canon_snapshot_scoped(active.read_scope)?
+            .events()
+        {
             let entry = TimelineEventEntry {
                 uri: format!("nirmata://event/{}", aggregate.event().id()),
                 summary: aggregate.event().summary().to_owned(),
@@ -654,12 +826,14 @@ impl NirmataApp {
         input: ManualReviewInput,
     ) -> Result<ManualReviewSession, AppError> {
         let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        ensure_active_write_scope(active)?;
         let world = active.store.load_world()?;
         active.session.world_id = world.id();
         active.session.current_revision = world.current_revision();
         active.session.world = world;
 
         ManualReviewSession::create(
+            active.session.active_variant.id,
             active.session.world_id,
             active.session.current_revision,
             input,
@@ -682,7 +856,15 @@ impl NirmataApp {
         review: &ManualReviewSession,
     ) -> Result<WorldSession, AppError> {
         let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
-        commit_review(active, review, "manual_review", "manual_review", None, None)
+        commit_review(
+            active,
+            review,
+            "manual_review",
+            "manual_review",
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn undo_last_commit(&mut self) -> Result<WorldSession, AppError> {
@@ -690,6 +872,7 @@ impl NirmataApp {
         refresh_active_world(active)?;
         let target = resolve_undo_target(&active.store, active.session.current_revision, None)?;
         let review = create_undo_review(
+            active.session.active_variant.id,
             active.session.world_id,
             active.session.current_revision,
             &target.revision,
@@ -703,6 +886,7 @@ impl NirmataApp {
             "undo",
             "undo",
             Some(target.revision.id()),
+            None,
             None,
         )
     }
@@ -716,6 +900,7 @@ impl NirmataApp {
             Some(revision_id),
         )?;
         let review = create_undo_review(
+            active.session.active_variant.id,
             active.session.world_id,
             active.session.current_revision,
             &target.revision,
@@ -730,6 +915,7 @@ impl NirmataApp {
             "undo",
             Some(target.revision.id()),
             None,
+            None,
         )
     }
 
@@ -740,20 +926,32 @@ impl NirmataApp {
         Ok(())
     }
 
-    fn activate(&mut self, path: PathBuf, store: WorldStore, world: World) -> WorldSession {
+    fn activate(
+        &mut self,
+        path: PathBuf,
+        store: WorldStore,
+        world: World,
+    ) -> Result<WorldSession, AppError> {
         self.manual_reviews.clear();
         self.ai_runs.clear();
+        self.import_review_traces.clear();
+        let active_variant = store.active_variant()?;
+        let read_scope = ReadScope::head(active_variant.id);
         let session = WorldSession {
             path,
             world_id: world.id(),
             current_revision: world.current_revision(),
             world,
+            active_variant,
+            read_scope,
+            read_only: false,
         };
         self.active = Some(ActiveWorld {
             store,
             session: session.clone(),
+            read_scope,
         });
-        session
+        Ok(session)
     }
 }
 
@@ -766,7 +964,7 @@ fn timeline_sort_key(time: &nirmata_core::time::EventTime, summary: &str) -> (i6
     )
 }
 
-fn now_ms() -> Result<i64, AppError> {
+pub(crate) fn now_ms() -> Result<i64, AppError> {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| AppError::ClockBeforeUnixEpoch)?
@@ -785,6 +983,14 @@ fn refresh_active_world(active: &mut ActiveWorld) -> Result<(), AppError> {
     active.session.world_id = world.id();
     active.session.current_revision = world.current_revision();
     active.session.world = world;
+    active.session.active_variant = active.store.active_variant()?;
+    Ok(())
+}
+
+pub(crate) fn ensure_active_write_scope(active: &ActiveWorld) -> Result<(), AppError> {
+    if active.read_scope != ReadScope::head(active.session.active_variant.id) {
+        return Err(AppError::ReadOnlyScope);
+    }
     Ok(())
 }
 
@@ -795,7 +1001,15 @@ fn commit_review(
     audit_source: &str,
     undone_revision_id: Option<RevisionId>,
     deterministic_report: Option<Value>,
+    source_revision: Option<RevisionId>,
 ) -> Result<WorldSession, AppError> {
+    ensure_active_write_scope(active)?;
+    if review.variant_id() != active.session.active_variant.id {
+        return Err(AppError::ManualReviewVariantMismatch {
+            expected: active.session.active_variant.id,
+            found: review.variant_id(),
+        });
+    }
     let world = active.store.load_world()?;
     if world.current_revision() != review.draft().base_revision() {
         return Err(AppError::ManualReviewStale {
@@ -864,7 +1078,9 @@ fn commit_review(
         revision,
         undone_revision_id,
     )?;
-    active.store.commit_change_set(&record)?;
+    active
+        .store
+        .commit_change_set_from_source(&record, source_revision)?;
     refresh_active_world(active)?;
     Ok(active.session.clone())
 }
@@ -874,7 +1090,8 @@ fn resolve_undo_target(
     head_revision: RevisionId,
     requested_revision: Option<RevisionId>,
 ) -> Result<LogicalCommittedRevision, AppError> {
-    let logical_revisions = logical_committed_revisions(store, head_revision)?;
+    let logical_revisions =
+        logical_committed_revisions(store, head_revision, store.active_variant()?.id)?;
     let Some(current_target) = logical_revisions.last().cloned() else {
         return Err(AppError::NoUndoableRevision);
     };
@@ -894,9 +1111,13 @@ fn resolve_undo_target(
 fn logical_committed_revisions(
     store: &WorldStore,
     head_revision: RevisionId,
+    variant_id: nirmata_core::VariantId,
 ) -> Result<Vec<LogicalCommittedRevision>, AppError> {
     let mut stack: Vec<LogicalCommittedRevision> = Vec::new();
     for revision in revision_chain(store, head_revision)? {
+        if store.revision_variant_id(revision.id())? != variant_id {
+            continue;
+        }
         let Some(change_set_id) = revision.change_set_id() else {
             continue;
         };

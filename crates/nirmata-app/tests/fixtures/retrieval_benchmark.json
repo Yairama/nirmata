@@ -1,0 +1,94 @@
+{
+  "version": "nir-053-v1",
+  "recall_target_bps": 9000,
+  "cited_precision_floor_bps": 9500,
+  "latency_budget_ms": 250,
+  "minimum_affected_paraphrase_queries": 10,
+  "distractor_documents": 36,
+  "lexical_cases": [
+    {
+      "id": "lex-01",
+      "title": "The Prince's Departure",
+      "body": "The crown prince departs the royal city covertly.",
+      "exact_query": "crown prince departs",
+      "paraphrase_query": "heir secretly leaves the capital"
+    },
+    {
+      "id": "lex-02",
+      "title": "Granary Account",
+      "body": "Grain scarcity endangers the rural residents.",
+      "exact_query": "grain scarcity",
+      "paraphrase_query": "food shortage threatens villagers"
+    },
+    {
+      "id": "lex-03",
+      "title": "House of Remedies",
+      "body": "The healer remedies the ague before dawn.",
+      "exact_query": "healer remedies ague",
+      "paraphrase_query": "physician cures fever"
+    },
+    {
+      "id": "lex-04",
+      "title": "Western Campaign",
+      "body": "The soldiers ford the waterway at sunrise.",
+      "exact_query": "soldiers ford waterway",
+      "paraphrase_query": "army crosses river"
+    },
+    {
+      "id": "lex-05",
+      "title": "Minutes of the Senate",
+      "body": "The senate refuses the border pact.",
+      "exact_query": "senate refuses pact",
+      "paraphrase_query": "council rejects treaty"
+    },
+    {
+      "id": "lex-06",
+      "title": "Admiralty Losses",
+      "body": "A tempest wrecks the southern armada.",
+      "exact_query": "tempest wrecks armada",
+      "paraphrase_query": "storm destroys fleet"
+    },
+    {
+      "id": "lex-07",
+      "title": "The Trader's Ledger",
+      "body": "The trader hides a substantial liability.",
+      "exact_query": "trader hides liability",
+      "paraphrase_query": "merchant conceals debt"
+    },
+    {
+      "id": "lex-08",
+      "title": "Gaol Watch",
+      "body": "The captive flees the underground gaol.",
+      "exact_query": "captive flees gaol",
+      "paraphrase_query": "prisoner escapes dungeon"
+    },
+    {
+      "id": "lex-09",
+      "title": "The Seer's Warning",
+      "body": "The seer foretells a darkening of the sun.",
+      "exact_query": "seer foretells darkening",
+      "paraphrase_query": "oracle predicts eclipse"
+    },
+    {
+      "id": "lex-10",
+      "title": "The Levy Rising",
+      "body": "The growers revolt over the new levy.",
+      "exact_query": "growers revolt levy",
+      "paraphrase_query": "farmers rebel against tax"
+    },
+    {
+      "id": "lex-11",
+      "title": "Succession Roll",
+      "body": "The youngster succeeds to the ancient crown.",
+      "exact_query": "youngster succeeds crown",
+      "paraphrase_query": "child inherits throne"
+    },
+    {
+      "id": "lex-12",
+      "title": "Ashes of the Archive",
+      "body": "A blaze devours the records hall.",
+      "exact_query": "blaze devours records",
+      "paraphrase_query": "fire consumes archive"
+    }
+  ]
+}

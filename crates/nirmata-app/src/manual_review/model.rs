@@ -422,7 +422,11 @@ pub enum ManualReviewAction {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum ManualReviewActionRequest {
     Accept {
         operation_id: String,
@@ -622,6 +626,7 @@ impl ManualReviewOperation {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ManualReviewSession {
+    variant_id: VariantId,
     original_draft: ChangeSetDraft,
     draft: ChangeSetDraft,
     operations: Vec<ManualReviewOperation>,
@@ -634,6 +639,7 @@ pub struct ManualReviewSession {
 
 impl ManualReviewSession {
     pub(crate) fn create(
+        variant_id: VariantId,
         world_id: WorldId,
         base_revision: RevisionId,
         input: ManualReviewInput,
@@ -666,6 +672,7 @@ impl ManualReviewSession {
             })
             .collect();
         Self::rebuild(
+            variant_id,
             original_draft,
             reviewed_operations,
             decisions,
@@ -675,6 +682,7 @@ impl ManualReviewSession {
     }
 
     pub(crate) fn from_draft(
+        variant_id: VariantId,
         draft: ChangeSetDraft,
         store: &WorldStore,
     ) -> Result<Self, AppError> {
@@ -690,7 +698,7 @@ impl ManualReviewSession {
             })
             .collect();
         let decisions = draft.decisions().to_vec();
-        Self::rebuild(draft, operations, decisions, vec![], store)
+        Self::rebuild(variant_id, draft, operations, decisions, vec![], store)
     }
 
     pub(crate) fn apply_action(
@@ -785,6 +793,7 @@ impl ManualReviewSession {
         }
 
         Self::rebuild(
+            self.variant_id,
             self.original_draft.clone(),
             operations,
             decisions,
@@ -803,6 +812,10 @@ impl ManualReviewSession {
 
     pub fn operations(&self) -> &[ManualReviewOperation] {
         &self.operations
+    }
+
+    pub fn variant_id(&self) -> VariantId {
+        self.variant_id
     }
 
     pub fn validation_report(&self) -> &ValidationReport {
@@ -831,6 +844,7 @@ impl ManualReviewSession {
         store: &WorldStore,
     ) -> Result<Self, AppError> {
         Self::rebuild(
+            self.variant_id,
             rebase_draft_revision(&self.original_draft, base_revision)?,
             self.operations.clone(),
             self.decisions.clone(),
@@ -881,6 +895,7 @@ impl ManualReviewSession {
     }
 
     fn rebuild(
+        variant_id: VariantId,
         original_draft: ChangeSetDraft,
         operations: Vec<ManualReviewOperation>,
         decisions: Vec<DecisionPoint>,
@@ -893,9 +908,13 @@ impl ManualReviewSession {
         annotate_report_with_operations(&mut validation_report, &operations);
         let waivers = retain_applicable_waivers(waivers, &operations, &validation_report);
         let effective_report = apply_waivers(&validation_report, &waivers);
-        let ready_to_confirm = effective_report.is_ok();
+        let ready_to_confirm = effective_report.is_ok()
+            && decisions
+                .iter()
+                .all(|decision| decision.resolved_alternative().is_some());
 
         Ok(Self {
+            variant_id,
             original_draft,
             draft,
             operations,

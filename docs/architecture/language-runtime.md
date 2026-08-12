@@ -113,6 +113,11 @@ Los comandos expuestos al frontend deben corresponder a casos de uso:
 
 ```text
 open_world
+export_vfs_snapshot
+import_vfs_snapshot
+create_lore_import
+extract_lore_import
+prepare_lore_import_review
 search_world
 get_entity
 save_manual_changes
@@ -135,6 +140,19 @@ El contenido del mundo y la salida del modelo son datos no confiables:
   esta disponible de forma fiable; si no, permanecen solo en memoria de sesion
   y la interfaz debe exponer esa limitacion;
 - los comandos Tauri validan IDs y rutas;
+- `export_vfs_snapshot` acepta solo un padre absoluto elegido por el usuario y
+  un nombre de directorio simple; app vuelve a validar existencia, symlinks y
+  ocupacion antes de crear staging;
+- `import_vfs_snapshot` acepta solo un directorio absoluto elegido por el
+  usuario; app vuelve a confinar y validar el arbol completo antes de crear una
+  revision manual descartable;
+- `create_lore_import` acepta solo texto/Markdown UTF-8 seleccionado, vuelve a
+  confinar ruta y symlinks en Rust y copia el contenido como staging inerte;
+- `extract_lore_import` y `prepare_lore_import_review` comparten timeout y token
+  de cancelacion del proveedor estandar; cancelar no publica resultados
+  parciales;
+- editar un candidato no puede cambiar su identidad, tipo ni citas; abrir una
+  cita devuelve texto/rango y nunca abre enlaces o rutas embebidas;
 - el modelo no recibe herramientas de escritura;
 - importar archivos nunca ejecuta contenido;
 - logs y telemetria no incluyen lore por defecto.

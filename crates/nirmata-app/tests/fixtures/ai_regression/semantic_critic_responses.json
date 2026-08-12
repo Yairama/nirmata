@@ -1,0 +1,138 @@
+[
+  {
+    "case": 5,
+    "name": "semantic_rule_ignored",
+    "snapshot": ["nirmata://rule/05050505-0505-0505-0505-050505050505"],
+    "request": "Make Mara cross the veil without surrendering a memory.",
+    "draft": {"operationIds": ["05050505-0000-0000-0000-000000000005"], "retcon": "additive", "preserves": [], "exception": null},
+    "response": {"issues": [{"issueId": "semantic-rule", "summary": {"markdown": "Crossing the veil omits the required memory sacrifice.", "contentReferences": ["nirmata://rule/05050505-0505-0505-0505-050505050505"]}, "affectedOperationIds": ["05050505-0000-0000-0000-000000000005"], "relatedObjectUris": ["nirmata://rule/05050505-0505-0505-0505-050505050505"], "evidence": [{"sourceUri": "nirmata://rule/05050505-0505-0505-0505-050505050505", "excerptMd": "Every veil crossing costs one treasured memory."}], "severity": "conflict", "category": "universe_rule", "attackType": "rebuts", "targetClaimId": null, "confidence": 0.96, "suggestedResolution": null}]}
+  },
+  {
+    "case": 6,
+    "name": "belief_is_not_physical_law",
+    "snapshot": ["nirmata://claim/06060606-0606-0606-0606-060606060606"],
+    "request": "Show rain falling despite the sailors' belief that the saint forbids it.",
+    "draft": {"operationIds": ["06060606-0000-0000-0000-000000000006"], "retcon": "additive", "preserves": ["nirmata://claim/06060606-0606-0606-0606-060606060606"], "exception": "The attributed belief remains a perspective, not a universe rule."},
+    "response": {"issues": []}
+  },
+  {
+    "case": 7,
+    "name": "impossible_secret_knowledge",
+    "snapshot": ["nirmata://claim/07070707-0707-0707-0707-070707070707"],
+    "request": "Let the dock guard reveal the council's sealed pact.",
+    "draft": {"operationIds": ["07070707-0000-0000-0000-000000000007"], "retcon": "additive", "preserves": [], "exception": null},
+    "response": {"issues": [{"issueId": "secret-access", "summary": {"markdown": "The guard has no epistemic access to the sealed pact.", "contentReferences": ["nirmata://claim/07070707-0707-0707-0707-070707070707"]}, "affectedOperationIds": ["07070707-0000-0000-0000-000000000007"], "relatedObjectUris": ["nirmata://claim/07070707-0707-0707-0707-070707070707"], "evidence": [{"sourceUri": "nirmata://claim/07070707-0707-0707-0707-070707070707", "excerptMd": "Only the inner council knows the pact."}], "severity": "warning", "category": "impossible_knowledge", "attackType": "undercuts", "targetClaimId": "07070707-0707-0707-0707-070707070707", "confidence": 0.91, "suggestedResolution": null}]}
+  },
+  {
+    "case": 8,
+    "name": "hidden_markdown_contradiction",
+    "snapshot": ["nirmata://document/08080808-0808-0808-0808-080808080808", "nirmata://event/08080808-1111-1111-1111-111111111111"],
+    "request": "Add the ambassador's recollection to the chronicle.",
+    "draft": {"operationIds": ["08080808-0000-0000-0000-000000000008"], "retcon": "additive", "preserves": [], "exception": null},
+    "response": {"issues": [{"issueId": "hidden-death-conflict", "summary": {"markdown": "The Markdown places a meeting after the queen's death.", "contentReferences": ["nirmata://event/08080808-1111-1111-1111-111111111111"]}, "affectedOperationIds": ["08080808-0000-0000-0000-000000000008"], "relatedObjectUris": ["nirmata://document/08080808-0808-0808-0808-080808080808", "nirmata://event/08080808-1111-1111-1111-111111111111"], "evidence": [{"sourceUri": "nirmata://event/08080808-1111-1111-1111-111111111111", "excerptMd": "The queen died in year 430."}], "severity": "conflict", "category": "temporal_conflict", "attackType": "rebuts", "targetClaimId": null, "confidence": 0.98, "suggestedResolution": null}]}
+  },
+  {
+    "case": 9,
+    "name": "valid_rule_exception",
+    "snapshot": ["nirmata://rule/09090909-0909-0909-0909-090909090909", "nirmata://claim/09090909-1111-1111-1111-111111111111"],
+    "request": "Let the named heir enter the sealed archive.",
+    "draft": {"operationIds": ["09090909-0000-0000-0000-000000000009"], "retcon": "additive", "preserves": [], "exception": "The rule explicitly permits the named heir."},
+    "response": {"issues": []}
+  },
+  {
+    "case": 14,
+    "name": "spatial_transition_missing",
+    "snapshot": ["nirmata://entity/14141414-1414-1414-1414-141414141414"],
+    "request": "Place Mara on the remote island in the next instant.",
+    "draft": {"operationIds": ["14141414-0000-0000-0000-000000000014"], "retcon": "additive", "preserves": [], "exception": null},
+    "response": {"issues": [{"issueId": "spatial-gap", "summary": {"markdown": "No transition explains the immediate move to the remote island.", "contentReferences": ["nirmata://entity/14141414-1414-1414-1414-141414141414"]}, "affectedOperationIds": ["14141414-0000-0000-0000-000000000014"], "relatedObjectUris": ["nirmata://entity/14141414-1414-1414-1414-141414141414"], "evidence": [{"sourceUri": "nirmata://entity/14141414-1414-1414-1414-141414141414", "excerptMd": "The island is three days from the harbor."}], "severity": "conflict", "category": "canon_contradiction", "attackType": "rebuts", "targetClaimId": null, "confidence": 0.9, "suggestedResolution": null}]}
+  },
+  {
+    "case": 15,
+    "name": "action_conflicts_with_goal",
+    "snapshot": ["nirmata://goal/15151515-1515-1515-1515-151515151515"],
+    "request": "Have Mara destroy the mine she is committed to protect.",
+    "draft": {"operationIds": ["15151515-0000-0000-0000-000000000015"], "retcon": "additive", "preserves": [], "exception": null},
+    "response": {"issues": [{"issueId": "goal-incompatibility", "summary": {"markdown": "The action contradicts Mara's active goal without explaining a change of intent.", "contentReferences": ["nirmata://goal/15151515-1515-1515-1515-151515151515"]}, "affectedOperationIds": ["15151515-0000-0000-0000-000000000015"], "relatedObjectUris": ["nirmata://goal/15151515-1515-1515-1515-151515151515"], "evidence": [{"sourceUri": "nirmata://goal/15151515-1515-1515-1515-151515151515", "excerptMd": "Mara's active goal is to keep the mine operational."}], "severity": "conflict", "category": "missing_consequence", "attackType": "rebuts", "targetClaimId": null, "confidence": 0.94, "suggestedResolution": null}]}
+  },
+  {
+    "case": 16,
+    "name": "isolated_event_warning",
+    "snapshot": ["nirmata://event/16161616-1616-1616-1616-161616161616"],
+    "request": "Add an unexplained bell ringing at midnight.",
+    "draft": {"operationIds": ["16161616-0000-0000-0000-000000000016"], "retcon": "additive", "preserves": [], "exception": "An isolated event may be intentional and only requires acknowledgement."},
+    "response": {"issues": [{"issueId": "isolated-event", "summary": {"markdown": "The new event has no local cause or consequence.", "contentReferences": ["nirmata://event/16161616-1616-1616-1616-161616161616"]}, "affectedOperationIds": ["16161616-0000-0000-0000-000000000016"], "relatedObjectUris": ["nirmata://event/16161616-1616-1616-1616-161616161616"], "evidence": [{"sourceUri": "nirmata://event/16161616-1616-1616-1616-161616161616", "excerptMd": "No neighboring event references the midnight bell."}], "severity": "warning", "category": "missing_consequence", "attackType": "undercuts", "targetClaimId": null, "confidence": 0.68, "suggestedResolution": null}]}
+  },
+  {
+    "case": 17,
+    "name": "desire_is_not_knowledge",
+    "snapshot": ["nirmata://goal/17171717-1717-1717-1717-171717171717"],
+    "request": "State only that Mara wants the vault to be empty.",
+    "draft": {"operationIds": ["17171717-0000-0000-0000-000000000017"], "retcon": "additive", "preserves": ["nirmata://goal/17171717-1717-1717-1717-171717171717"], "exception": "A desired state does not assert that the actor knows the current state."},
+    "response": {"issues": []}
+  },
+  {
+    "case": 18,
+    "name": "explained_discontinuity",
+    "snapshot": ["nirmata://event/18181818-1818-1818-1818-181818181818"],
+    "request": "Move Mara through the documented gate between scenes.",
+    "draft": {"operationIds": ["18181818-0000-0000-0000-000000000018"], "retcon": "additive", "preserves": [], "exception": "The draft explicitly cites the gate transition that explains the discontinuity."},
+    "response": {"issues": []}
+  },
+  {
+    "case": 19,
+    "name": "explicit_negation_is_not_unknown",
+    "snapshot": ["nirmata://claim/19191919-1919-1919-1919-191919191919"],
+    "request": "Assert that the gate is open despite the canonical explicit negation.",
+    "draft": {"operationIds": ["19191919-0000-0000-0000-000000000019"], "retcon": "additive", "preserves": [], "exception": null},
+    "response": {"issues": [{"issueId": "explicit-negation", "summary": {"markdown": "The proposal contradicts an explicit negative claim, not an unspecified value.", "contentReferences": ["nirmata://claim/19191919-1919-1919-1919-191919191919"]}, "affectedOperationIds": ["19191919-0000-0000-0000-000000000019"], "relatedObjectUris": ["nirmata://claim/19191919-1919-1919-1919-191919191919"], "evidence": [{"sourceUri": "nirmata://claim/19191919-1919-1919-1919-191919191919", "excerptMd": "The gate is explicitly not open."}], "severity": "conflict", "category": "canon_contradiction", "attackType": "rebuts", "targetClaimId": "19191919-1919-1919-1919-191919191919", "confidence": 0.99, "suggestedResolution": null}]}
+  },
+  {
+    "case": 22,
+    "name": "rebuts_and_undercuts_are_distinct",
+    "snapshot": ["nirmata://claim/22222222-2222-2222-2222-222222222222"],
+    "request": "Review both the conclusion and the witness's access.",
+    "draft": {"operationIds": ["22222222-0000-0000-0000-000000000021", "22222222-0000-0000-0000-000000000022"], "retcon": "additive", "preserves": [], "exception": null},
+    "response": {"issues": [{"issueId": "opposite-conclusion", "summary": {"markdown": "The first operation directly contradicts the canonical conclusion.", "contentReferences": ["nirmata://claim/22222222-2222-2222-2222-222222222222"]}, "affectedOperationIds": ["22222222-0000-0000-0000-000000000021"], "relatedObjectUris": ["nirmata://claim/22222222-2222-2222-2222-222222222222"], "evidence": [{"sourceUri": "nirmata://claim/22222222-2222-2222-2222-222222222222", "excerptMd": "The canonical conclusion says the gate stayed shut."}], "severity": "conflict", "category": "canon_contradiction", "attackType": "rebuts", "targetClaimId": "22222222-2222-2222-2222-222222222222", "confidence": 0.95, "suggestedResolution": null}, {"issueId": "witness-access", "summary": {"markdown": "The second operation relies on a witness without access to the gate.", "contentReferences": ["nirmata://claim/22222222-2222-2222-2222-222222222222"]}, "affectedOperationIds": ["22222222-0000-0000-0000-000000000022"], "relatedObjectUris": ["nirmata://claim/22222222-2222-2222-2222-222222222222"], "evidence": [{"sourceUri": "nirmata://claim/22222222-2222-2222-2222-222222222222", "excerptMd": "The witness was confined below deck."}], "severity": "warning", "category": "insufficient_evidence", "attackType": "undercuts", "targetClaimId": "22222222-2222-2222-2222-222222222222", "confidence": 0.83, "suggestedResolution": null}]}
+  },
+  {
+    "case": 24,
+    "name": "reinterpretive_retcon_preserves_perspective",
+    "snapshot": ["nirmata://claim/24242424-2424-2424-2424-242424242424"],
+    "request": "Reveal that Sera's old account was sincere but based on a disguise.",
+    "draft": {"operationIds": ["24242424-0000-0000-0000-000000000024"], "retcon": "reinterpretive", "preserves": ["nirmata://claim/24242424-2424-2424-2424-242424242424"], "exception": "The prior attributed perspective remains in the draft's affected history."},
+    "response": {"issues": []}
+  },
+  {
+    "case": 28,
+    "name": "approximate_date_is_not_exact",
+    "snapshot": ["nirmata://event/28282828-2828-2828-2828-282828282828"],
+    "request": "Use an approximate year as proof of an exact-day contradiction.",
+    "draft": {"operationIds": ["28282828-0000-0000-0000-000000000028"], "retcon": "additive", "preserves": [], "exception": "Approximate evidence may support a warning, not an exact temporal conflict."},
+    "response": {"issues": [{"issueId": "approximate-date", "summary": {"markdown": "The cited date is approximate and cannot establish an exact-day conflict.", "contentReferences": ["nirmata://event/28282828-2828-2828-2828-282828282828"]}, "affectedOperationIds": ["28282828-0000-0000-0000-000000000028"], "relatedObjectUris": ["nirmata://event/28282828-2828-2828-2828-282828282828"], "evidence": [{"sourceUri": "nirmata://event/28282828-2828-2828-2828-282828282828", "excerptMd": "The voyage occurred around year 430."}], "severity": "warning", "category": "temporal_conflict", "attackType": "undercuts", "targetClaimId": null, "confidence": 0.88, "suggestedResolution": null}]}
+  },
+  {
+    "case": 32,
+    "name": "defeasible_specific_exception",
+    "snapshot": ["nirmata://rule/32323232-3232-3232-3232-323232323232", "nirmata://rule/32323232-1111-1111-1111-111111111111"],
+    "request": "Allow the named healer to enter during an epidemic.",
+    "draft": {"operationIds": ["32323232-0000-0000-0000-000000000032"], "retcon": "additive", "preserves": [], "exception": "The healer-during-epidemic rule is more specific than the general closure rule."},
+    "response": {"issues": []}
+  },
+  {
+    "case": 33,
+    "name": "open_world_absence_is_not_false",
+    "snapshot": ["nirmata://entity/33333333-3333-3333-3333-333333333333"],
+    "request": "Do not reject a blue cloak merely because cloak color is absent.",
+    "draft": {"operationIds": ["33333333-0000-0000-0000-000000000033"], "retcon": "additive", "preserves": [], "exception": "Cloak color is not declared closed or exhaustive, so absence stays unknown."},
+    "response": {"issues": []}
+  },
+  {
+    "case": 34,
+    "name": "intentional_exception_remains_traceable",
+    "snapshot": ["nirmata://rule/34343434-3434-3434-3434-343434343434"],
+    "request": "Break the oath once and preserve the editor's explicit decision.",
+    "draft": {"operationIds": ["34343434-0000-0000-0000-000000000034"], "retcon": "additive", "preserves": ["nirmata://rule/34343434-3434-3434-3434-343434343434"], "exception": "The operation stays blocked until a human records an intentional-exception judgment."},
+    "response": {"issues": [{"issueId": "intentional-oath-break", "summary": {"markdown": "The deliberate oath break remains a visible universe-rule conflict.", "contentReferences": ["nirmata://rule/34343434-3434-3434-3434-343434343434"]}, "affectedOperationIds": ["34343434-0000-0000-0000-000000000034"], "relatedObjectUris": ["nirmata://rule/34343434-3434-3434-3434-343434343434"], "evidence": [{"sourceUri": "nirmata://rule/34343434-3434-3434-3434-343434343434", "excerptMd": "No sworn guardian may abandon the beacon."}], "severity": "conflict", "category": "universe_rule", "attackType": "rebuts", "targetClaimId": null, "confidence": 0.97, "suggestedResolution": null}]}
+  }
+]

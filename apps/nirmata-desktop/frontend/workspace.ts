@@ -34,6 +34,7 @@ import {
   bottomPanelSize,
   closedView,
   contextPanel,
+  editWorldButton,
   invoke,
   leftPanelSize,
   navigationPanel,
@@ -141,6 +142,7 @@ export function renderWorkspace(): void {
   setMarkdownText(worldPremise, state.session.world.premise_md, "No especificada");
   worldEpoch.textContent = normalizeText(state.session.world.epoch_label, "No especificado");
   worldRevision.textContent = state.session.world.current_revision;
+  editWorldButton.disabled = state.session.read_only;
   searchInput.value = state.queryText;
   uriInput.value = state.selectedUri ?? uriInput.value;
 
@@ -178,6 +180,7 @@ export function openSession(session: WorldSession): void {
   state.session = session;
   resetWorkspaceState();
   renderWorkspace();
+  window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
   void refreshNavigation();
 }
 
@@ -251,6 +254,14 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
         detail: `${message}${retainedDraftHint()}`,
       };
       setStatus("El draft se conservó para corregirlo o reintentarlo.");
+      break;
+    case "storage_error":
+      state.workspaceNotice = {
+        kind: "warning",
+        title: "La transacción no pudo completarse",
+        detail: `${message}${retainedDraftHint()}`,
+      };
+      setStatus("El canon no cambió. El draft se conservó y puedes reintentar.");
       break;
     case "file_not_found":
       state.workspaceNotice = {
@@ -343,6 +354,7 @@ export async function refreshNavigation(): Promise<void> {
       ?? revisionHistory.undoTargetRevisionId
       ?? revisionHistory.revisions[0]?.revisionId
       ?? null;
+    window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
 
     if (state.selectedUri) {
       const nextPath = pathForUri(logicalTree, state.selectedUri);
@@ -505,6 +517,10 @@ function currentManualRequest(): ManualDraftRequest | null {
 }
 
 export async function saveCurrentDraft(): Promise<void> {
+  if (state.session?.read_only) {
+    showError("La revisión observada es de solo lectura. Vuelve a la cabeza activa para editar.");
+    return;
+  }
   const editor = state.editorMode;
   const request = currentManualRequest();
   if (!editor || !request) {

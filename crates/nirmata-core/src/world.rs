@@ -44,6 +44,7 @@ macro_rules! domain_id {
 
 domain_id!(WorldId);
 domain_id!(RevisionId);
+domain_id!(VariantId);
 domain_id!(RuleId);
 domain_id!(EntityId);
 domain_id!(RelationId);

@@ -76,6 +76,39 @@
           </div>
         </div>
 
+        <section class="variant-bar" aria-labelledby="variant-title">
+          <div>
+            <p class="panel-eyebrow">Alcance editorial</p>
+            <h3 id="variant-title">Variante e historia</h3>
+            <p id="read-scope-label" class="scope-label"></p>
+          </div>
+          <label>
+            Variante activa
+            <select id="variant-select"></select>
+          </label>
+          <label>
+            Revisión observada
+            <select id="revision-scope-select"></select>
+          </label>
+          <button id="view-active-head" type="button" class="secondary">Volver a cabeza activa</button>
+          <form id="create-variant-form" class="compact-form">
+            <label>
+              Nueva variante desde lo observado
+              <input id="variant-name" maxlength="80" placeholder="Nombre" required />
+            </label>
+            <button type="submit">Crear</button>
+          </form>
+          <label>
+            Comparar / fusionar desde
+            <select id="compare-variant-select"></select>
+          </label>
+          <div class="pending-actions">
+            <button id="compare-variants" type="button" class="secondary">Comparar</button>
+            <button id="merge-variant" type="button">Preparar merge</button>
+          </div>
+          <div id="variant-diff" class="variant-diff" aria-live="polite"></div>
+        </section>
+
         <section class="layout-toolbar" aria-label="Controles de disposición">
           <div class="layout-control-group">
             <button
@@ -133,6 +166,8 @@
             <div class="mode-switch" role="group" aria-label="Modo del asistente">
               <button id="assistant-query-mode" type="button" aria-pressed="true">Consultar</button>
               <button id="assistant-propose-mode" type="button" class="secondary" aria-pressed="false">Proponer</button>
+              <button id="assistant-deep-mode" type="button" class="secondary" aria-pressed="false">Revisión profunda</button>
+              <button id="assistant-audit-mode" type="button" class="secondary" aria-pressed="false">Auditoría</button>
             </div>
             <p id="assistant-context" class="muted">Sin selección: se usará contexto general acotado.</p>
           </div>
@@ -164,6 +199,26 @@
               </div>
             </form>
           </details>
+        </section>
+
+        <section id="lore-import-panel" class="lore-import-panel" aria-labelledby="lore-import-title">
+          <div class="assistant-heading">
+            <div>
+              <p class="panel-eyebrow">Fuentes locales no confiables</p>
+              <h3 id="lore-import-title">Importar lore revisable</h3>
+            </div>
+            <p id="lore-import-status" class="panel-summary">Sin lote activo.</p>
+          </div>
+          <div class="pending-actions">
+            <button id="lore-import-select" type="button">Seleccionar Markdown o texto…</button>
+            <button id="lore-import-extract" type="button" class="secondary" disabled>Extraer candidatos</button>
+            <button id="lore-import-cancel" type="button" class="secondary" disabled>Cancelar</button>
+            <button id="lore-import-review" type="button" class="secondary" disabled>Abrir revisión estándar</button>
+            <button id="lore-import-delete" type="button" class="ghost" disabled>Eliminar lote</button>
+          </div>
+          <div id="lore-import-content" class="lore-import-content">
+            <p class="empty-state">El original nunca se modifica. Ningún candidato entra al canon antes de la revisión estándar.</p>
+          </div>
         </section>
 
         <div id="workspace-shell" class="workspace-shell">

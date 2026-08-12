@@ -5,6 +5,8 @@ import {
   assistantCancel,
   assistantContext,
   assistantCredential,
+  assistantDeepMode,
+  assistantAuditMode,
   assistantFinalCritique,
   assistantForm,
   assistantInput,
@@ -23,15 +25,18 @@ import {
 import type {
   AiQueryResponse,
   AiRunSnapshot,
+  DeepReviewPlan,
+  DeepReviewRun,
   ManualReviewSnapshot,
   ObjectKind,
   PendingDraftRecord,
   ProviderCredentialStatus,
   SearchObjectKind,
+  SpecialistRole,
 } from "./types.js";
 import { renderWorkspace, selectUri } from "./workspace.js";
 
-type AssistantMode = "query" | "propose";
+type AssistantMode = "query" | "propose" | "deep_impact" | "audit";
 type ProgressEvent = {
   requestId: string;
   progress: { kind: string; delta?: string };
@@ -48,9 +53,17 @@ function updateMode(next: AssistantMode): void {
   mode = next;
   assistantQueryMode.setAttribute("aria-pressed", String(mode === "query"));
   assistantProposeMode.setAttribute("aria-pressed", String(mode === "propose"));
+  assistantDeepMode.setAttribute("aria-pressed", String(mode === "deep_impact"));
+  assistantAuditMode.setAttribute("aria-pressed", String(mode === "audit"));
   assistantQueryMode.className = mode === "query" ? "" : "secondary";
   assistantProposeMode.className = mode === "propose" ? "" : "secondary";
-  assistantSubmit.textContent = mode === "query" ? "Consultar" : "Generar propuesta";
+  assistantDeepMode.className = mode === "deep_impact" ? "" : "secondary";
+  assistantAuditMode.className = mode === "audit" ? "" : "secondary";
+  assistantSubmit.textContent = mode === "query"
+    ? "Consultar"
+    : mode === "propose"
+      ? "Generar propuesta"
+      : "Preparar roles";
 }
 
 function updateContextLabel(): void {
@@ -199,6 +212,146 @@ function renderRun(run: AiRunSnapshot): void {
   assistantFinalCritique.hidden = !run.reviewKey || run.status === "ready_to_commit" || run.status === "committed";
 }
 
+function renderDeepPlan(plan: DeepReviewPlan): void {
+  assistantTranscript.replaceChildren();
+  const card = document.createElement("article");
+  card.className = "assistant-message proposal deep-review";
+  const title = document.createElement("h4");
+  title.textContent = plan.mode === "audit" ? "Confirmar auditoría profunda" : "Confirmar revisión profunda";
+  const reason = document.createElement("p");
+  reason.textContent = plan.reason;
+  const budget = document.createElement("p");
+  budget.className = "muted";
+  budget.textContent = `${plan.budget.maxSpecialistCalls} llamadas especialistas máx. · ${plan.budget.specialistMaxOutputTokens} tokens/informe · ${plan.budget.maxReadToolCalls} tools de lectura · ${plan.budget.maxNestedDelegations} delegaciones · ${Math.round(plan.budget.specialistTimeoutMs / 1000)} s/rol`;
+  const roles = document.createElement("fieldset");
+  const legend = document.createElement("legend");
+  legend.textContent = "Roles confirmados por el usuario";
+  roles.append(legend);
+  for (const role of plan.roles) {
+    const label = document.createElement("label");
+    label.className = "deep-role";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = role;
+    checkbox.checked = true;
+    label.append(checkbox, document.createTextNode(humanize(role)));
+    roles.append(label);
+  }
+  const confirm = button("Confirmar roles e iniciar", "secondary");
+  confirm.addEventListener("click", () => {
+    const selected = Array.from(roles.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
+      .map((input) => input.value as SpecialistRole);
+    if (selected.length === 0 || selected.length > plan.budget.maxSpecialists) {
+      showError(`Selecciona entre 1 y ${plan.budget.maxSpecialists} roles.`);
+      return;
+    }
+    void executeDeepReview(plan, selected);
+  });
+  card.append(title, reason, budget, roles, confirm);
+  assistantTranscript.append(card);
+}
+
+function renderDeepRun(run: DeepReviewRun): void {
+  assistantTranscript.replaceChildren();
+  const summary = document.createElement("article");
+  summary.className = "assistant-message proposal deep-review";
+  const title = document.createElement("h4");
+  title.textContent = run.mode === "audit" ? "Auditoría profunda" : "Revisión profunda";
+  const status = document.createElement("p");
+  status.textContent = `Estado: ${humanize(run.status)} · revisión base ${run.baseRevision}`;
+  summary.append(title, status);
+  if (run.error) {
+    const error = document.createElement("p");
+    error.className = "assistant-issue conflict";
+    error.textContent = run.error;
+    summary.append(error);
+  }
+  assistantTranscript.append(summary);
+
+  const positions = new Map<string, Set<string>>();
+  for (const specialist of run.specialists) {
+    const card = document.createElement("article");
+    card.className = "assistant-message specialist-report";
+    const heading = document.createElement("h4");
+    heading.textContent = `${humanize(specialist.role)} · ${humanize(specialist.status)}`;
+    card.append(heading);
+    if (specialist.error) {
+      const failure = document.createElement("p");
+      failure.className = "assistant-issue warning";
+      failure.textContent = specialist.error;
+      card.append(failure);
+    }
+    for (const finding of specialist.report?.findings ?? []) {
+      const text = document.createElement("p");
+      text.textContent = finding.summary.markdown;
+      card.append(text);
+      for (const evidence of finding.evidence) {
+        const source = button(evidence.sourceUri, "ghost");
+        source.title = evidence.excerptMd;
+        source.addEventListener("click", () => void selectUri(evidence.sourceUri));
+        card.append(source);
+      }
+      if (finding.decisionPosition) {
+        const alternatives = positions.get(finding.decisionPosition.decisionKey) ?? new Set<string>();
+        alternatives.add(finding.decisionPosition.alternative);
+        positions.set(finding.decisionPosition.decisionKey, alternatives);
+      }
+    }
+    assistantTranscript.append(card);
+  }
+  for (const [key, alternatives] of positions) {
+    if (alternatives.size < 2) continue;
+    const disagreement = document.createElement("article");
+    disagreement.className = "assistant-message assistant-issue conflict";
+    const heading = document.createElement("h4");
+    heading.textContent = `Desacuerdo: ${humanize(key)}`;
+    const detail = document.createElement("p");
+    detail.textContent = Array.from(alternatives).join(" / ");
+    disagreement.append(heading, detail);
+    assistantTranscript.append(disagreement);
+  }
+  if (run.synthesis?.draft) {
+    const synthesis = document.createElement("article");
+    synthesis.className = "assistant-message proposal";
+    const heading = document.createElement("h4");
+    heading.textContent = "Síntesis completa entregada a revisión estándar";
+    const detail = document.createElement("p");
+    detail.textContent = `${run.synthesis.draft.operations.length} operaciones · ${run.synthesis.draft.decisions.length} decisiones pendientes`;
+    synthesis.append(heading, detail);
+    assistantTranscript.append(synthesis);
+  }
+}
+
+async function executeDeepReview(plan: DeepReviewPlan, roles: SpecialistRole[]): Promise<void> {
+  const requestId = crypto.randomUUID();
+  setRunning(requestId);
+  assistantProgress.textContent = "Iniciando especialistas confirmados…";
+  try {
+    const run = await invoke<DeepReviewRun>("execute_deep_review", {
+      input: {
+        requestId,
+        mode: plan.mode,
+        request: plan.request,
+        roles,
+        anchorUri: state.selectedUri,
+      },
+    });
+    renderDeepRun(run);
+    if (run.standardRunId && run.status === "awaiting_review") {
+      activeRun = await invoke<AiRunSnapshot>("read_ai_run", { runId: run.standardRunId });
+      await attachReview(activeRun);
+      assistantFinalCritique.hidden = !activeRun.reviewKey;
+    } else {
+      activeRun = null;
+      assistantFinalCritique.hidden = true;
+    }
+  } catch (value) {
+    showError(value);
+  } finally {
+    setRunning(null);
+  }
+}
+
 async function continueIntentBrief(run: AiRunSnapshot): Promise<void> {
   if (!run.intentBrief || !credentialConfigured) {
     return;
@@ -232,7 +385,7 @@ async function submitAssistant(): Promise<void> {
   if (!request || !state.session || !credentialConfigured) {
     return;
   }
-  if (mode === "propose" && activeRun?.reviewKey) {
+  if (mode !== "query" && activeRun?.reviewKey) {
     activeRun = await invoke<AiRunSnapshot>("read_ai_run", { runId: activeRun.id });
     if (activeRun.status !== "committed" && activeRun.status !== "cancelled" && activeRun.status !== "failed") {
       showError("Termina o descarta la propuesta activa antes de iniciar otra.");
@@ -261,17 +414,22 @@ async function submitAssistant(): Promise<void> {
         input: { requestId, request, anchorUri: state.selectedUri },
       });
       renderQuery(response);
-    } else {
+    } else if (mode === "propose") {
       activeRun = await invoke<AiRunSnapshot>("execute_ai_proposal", {
         input: { requestId, request, anchorUri: state.selectedUri },
       });
       renderRun(activeRun);
       await attachReview(activeRun);
+    } else {
+      const plan = await invoke<DeepReviewPlan>("prepare_deep_review", {
+        input: { mode, request, anchorUri: state.selectedUri },
+      });
+      renderDeepPlan(plan);
     }
     assistantProgress.textContent = "Ejecución completada.";
   } catch (value) {
     showError(value);
-    assistantProgress.textContent = "La ejecución terminó sin modificar el canon.";
+    assistantProgress.textContent = "La ejecución terminó sin modificar el canon. Puedes reintentar.";
   } finally {
     setRunning(null);
   }
@@ -279,6 +437,8 @@ async function submitAssistant(): Promise<void> {
 
 assistantQueryMode.addEventListener("click", () => updateMode("query"));
 assistantProposeMode.addEventListener("click", () => updateMode("propose"));
+assistantDeepMode.addEventListener("click", () => updateMode("deep_impact"));
+assistantAuditMode.addEventListener("click", () => updateMode("audit"));
 assistantForm.addEventListener("submit", (event) => {
   event.preventDefault();
   void submitAssistant();
@@ -338,6 +498,14 @@ void listen<ProgressEvent>("ai-query-progress", ({ payload }) => {
 void listen<ProgressEvent>("ai-proposal-progress", ({ payload }) => {
   if (payload.requestId === activeRequestId) {
     assistantProgress.textContent = humanize(payload.progress.kind);
+  }
+});
+void listen<ProgressEvent>("deep-review-progress", ({ payload }) => {
+  if (payload.requestId === activeRequestId) {
+    const role = (payload.progress as { role?: string }).role;
+    assistantProgress.textContent = role
+      ? `${humanize(payload.progress.kind)} · ${humanize(role)}`
+      : humanize(payload.progress.kind);
   }
 });
 

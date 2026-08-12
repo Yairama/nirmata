@@ -1,6 +1,6 @@
 use nirmata_app::{
-    ContextBudget, ContextBundleRequest, ContextIntent, EmptySearchClassification, NirmataApp,
-    OpenUriResponse, RelatedContextRequest, SearchAuthority, SearchClassification,
+    AppError, ContextBudget, ContextBundleRequest, ContextIntent, EmptySearchClassification,
+    NirmataApp, OpenUriResponse, RelatedContextRequest, SearchAuthority, SearchClassification,
     SearchWorldRequest,
 };
 use nirmata_core::{
@@ -95,6 +95,10 @@ fn search_world_result_opens_the_exact_source_uri() {
                 authority: SearchAuthority::Canonical,
                 classification: SearchClassification::Fact,
                 provenance: format!("open_uri:{}", ObjectRef::Document(document.id())),
+                stage: "uri".to_owned(),
+                score: 100_000,
+                rank: 1,
+                score_explanation: "explicit URI resolution".to_owned(),
             },
             object: nirmata_store::ResolvedObject::Document(DocumentAggregate::new(
                 document.clone(),
@@ -104,6 +108,129 @@ fn search_world_result_opens_the_exact_source_uri() {
     );
 
     drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
+fn active_hybrid_context_is_cited_ranked_rebuildable_and_reads_updated_canon() {
+    let path = project_path("active-hybrid-context");
+    let world = base_world(&path);
+    let mut store = WorldStore::open(&path).expect("open store");
+    let anchor = Entity::new(
+        world.id(),
+        EntityKind::Place,
+        "North Hall",
+        "north-hall",
+        "The council chamber.",
+        "",
+        "{}",
+        vec![],
+        1,
+    )
+    .expect("anchor");
+    let document = Document::new(
+        world.id(),
+        "Senate Record",
+        "minutes",
+        None,
+        None,
+        DocumentCanonStatus::Canonical,
+        "The senate refuses the border pact.",
+        1,
+    )
+    .expect("document");
+    store.insert_entity(&anchor).expect("insert anchor");
+    store
+        .insert_document(&DocumentAggregate::new(document.clone(), vec![]))
+        .expect("insert document");
+
+    let app = open_app(&path);
+    let request = SearchWorldRequest::new(StructuredSearchQuery {
+        kinds: vec![StructuredSearchKind::Document],
+        text: Some("council rejects treaty".to_owned()),
+        limit: 5,
+        ..Default::default()
+    });
+    let before_rebuild = app.search_world(&request).expect("hybrid app search");
+    assert_eq!(before_rebuild.hits.len(), 1);
+    let semantic = &before_rebuild.hits[0];
+    assert_eq!(semantic.object_ref, ObjectRef::Document(document.id()));
+    assert_eq!(semantic.uri, ObjectRef::Document(document.id()).to_string());
+    assert_eq!(semantic.stage, "semantic");
+    assert_eq!(semantic.rank, 1);
+    assert!(semantic.score > 10_000);
+    assert!(semantic.snippet.contains("senate refuses"));
+    assert!(semantic.provenance.contains("wordnet-en-offline:v1"));
+    assert!(semantic.score_explanation.contains("basis points"));
+
+    let context = app
+        .get_related_context(&RelatedContextRequest {
+            bundle: ContextBundleRequest {
+                intent: ContextIntent::EntityQuery,
+                anchors: vec![ObjectRef::Entity(anchor.id())],
+                query_text: Some("council rejects treaty".to_owned()),
+                temporal: None,
+                temporal_radius: None,
+                perspective_entity_ids: vec![],
+                include_perspectives: false,
+                relation_limit: 0,
+                budget: ContextBudget {
+                    max_objects: 4,
+                    max_chars: 400,
+                },
+            },
+            kinds: vec![],
+            empty: EmptySearchClassification::NoEvidence,
+        })
+        .expect("active hybrid context");
+    let anchor_entry = context
+        .canon
+        .iter()
+        .find(|entry| entry.result.object_ref == ObjectRef::Entity(anchor.id()))
+        .expect("authoritative anchor");
+    let semantic_entry = context
+        .search_evidence
+        .iter()
+        .find(|entry| entry.result.object_ref == ObjectRef::Document(document.id()))
+        .expect("semantic context evidence");
+    assert_eq!(anchor_entry.result.rank, 1);
+    assert_eq!(anchor_entry.result.stage, "selection");
+    assert!(anchor_entry.result.score > semantic_entry.result.score);
+    assert_eq!(semantic_entry.result.stage, "semantic");
+    assert_eq!(semantic_entry.result.uri, semantic.uri);
+    assert_eq!(semantic_entry.result.provenance, semantic.provenance);
+
+    store
+        .rebuild_canon_text_index()
+        .expect("deterministic full derived rebuild");
+    assert_eq!(
+        app.search_world(&request).expect("search after rebuild"),
+        before_rebuild
+    );
+
+    let updated = Document::restore(
+        document.id(),
+        document.world_id(),
+        document.title(),
+        document.kind(),
+        document.author_entity_id(),
+        document.perspective_entity_id(),
+        document.canon_status(),
+        "The bakers count loaves at sunrise.",
+        document.version(),
+        document.created_at_ms(),
+        2,
+    )
+    .expect("updated document");
+    store
+        .update_document(&DocumentAggregate::new(updated, vec![]))
+        .expect("update document");
+    let after_update = app.search_world(&request).expect("search updated canon");
+    assert!(after_update.hits.is_empty());
+    assert!(after_update.absence.is_some());
+
+    drop(app);
+    drop(store);
     fs::remove_file(path).expect("remove project");
 }
 
@@ -449,5 +576,84 @@ fn empty_results_use_absence_classification_instead_of_false_negation() {
     );
 
     drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
+fn invalid_uri_is_rejected_without_changing_or_stranding_the_open_project() {
+    let path = project_path("invalid-uri-durability");
+    let world = base_world(&path);
+    let app = open_app(&path);
+
+    let error = app
+        .open_uri("javascript:alert(1)")
+        .expect_err("hostile URI must be rejected");
+    assert!(matches!(error, AppError::InvalidObjectUri(_)));
+    assert!(error.to_string().contains("invalid nirmata URI"));
+    drop(app);
+
+    let reopened = WorldStore::open(&path).expect("reopen after invalid URI");
+    assert_eq!(
+        reopened
+            .load_world()
+            .expect("world after invalid URI")
+            .current_revision(),
+        world.current_revision()
+    );
+    assert_eq!(
+        reopened
+            .list_revisions()
+            .expect("history after invalid URI")
+            .len(),
+        1
+    );
+    assert!(
+        reopened
+            .list_entities()
+            .expect("canon after invalid URI")
+            .is_empty()
+    );
+    drop(reopened);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
+fn invalid_project_path_does_not_prevent_opening_the_valid_project_afterward() {
+    let path = project_path("invalid-path-recovery");
+    let world = base_world(&path);
+    let mut app = NirmataApp::default();
+
+    let error = app
+        .open_world(path.with_extension("txt"))
+        .expect_err("invalid extension must fail before file access");
+    assert!(matches!(error, AppError::InvalidProjectPath(_)));
+    let session = app
+        .open_world(path.clone())
+        .expect("valid project opens after invalid path");
+    assert_eq!(session.current_revision, world.current_revision());
+    app.close_world().expect("close recovered project");
+
+    let reopened = WorldStore::open(&path).expect("reopen recovered project");
+    assert_eq!(
+        reopened
+            .load_world()
+            .expect("world after invalid path")
+            .current_revision(),
+        world.current_revision()
+    );
+    assert_eq!(
+        reopened
+            .list_revisions()
+            .expect("history after invalid path")
+            .len(),
+        1
+    );
+    assert!(
+        reopened
+            .list_entities()
+            .expect("canon after invalid path")
+            .is_empty()
+    );
+    drop(reopened);
     fs::remove_file(path).expect("remove project");
 }

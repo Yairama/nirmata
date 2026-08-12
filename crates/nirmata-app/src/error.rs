@@ -1,16 +1,21 @@
 use nirmata_ai::AiError;
-use nirmata_core::{DomainError, RevisionId};
+use nirmata_core::{DomainError, RevisionId, VariantId};
 use nirmata_store::StoreError;
-use std::{error::Error, fmt, path::PathBuf};
+use std::{error::Error, fmt, io, path::PathBuf};
 
 #[derive(Debug)]
 pub enum AppError {
     WorldAlreadyOpen,
     NoWorldOpen,
+    ReadOnlyScope,
     ManualReviewNotReady,
     ManualReviewStale {
         base_revision: RevisionId,
         current_revision: RevisionId,
+    },
+    ManualReviewVariantMismatch {
+        expected: VariantId,
+        found: VariantId,
     },
     ManualReviewRevalidationFailed,
     NoUndoableRevision,
@@ -33,6 +38,24 @@ pub enum AppError {
     },
     ProjectLocked(PathBuf),
     CorruptProject(PathBuf, String),
+    InvalidSnapshotParent(PathBuf),
+    InvalidSnapshotName(String),
+    SnapshotDestinationOccupied(PathBuf),
+    SnapshotIo {
+        path: PathBuf,
+        source: io::Error,
+    },
+    SnapshotSerialization(serde_json::Error),
+    InvalidSnapshotImport {
+        path: PathBuf,
+        reason: String,
+    },
+    SnapshotHasNoChanges,
+    InvalidLoreImport {
+        path: PathBuf,
+        reason: String,
+    },
+    LoreImportBatchNotFound(String),
     InvalidObjectUri(String),
     ObjectNotFound {
         object: &'static str,
@@ -59,6 +82,8 @@ pub enum AppError {
         current_revision: RevisionId,
     },
     AiRunNotFound(String),
+    DeepReviewRunNotFound(String),
+    InvalidDeepReview(String),
     AiCritiqueIssueNotFound {
         run_id: String,
         issue_id: String,
@@ -82,6 +107,10 @@ impl fmt::Display for AppError {
                 write!(formatter, "close the current world before opening another")
             }
             Self::NoWorldOpen => write!(formatter, "no world is currently open"),
+            Self::ReadOnlyScope => write!(
+                formatter,
+                "the viewed scope is read-only; return to the active variant head before writing"
+            ),
             Self::ManualReviewNotReady => write!(
                 formatter,
                 "manual review still has unresolved issues and cannot be confirmed"
@@ -92,6 +121,10 @@ impl fmt::Display for AppError {
             } => write!(
                 formatter,
                 "manual review is stale: base revision {base_revision} is behind current head {current_revision}"
+            ),
+            Self::ManualReviewVariantMismatch { expected, found } => write!(
+                formatter,
+                "manual review belongs to variant {found}; active write variant is {expected}"
             ),
             Self::ManualReviewRevalidationFailed => write!(
                 formatter,
@@ -148,6 +181,46 @@ impl fmt::Display for AppError {
             Self::CorruptProject(path, details) => {
                 write!(formatter, "{} is corrupt: {details}", path.display())
             }
+            Self::InvalidSnapshotParent(path) => write!(
+                formatter,
+                "{} must be an existing, non-symbolic-link directory",
+                path.display()
+            ),
+            Self::InvalidSnapshotName(name) => write!(
+                formatter,
+                "snapshot name {name:?} must contain only letters, numbers, '-' or '_'"
+            ),
+            Self::SnapshotDestinationOccupied(path) => write!(
+                formatter,
+                "{} already exists; choose an empty destination name",
+                path.display()
+            ),
+            Self::SnapshotIo { path, source } => {
+                write!(
+                    formatter,
+                    "snapshot filesystem operation failed at {}: {source}",
+                    path.display()
+                )
+            }
+            Self::SnapshotSerialization(error) => {
+                write!(formatter, "snapshot serialization failed: {error}")
+            }
+            Self::InvalidSnapshotImport { path, reason } => write!(
+                formatter,
+                "{} is not a safe, valid snapshot: {reason}",
+                path.display()
+            ),
+            Self::SnapshotHasNoChanges => {
+                write!(formatter, "the selected snapshot has no changes to review")
+            }
+            Self::InvalidLoreImport { path, reason } => write!(
+                formatter,
+                "{} is not a safe UTF-8 lore source: {reason}",
+                path.display()
+            ),
+            Self::LoreImportBatchNotFound(batch_id) => {
+                write!(formatter, "lore import batch {batch_id} was not found")
+            }
             Self::InvalidObjectUri(uri) => write!(formatter, "invalid nirmata URI {uri}"),
             Self::ObjectNotFound { object, id } => write!(formatter, "{object} {id} was not found"),
             Self::ReviewSessionNotFound(review_key) => {
@@ -196,6 +269,10 @@ impl fmt::Display for AppError {
                 "AI request is stale: base revision {draft_base_revision} is behind current head {current_revision}"
             ),
             Self::AiRunNotFound(run_id) => write!(formatter, "AI run {run_id} was not found"),
+            Self::DeepReviewRunNotFound(run_id) => {
+                write!(formatter, "deep review run {run_id} was not found")
+            }
+            Self::InvalidDeepReview(message) => write!(formatter, "invalid deep review: {message}"),
             Self::AiCritiqueIssueNotFound { run_id, issue_id } => write!(
                 formatter,
                 "final critique issue {issue_id} was not found for AI run {run_id}"
@@ -227,6 +304,8 @@ impl Error for AppError {
             Self::Ai(error) => Some(error),
             Self::Domain(error) => Some(error),
             Self::Storage(error) => Some(error),
+            Self::SnapshotIo { source, .. } => Some(source),
+            Self::SnapshotSerialization(error) => Some(error),
             _ => None,
         }
     }

@@ -92,6 +92,7 @@ fn entity_snapshot(entity: &Entity) -> ManualReviewObjectSnapshot {
             line_item("Tipo", format!("{:?}", entity.kind())),
             line_item("Slug", entity.slug().to_owned()),
             line_item("Resumen", preview(entity.summary())),
+            line_item("Cuerpo", preview(entity.body_md())),
         ],
     }
 }
@@ -186,6 +187,15 @@ fn document_snapshot(document: &DocumentAggregate) -> ManualReviewObjectSnapshot
             line_item("Tipo", document.object().kind().to_owned()),
             line_item("Canon", format!("{:?}", document.object().canon_status())),
             line_item("Referencias", document.references().len().to_string()),
+            line_item(
+                "Detalle de referencias",
+                document
+                    .references()
+                    .iter()
+                    .map(|reference| format!("{}|{}", reference.target(), reference.ordinal()))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
             line_item("Cuerpo", preview(document.object().body_md())),
         ],
     }

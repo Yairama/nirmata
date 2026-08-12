@@ -616,12 +616,9 @@ where
                             break;
                         }
                         Some("error") => {
-                            let message = value
-                                .get("error")
-                                .and_then(|error| error.get("message"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("the response stream failed");
-                            return Err(AiError::InvalidResponse(redact_secret(message, &api_key)));
+                            return Err(AiError::InvalidResponse(
+                                "the response stream reported an error".to_owned(),
+                            ));
                         }
                         _ => {}
                     }
@@ -854,31 +851,11 @@ async fn read_body(
 }
 
 async fn http_status_error(response: TransportResponse, api_key: &str) -> AiError {
-    let body = read_body(response.body, api_key)
-        .await
-        .unwrap_or_else(|error| error.to_string());
+    let _ = read_body(response.body, api_key).await;
     AiError::InvalidHttpStatus {
         status: response.status,
-        message: redact_secret(&extract_http_error_message(&body), api_key),
+        message: "the service rejected the request".to_owned(),
     }
-}
-
-fn extract_http_error_message(body: &str) -> String {
-    let trimmed = body.trim();
-    if trimmed.is_empty() {
-        return "empty error body".to_owned();
-    }
-    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-        return value
-            .get("error")
-            .and_then(|value| value.get("message"))
-            .and_then(Value::as_str)
-            .or_else(|| value.get("message").and_then(Value::as_str))
-            .or_else(|| value.get("detail").and_then(Value::as_str))
-            .unwrap_or("the service rejected the request")
-            .to_owned();
-    }
-    trimmed.to_owned()
 }
 
 fn parse_response_result(

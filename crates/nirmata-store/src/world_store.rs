@@ -1,11 +1,20 @@
 use crate::schema::{
-    CANON_SCHEMA, CHANGE_SET_SCHEMA, INITIAL_SCHEMA, REVISION_COMPLETION_SCHEMA, SCHEMA_VERSION,
-    UNDO_SCHEMA,
+    CANON_SCHEMA, CHANGE_SET_SCHEMA, INITIAL_SCHEMA, LORE_IMPORT_SCHEMA,
+    REVISION_COMPLETION_SCHEMA, SCHEMA_VERSION, UNDO_SCHEMA, VARIANT_SCHEMA,
 };
 use crate::search;
-use nirmata_core::{DomainError, RevisionId, World, WorldId, document::ContentReference};
+use nirmata_core::{
+    DomainError, RevisionId, VariantId, World, WorldId,
+    claim::Claim,
+    document::{ContentReference, DocumentAggregate},
+    entity::Entity,
+    event::EventAggregate,
+    goal::Goal,
+    relation::Relation,
+    rule::Rule,
+};
 use rusqlite::{Connection, ErrorCode, OpenFlags, params, types::Type};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     ffi::OsStr,
@@ -18,6 +27,81 @@ pub struct WorldStore {
     pub(crate) connection: Connection,
     pub(crate) path: PathBuf,
     pub(crate) world_id: WorldId,
+    #[cfg(test)]
+    pub(crate) fail_next_derived_index_update: bool,
+    #[cfg(test)]
+    pub(crate) fail_semantic_search: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanonSnapshot {
+    pub(crate) world: World,
+    pub(crate) schema_version: i64,
+    pub(crate) entities: Vec<Entity>,
+    pub(crate) relations: Vec<Relation>,
+    pub(crate) goals: Vec<Goal>,
+    pub(crate) events: Vec<EventAggregate>,
+    pub(crate) claims: Vec<Claim>,
+    pub(crate) rules: Vec<Rule>,
+    pub(crate) documents: Vec<DocumentAggregate>,
+    pub(crate) content_references: Vec<ContentReference>,
+}
+
+impl CanonSnapshot {
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+
+    pub fn schema_version(&self) -> i64 {
+        self.schema_version
+    }
+
+    pub fn entities(&self) -> &[Entity] {
+        &self.entities
+    }
+
+    pub fn relations(&self) -> &[Relation] {
+        &self.relations
+    }
+
+    pub fn goals(&self) -> &[Goal] {
+        &self.goals
+    }
+
+    pub fn events(&self) -> &[EventAggregate] {
+        &self.events
+    }
+
+    pub fn claims(&self) -> &[Claim] {
+        &self.claims
+    }
+
+    pub fn rules(&self) -> &[Rule] {
+        &self.rules
+    }
+
+    pub fn documents(&self) -> &[DocumentAggregate] {
+        &self.documents
+    }
+
+    pub fn content_references(&self) -> &[ContentReference] {
+        &self.content_references
+    }
+
+    pub(crate) fn with_revision(&self, revision_id: RevisionId) -> Result<Self, StoreError> {
+        let mut snapshot = self.clone();
+        snapshot.world = World::restore(
+            self.world.id(),
+            self.world.name(),
+            self.world.premise_md(),
+            self.world.epoch_label(),
+            revision_id,
+            self.world.created_at_ms(),
+            self.world.updated_at_ms(),
+        )
+        .map_err(|error| StoreError::InvalidAggregate(error.to_string()))?;
+        Ok(snapshot)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -61,11 +145,17 @@ impl WorldStore {
                     .map_err(|error| map_database_error(path, error))?;
             enable_foreign_keys(path, &connection)?;
             initialize(path, &mut connection, world)?;
-            Ok(Self {
+            let mut store = Self {
                 connection,
                 path: path.to_owned(),
                 world_id: world.id(),
-            })
+                #[cfg(test)]
+                fail_next_derived_index_update: false,
+                #[cfg(test)]
+                fail_semantic_search: false,
+            };
+            store.initialize_variants(world.created_at_ms())?;
+            Ok(store)
         })();
 
         if result.is_err() {
@@ -91,11 +181,17 @@ impl WorldStore {
         verify_schema(path, &connection)?;
         let world_id = load_world_id(path, &connection)?;
 
-        Ok(Self {
+        let mut store = Self {
             connection,
             path: path.to_owned(),
             world_id,
-        })
+            #[cfg(test)]
+            fail_next_derived_index_update: false,
+            #[cfg(test)]
+            fail_semantic_search: false,
+        };
+        store.initialize_variants(current_time_ms())?;
+        Ok(store)
     }
 
     pub fn load_world(&self) -> Result<World, StoreError> {
@@ -144,6 +240,129 @@ impl WorldStore {
         )
         .map_err(|_| StoreError::InvalidFormat(self.path.clone()))
     }
+
+    pub fn read_canon_snapshot(&self) -> Result<CanonSnapshot, StoreError> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|error| map_database_error(&self.path, error))?;
+        let snapshot = CanonSnapshot {
+            world: self.load_world()?,
+            schema_version: SCHEMA_VERSION,
+            entities: self.list_entities()?,
+            relations: self.list_relations()?,
+            goals: self.list_goals()?,
+            events: self.list_events()?,
+            claims: self.list_claims()?,
+            rules: self.list_rules()?,
+            documents: self.list_documents()?,
+            content_references: crate::content::load_all(
+                &self.connection,
+                &self.path,
+                self.world_id,
+            )?,
+        };
+        transaction
+            .commit()
+            .map_err(|error| map_database_error(&self.path, error))?;
+        Ok(snapshot)
+    }
+}
+
+pub(crate) fn read_canon_snapshot_from_connection(
+    connection: &Connection,
+    path: &Path,
+    world_id: WorldId,
+) -> Result<CanonSnapshot, StoreError> {
+    let values = connection
+        .query_row(
+            "SELECT id, name, premise_md, epoch_label, current_revision,
+                    created_at_ms, updated_at_ms FROM worlds",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            },
+        )
+        .map_err(|error| map_schema_error(path, error))?;
+    let world = World::restore(
+        values
+            .0
+            .parse()
+            .map_err(|_| StoreError::InvalidFormat(path.to_owned()))?,
+        values.1,
+        values.2,
+        values.3,
+        values
+            .4
+            .parse()
+            .map_err(|_| StoreError::InvalidFormat(path.to_owned()))?,
+        values.5,
+        values.6,
+    )
+    .map_err(|_| StoreError::InvalidFormat(path.to_owned()))?;
+    let ids = |table: &str| -> Result<Vec<String>, StoreError> {
+        let sql = format!("SELECT id FROM {table} ORDER BY id");
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| map_schema_error(path, error))?;
+        statement
+            .query_map([], |row| row.get(0))
+            .map_err(|error| map_schema_error(path, error))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| map_schema_error(path, error))
+    };
+    macro_rules! load_values {
+        ($table:literal, $id:ty, $loader:path) => {{
+            ids($table)?
+                .into_iter()
+                .map(|id| {
+                    let id: $id = id
+                        .parse()
+                        .map_err(|_| StoreError::InvalidFormat(path.to_owned()))?;
+                    $loader(connection, path, id)?.ok_or(StoreError::InvalidFormat(path.to_owned()))
+                })
+                .collect::<Result<Vec<_>, StoreError>>()?
+        }};
+    }
+    Ok(CanonSnapshot {
+        world,
+        schema_version: SCHEMA_VERSION,
+        entities: load_values!(
+            "entities",
+            nirmata_core::EntityId,
+            crate::entity::load_entity
+        ),
+        relations: load_values!(
+            "relations",
+            nirmata_core::RelationId,
+            crate::relation::load_relation
+        ),
+        goals: load_values!("goals", nirmata_core::GoalId, crate::goal::load_goal),
+        events: load_values!("events", nirmata_core::EventId, crate::event::load_event),
+        claims: load_values!("claims", nirmata_core::ClaimId, crate::claim::load_claim),
+        rules: load_values!("rules", nirmata_core::RuleId, crate::rule::load_rule),
+        documents: load_values!(
+            "documents",
+            nirmata_core::DocumentId,
+            crate::document::load_document
+        ),
+        content_references: crate::content::load_all(connection, path, world_id)?,
+    })
+}
+
+fn current_time_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| i64::try_from(value.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 fn load_world_id(path: &Path, connection: &Connection) -> Result<WorldId, StoreError> {
@@ -306,6 +525,12 @@ fn initialize(path: &Path, connection: &mut Connection, world: &World) -> Result
         .execute_batch(UNDO_SCHEMA)
         .map_err(|error| map_database_error(path, error))?;
     transaction
+        .execute_batch(LORE_IMPORT_SCHEMA)
+        .map_err(|error| map_database_error(path, error))?;
+    transaction
+        .execute_batch(VARIANT_SCHEMA)
+        .map_err(|error| map_database_error(path, error))?;
+    transaction
         .execute(
             "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?1, ?2)",
             params![SCHEMA_VERSION, world.created_at_ms()],
@@ -359,6 +584,12 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .execute_batch(UNDO_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             transaction
+                .execute_batch(LORE_IMPORT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(VARIANT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
                      VALUES (?1, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))",
@@ -386,6 +617,12 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
             install_text_search(&transaction, path, world_id)?;
             transaction
                 .execute_batch(UNDO_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(LORE_IMPORT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(VARIANT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             transaction
                 .execute(
@@ -452,6 +689,12 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .execute_batch(UNDO_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             transaction
+                .execute_batch(LORE_IMPORT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(VARIANT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
                      VALUES (?1, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))",
@@ -485,6 +728,12 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .execute_batch(UNDO_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             transaction
+                .execute_batch(LORE_IMPORT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(VARIANT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
                      VALUES (?1, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))",
@@ -504,6 +753,57 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .map_err(|error| map_database_error(path, error))?;
             transaction
                 .execute_batch(UNDO_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(LORE_IMPORT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(VARIANT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute(
+                    "INSERT INTO schema_migrations (version, applied_at_ms)
+                     VALUES (?1, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))",
+                    [SCHEMA_VERSION],
+                )
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .pragma_update(None, "user_version", SCHEMA_VERSION)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .commit()
+                .map_err(|error| map_database_error(path, error))
+        }
+        6 => {
+            let transaction = connection
+                .transaction()
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(LORE_IMPORT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(VARIANT_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute(
+                    "INSERT INTO schema_migrations (version, applied_at_ms)
+                     VALUES (?1, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))",
+                    [SCHEMA_VERSION],
+                )
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .pragma_update(None, "user_version", SCHEMA_VERSION)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .commit()
+                .map_err(|error| map_database_error(path, error))
+        }
+        7 => {
+            let transaction = connection
+                .transaction()
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(VARIANT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             transaction
                 .execute(
@@ -600,6 +900,30 @@ fn verify_schema_version(
                        'decision_points', 'change_set_waivers', 'change_operation_audits',
                        'canon_fts', 'revision_undos'
                    )"
+            } else if version == 7 {
+                "SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'table'
+                   AND name IN (
+                       'schema_migrations', 'worlds', 'revisions', 'rules', 'entities',
+                       'entity_aliases', 'relations', 'events', 'event_participants',
+                       'event_links', 'event_goals', 'goals', 'claims', 'documents',
+                       'content_references', 'change_sets', 'change_operations',
+                       'decision_points', 'change_set_waivers', 'change_operation_audits',
+                       'canon_fts', 'revision_undos', 'import_batches', 'import_sources',
+                       'import_chunks', 'import_candidates'
+                   )"
+            } else if version == 8 {
+                "SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'table'
+                   AND name IN (
+                       'schema_migrations', 'worlds', 'revisions', 'rules', 'entities',
+                       'entity_aliases', 'relations', 'events', 'event_participants',
+                       'event_links', 'event_goals', 'goals', 'claims', 'documents',
+                       'content_references', 'change_sets', 'change_operations',
+                       'decision_points', 'change_set_waivers', 'change_operation_audits',
+                       'canon_fts', 'revision_undos', 'import_batches', 'import_sources',
+                       'import_chunks', 'import_candidates', 'variants', 'revision_snapshots'
+                   )"
             } else {
                 "SELECT COUNT(*) FROM sqlite_schema
                  WHERE type = 'table'
@@ -621,6 +945,8 @@ fn verify_schema_version(
         3 | 4 => 20,
         5 => 21,
         6 => 22,
+        7 => 26,
+        8 => 28,
         _ => return Err(StoreError::InvalidFormat(path.to_owned())),
     };
     if required_table_count != expected_table_count {
@@ -716,6 +1042,11 @@ pub enum StoreError {
         expected_current: RevisionId,
         found_base: RevisionId,
     },
+    InvalidVariant(String),
+    InvalidReadScope {
+        variant_id: VariantId,
+        revision_id: RevisionId,
+    },
     VersionOutOfRange(u64),
     Path(PathBuf, io::Error),
     Database(PathBuf, String),
@@ -779,6 +1110,14 @@ impl fmt::Display for StoreError {
             } => write!(
                 formatter,
                 "base revision {found_base} is stale; current head is {expected_current}"
+            ),
+            Self::InvalidVariant(details) => write!(formatter, "invalid variant: {details}"),
+            Self::InvalidReadScope {
+                variant_id,
+                revision_id,
+            } => write!(
+                formatter,
+                "revision {revision_id} is not in variant {variant_id} history"
             ),
             Self::VersionOutOfRange(version) => {
                 write!(formatter, "version {version} cannot be stored in SQLite")

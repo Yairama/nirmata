@@ -13,6 +13,50 @@ export type WorldSession = {
   world_id: string;
   current_revision: string;
   world: World;
+  active_variant: Variant;
+  read_scope: ReadScope;
+  read_only: boolean;
+};
+
+export type ReadScope = {
+  variantId: string;
+  revisionId: string | null;
+};
+
+export type Variant = {
+  id: string;
+  worldId: string;
+  name: string;
+  headRevisionId: string;
+  archived: boolean;
+  createdFromRevisionId: string;
+  createdAtMs: number;
+};
+
+export type VariantDiff = {
+  objectRef: ObjectRef;
+  kind: "created" | "deleted" | "renamed" | "edited" | "relation_diverged";
+  before: unknown | null;
+  after: unknown | null;
+  leftScope: ReadScope;
+  rightScope: ReadScope;
+  leftSource: string | null;
+  rightSource: string | null;
+};
+
+export type VariantComparison = {
+  left: ReadScope;
+  right: ReadScope;
+  differences: VariantDiff[];
+};
+
+export type MergeReviewResult = {
+  sourceScope: ReadScope;
+  destinationScope: ReadScope;
+  commonAncestorRevision: string;
+  automaticOperationIds: string[];
+  decisionOperationIds: string[];
+  review: ManualReviewSnapshot;
 };
 
 export type SearchAuthority = "canonical" | "perspective";
@@ -22,7 +66,7 @@ export type SearchClassification =
   | "inference"
   | "no_evidence"
   | "unspecified";
-export type ContextStage = "selection" | "relation" | "temporal" | "goal" | "perspective" | "search";
+export type ContextStage = "selection" | "relation" | "temporal" | "goal" | "perspective" | "search" | "semantic";
 export type SearchKind = "all" | "entity" | "relation" | "event" | "claim" | "rule" | "goal" | "document";
 export type SearchObjectKind = Exclude<SearchKind, "all">;
 export type ObjectKind = SearchObjectKind | "world";
@@ -37,6 +81,10 @@ export type SearchResult = {
   authority: SearchAuthority;
   classification: SearchClassification;
   provenance: string;
+  stage: string;
+  score: number;
+  rank: number;
+  score_explanation: string;
 };
 
 export type SearchAbsence = {
@@ -497,6 +545,12 @@ export type AiRunSnapshot = {
     objective: string;
     assumptions: string[];
     operations: unknown[];
+    decisions: Array<{
+      decision_point_id: string;
+      prompt: string;
+      alternatives: string[];
+      resolved_alternative: string | null;
+    }>;
   } | null;
   validationReport: ValidationReport | null;
   critiqueReport: {
@@ -518,6 +572,148 @@ export type AiRunSnapshot = {
     restrictions: string[];
     reason: string;
   } | null;
+  error: string | null;
+};
+
+export type ImportCitation = {
+  chunkId: string;
+  sourceId: string;
+  sourceHash: string;
+  excerpt: string;
+};
+
+type ImportCandidateBase = {
+  candidateId: string;
+  contradictionKey: string | null;
+  citations: ImportCitation[];
+  technicalConfidence: number;
+};
+
+export type ImportCandidate =
+  | (ImportCandidateBase & { kind: "entity"; name: string; entityKind: string; aliases: string[]; summary: string })
+  | (ImportCandidateBase & { kind: "relation"; sourceName: string; targetName: string; relationKind: string; direction: string })
+  | (ImportCandidateBase & { kind: "event"; summary: string; bodyMd: string; participantNames: string[] })
+  | (ImportCandidateBase & { kind: "claim"; subjectName: string; contentMd: string; predicateKey: string | null; objectScalar: string | null; polarity: string; authentication: string })
+  | (ImportCandidateBase & { kind: "rule"; statementMd: string; scope: string });
+
+export type ImportChunkSnapshot = {
+  id: string;
+  sourceId: string;
+  sourceHash: string;
+  ordinal: number;
+  byteStart: number;
+  byteEnd: number;
+  lineStart: number;
+  lineEnd: number;
+  heading: string | null;
+  content: string;
+};
+
+export type ImportBatchSnapshot = {
+  id: string;
+  worldId: string;
+  targetRevision: string;
+  status: string;
+  sources: Array<{
+    id: string;
+    path: string;
+    fileName: string;
+    format: "markdown" | "text";
+    contentHash: string;
+    sizeBytes: number;
+    status: string;
+    preview: string;
+    chunks: ImportChunkSnapshot[];
+  }>;
+};
+
+export type ImportCandidateSnapshot = {
+  id: string;
+  candidate: ImportCandidate;
+  resolvedSourceCandidateId: string | null;
+  resolvedTargetCandidateId: string | null;
+  status: "pending" | "selected" | "rejected";
+  identitySuggestion: "exact" | "ambiguous" | "new";
+  identityMatches: Array<{ uri: string; name: string }>;
+  identityDecision: "exact" | "ambiguous" | "new" | null;
+  canonicalUri: string | null;
+};
+
+export type ImportReviewPreparation = {
+  batchId: string;
+  run: AiRunSnapshot | null;
+  reviewKey: string | null;
+  decisionPoints: Array<{ candidateId: string; prompt: string; alternatives: string[] }>;
+  traces: Array<{ candidateId: string; operationUri: string; chunkIds: string[] }>;
+};
+
+export type SpecialistRole =
+  | "economist"
+  | "historian"
+  | "political_scientist"
+  | "anthropologist"
+  | "theologian"
+  | "geographer"
+  | "temporal_auditor"
+  | "rules_auditor"
+  | "causal_auditor"
+  | "perspectives_auditor";
+
+export type DeepReviewPlan = {
+  mode: "deep_impact" | "audit";
+  request: string;
+  roles: SpecialistRole[];
+  selectionSource: "explicit" | "rule_based";
+  reason: string;
+  confirmed: boolean;
+  budget: {
+    maxSpecialists: number;
+    maxSpecialistCalls: number;
+    maxSynthesisCalls: number;
+    maxContextExpansions: number;
+    maxReadToolCalls: number;
+    maxNestedDelegations: number;
+    specialistMaxOutputTokens: number;
+    synthesisMaxOutputTokens: number;
+    specialistTimeoutMs: number;
+  };
+};
+
+export type SpecialistFinding = {
+  findingId: string;
+  summary: { markdown: string; contentReferences: string[] };
+  affectedObjectUris: string[];
+  candidateConsequences: Array<{ markdown: string; contentReferences: string[] }>;
+  assumptions: string[];
+  evidence: Array<{ sourceUri: string; excerptMd: string }>;
+  confidence: number;
+  unresolvedQuestions: string[];
+  decisionPosition: { decisionKey: string; alternative: string } | null;
+};
+
+export type DeepReviewRun = {
+  id: string;
+  baseRevision: string;
+  mode: "deep_impact" | "audit";
+  request: string;
+  status: "running" | "synthesizing" | "awaiting_review" | "completed_audit" | "failed" | "cancelled";
+  plan: DeepReviewPlan;
+  specialists: Array<{
+    role: SpecialistRole;
+    status: "pending" | "running" | "completed" | "timed_out" | "failed" | "cancelled";
+    report: { specialist: SpecialistRole; sources: string[]; findings: SpecialistFinding[] } | null;
+    error: string | null;
+    elapsedMs: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+  }>;
+  synthesis: {
+    draft: AiRunSnapshot["draft"];
+    operationOrigins: Array<{ operationId: string; findingIds: string[] }>;
+    decisionOrigins: Array<{ decisionPointId: string; findingIds: string[] }>;
+  } | null;
+  auditResult: { validationReport: ValidationReport; findingIds: string[] } | null;
+  standardRunId: string | null;
   error: string | null;
 };
 

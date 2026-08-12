@@ -1,7 +1,10 @@
 use nirmata_core::{
-    ChangeOperationId, ClaimId, DomainError,
-    change_set::{ChangeOperation, ChangeSetDraft},
+    ChangeOperationId, ClaimId, DecisionPointId, DomainError,
+    change_set::{ChangeOperation, ChangeSetDraft, MAX_DECISION_ALTERNATIVE_CHARS},
+    claim::{ClaimAuthentication, ClaimPolarity},
     document::{DocumentAggregate, ObjectRef},
+    entity::EntityKind,
+    relation::RelationDirection,
     validation::ValidationSeverity,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -19,6 +22,13 @@ pub const MAX_RELATED_OBJECT_URIS: usize = 16;
 pub const MAX_RESOLUTION_CHARS: usize = 1_000;
 pub const MAX_CONTRACT_ID_CHARS: usize = 64;
 pub const MAX_PROPOSAL_DECISION_POINTS: usize = 3;
+pub const MAX_SPECIALIST_FINDINGS: usize = 16;
+pub const MAX_SPECIALIST_SOURCES: usize = 32;
+pub const MAX_FINDING_CONSEQUENCES: usize = 8;
+pub const MAX_FINDING_ASSUMPTIONS: usize = 8;
+pub const MAX_FINDING_QUESTIONS: usize = 8;
+pub const MAX_IMPORT_CANDIDATES: usize = 64;
+pub const MAX_IMPORT_CITATIONS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,7 +137,7 @@ impl From<ContentUri> for String {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ContractId(String);
 
@@ -174,6 +184,21 @@ pub enum AdvisoryClassification {
     Unspecified,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecialistRole {
+    Economist,
+    Historian,
+    PoliticalScientist,
+    Anthropologist,
+    Theologian,
+    Geographer,
+    TemporalAuditor,
+    RulesAuditor,
+    CausalAuditor,
+    PerspectivesAuditor,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReferencedMarkdown {
@@ -201,6 +226,423 @@ pub struct AdvisoryItem {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdvisoryResponse {
     pub items: Vec<AdvisoryItem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportCitation {
+    pub chunk_id: ContractId,
+    pub source_id: ContractId,
+    pub source_hash: String,
+    pub excerpt: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ImportCandidate {
+    Entity {
+        candidate_id: ContractId,
+        name: String,
+        entity_kind: EntityKind,
+        aliases: Vec<String>,
+        summary: String,
+        contradiction_key: Option<ContractId>,
+        citations: Vec<ImportCitation>,
+        technical_confidence: f64,
+    },
+    Relation {
+        candidate_id: ContractId,
+        source_name: String,
+        target_name: String,
+        relation_kind: String,
+        direction: RelationDirection,
+        contradiction_key: Option<ContractId>,
+        citations: Vec<ImportCitation>,
+        technical_confidence: f64,
+    },
+    Event {
+        candidate_id: ContractId,
+        summary: String,
+        body_md: String,
+        participant_names: Vec<String>,
+        contradiction_key: Option<ContractId>,
+        citations: Vec<ImportCitation>,
+        technical_confidence: f64,
+    },
+    Claim {
+        candidate_id: ContractId,
+        subject_name: String,
+        content_md: String,
+        predicate_key: Option<String>,
+        object_scalar: Option<String>,
+        polarity: ClaimPolarity,
+        authentication: ClaimAuthentication,
+        contradiction_key: Option<ContractId>,
+        citations: Vec<ImportCitation>,
+        technical_confidence: f64,
+    },
+    Rule {
+        candidate_id: ContractId,
+        statement_md: String,
+        scope: String,
+        contradiction_key: Option<ContractId>,
+        citations: Vec<ImportCitation>,
+        technical_confidence: f64,
+    },
+}
+
+impl ImportCandidate {
+    pub fn candidate_id(&self) -> &ContractId {
+        match self {
+            Self::Entity { candidate_id, .. }
+            | Self::Relation { candidate_id, .. }
+            | Self::Event { candidate_id, .. }
+            | Self::Claim { candidate_id, .. }
+            | Self::Rule { candidate_id, .. } => candidate_id,
+        }
+    }
+
+    pub fn citations(&self) -> &[ImportCitation] {
+        match self {
+            Self::Entity { citations, .. }
+            | Self::Relation { citations, .. }
+            | Self::Event { citations, .. }
+            | Self::Claim { citations, .. }
+            | Self::Rule { citations, .. } => citations,
+        }
+    }
+
+    pub fn technical_confidence(&self) -> f64 {
+        match self {
+            Self::Entity {
+                technical_confidence,
+                ..
+            }
+            | Self::Relation {
+                technical_confidence,
+                ..
+            }
+            | Self::Event {
+                technical_confidence,
+                ..
+            }
+            | Self::Claim {
+                technical_confidence,
+                ..
+            }
+            | Self::Rule {
+                technical_confidence,
+                ..
+            } => *technical_confidence,
+        }
+    }
+
+    pub fn contradiction_key(&self) -> Option<&ContractId> {
+        match self {
+            Self::Entity {
+                contradiction_key, ..
+            }
+            | Self::Relation {
+                contradiction_key, ..
+            }
+            | Self::Event {
+                contradiction_key, ..
+            }
+            | Self::Claim {
+                contradiction_key, ..
+            }
+            | Self::Rule {
+                contradiction_key, ..
+            } => contradiction_key.as_ref(),
+        }
+    }
+
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            Self::Entity { .. } => "entity",
+            Self::Relation { .. } => "relation",
+            Self::Event { .. } => "event",
+            Self::Claim { .. } => "claim",
+            Self::Rule { .. } => "rule",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportExtraction {
+    pub candidates: Vec<ImportCandidate>,
+}
+
+impl ImportExtraction {
+    fn validate(&self) -> Result<(), String> {
+        validate_max_items(
+            "import_extraction.candidates",
+            self.candidates.len(),
+            MAX_IMPORT_CANDIDATES,
+        )?;
+        let mut ids = HashSet::with_capacity(self.candidates.len());
+        for candidate in &self.candidates {
+            if !ids.insert(candidate.candidate_id().clone()) {
+                return Err(format!(
+                    "import_extraction repeats candidate_id {}",
+                    candidate.candidate_id().as_str()
+                ));
+            }
+            validate_import_candidate(candidate)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SpecialistEvidence {
+    pub source_uri: ContentUri,
+    pub excerpt_md: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SpecialistFinding {
+    pub finding_id: ContractId,
+    pub summary: ReferencedMarkdown,
+    pub affected_object_uris: Vec<ContentUri>,
+    pub candidate_consequences: Vec<ReferencedMarkdown>,
+    pub assumptions: Vec<String>,
+    pub evidence: Vec<SpecialistEvidence>,
+    pub confidence: f64,
+    pub unresolved_questions: Vec<String>,
+    pub decision_position: Option<SpecialistDecisionPosition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SpecialistDecisionPosition {
+    pub decision_key: ContractId,
+    pub alternative: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SpecialistReport {
+    pub specialist: SpecialistRole,
+    pub sources: Vec<ContentUri>,
+    pub findings: Vec<SpecialistFinding>,
+}
+
+impl SpecialistReport {
+    fn validate(&self) -> Result<(), String> {
+        validate_max_items(
+            "specialist_report.sources",
+            self.sources.len(),
+            MAX_SPECIALIST_SOURCES,
+        )?;
+        if self.sources.is_empty() {
+            return Err("specialist_report.sources must include at least one source".to_owned());
+        }
+        validate_unique_items("specialist_report.sources", self.sources.iter().copied())?;
+        validate_max_items(
+            "specialist_report.findings",
+            self.findings.len(),
+            MAX_SPECIALIST_FINDINGS,
+        )?;
+        if self.findings.is_empty() {
+            return Err("specialist_report.findings must include at least one finding".to_owned());
+        }
+
+        let sources = self.sources.iter().copied().collect::<HashSet<_>>();
+        let mut finding_ids = HashSet::with_capacity(self.findings.len());
+        for finding in &self.findings {
+            if !finding_ids.insert(finding.finding_id.clone()) {
+                return Err(format!(
+                    "specialist_report.findings repeats finding_id {}",
+                    finding.finding_id.as_str()
+                ));
+            }
+            finding.summary.validate(
+                "specialist_report.findings.summary",
+                MAX_ADVISORY_TEXT_CHARS,
+                true,
+            )?;
+            validate_max_items(
+                "specialist_report.findings.affected_object_uris",
+                finding.affected_object_uris.len(),
+                MAX_RELATED_OBJECT_URIS,
+            )?;
+            if finding.affected_object_uris.is_empty() {
+                return Err(format!(
+                    "specialist_report finding {} must cite an affected object",
+                    finding.finding_id.as_str()
+                ));
+            }
+            validate_unique_items(
+                "specialist_report.findings.affected_object_uris",
+                finding.affected_object_uris.iter().copied(),
+            )?;
+            validate_max_items(
+                "specialist_report.findings.candidate_consequences",
+                finding.candidate_consequences.len(),
+                MAX_FINDING_CONSEQUENCES,
+            )?;
+            for consequence in &finding.candidate_consequences {
+                consequence.validate(
+                    "specialist_report.findings.candidate_consequences",
+                    MAX_ADVISORY_TEXT_CHARS,
+                    true,
+                )?;
+            }
+            validate_text_items(
+                "specialist_report.findings.assumptions",
+                &finding.assumptions,
+                MAX_FINDING_ASSUMPTIONS,
+            )?;
+            validate_text_items(
+                "specialist_report.findings.unresolved_questions",
+                &finding.unresolved_questions,
+                MAX_FINDING_QUESTIONS,
+            )?;
+            validate_max_items(
+                "specialist_report.findings.evidence",
+                finding.evidence.len(),
+                MAX_CRITIQUE_EVIDENCE_ITEMS,
+            )?;
+            if finding.evidence.is_empty() {
+                return Err(format!(
+                    "specialist_report finding {} must include evidence",
+                    finding.finding_id.as_str()
+                ));
+            }
+            for evidence in &finding.evidence {
+                if !sources.contains(&evidence.source_uri) {
+                    return Err(format!(
+                        "specialist_report finding {} cites evidence outside report sources",
+                        finding.finding_id.as_str()
+                    ));
+                }
+                validate_required_text(
+                    "specialist_report.findings.evidence.excerpt_md",
+                    &evidence.excerpt_md,
+                )?;
+                validate_max_chars(
+                    "specialist_report.findings.evidence.excerpt_md",
+                    &evidence.excerpt_md,
+                    MAX_CITATION_QUOTE_CHARS,
+                )?;
+            }
+            if !finding.confidence.is_finite() || !(0.0..=1.0).contains(&finding.confidence) {
+                return Err(format!(
+                    "specialist_report finding {} has invalid confidence",
+                    finding.finding_id.as_str()
+                ));
+            }
+            if let Some(position) = &finding.decision_position {
+                validate_required_text(
+                    "specialist_report.findings.decision_position.alternative",
+                    &position.alternative,
+                )?;
+                validate_max_chars(
+                    "specialist_report.findings.decision_position.alternative",
+                    &position.alternative,
+                    MAX_DECISION_ALTERNATIVE_CHARS,
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SynthesisOperationOrigin {
+    pub operation_id: ChangeOperationId,
+    pub finding_ids: Vec<ContractId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SynthesisDecisionOrigin {
+    pub decision_point_id: DecisionPointId,
+    pub finding_ids: Vec<ContractId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeepSynthesis {
+    pub draft: ChangeSetDraft,
+    pub operation_origins: Vec<SynthesisOperationOrigin>,
+    pub decision_origins: Vec<SynthesisDecisionOrigin>,
+}
+
+impl DeepSynthesis {
+    fn validate(&self) -> Result<(), String> {
+        let operation_ids = self
+            .draft
+            .operations()
+            .iter()
+            .map(ChangeOperation::operation_id)
+            .collect::<HashSet<_>>();
+        if operation_ids.is_empty() {
+            return Err("deep_synthesis.draft must include at least one operation".to_owned());
+        }
+        if self.operation_origins.len() != operation_ids.len() {
+            return Err(
+                "deep_synthesis.operation_origins must map every draft operation exactly once"
+                    .to_owned(),
+            );
+        }
+        let mut mapped_operations = HashSet::with_capacity(self.operation_origins.len());
+        for origin in &self.operation_origins {
+            if !operation_ids.contains(&origin.operation_id)
+                || !mapped_operations.insert(origin.operation_id)
+            {
+                return Err(
+                    "deep_synthesis.operation_origins contains an unknown or duplicate operation"
+                        .to_owned(),
+                );
+            }
+            validate_origin_findings(
+                "deep_synthesis.operation_origins.finding_ids",
+                &origin.finding_ids,
+                false,
+            )?;
+        }
+
+        let decision_ids = self
+            .draft
+            .decisions()
+            .iter()
+            .map(|decision| decision.decision_point_id())
+            .collect::<HashSet<_>>();
+        if self.decision_origins.len() != decision_ids.len() {
+            return Err(
+                "deep_synthesis.decision_origins must map every draft decision exactly once"
+                    .to_owned(),
+            );
+        }
+        let mut mapped_decisions = HashSet::with_capacity(self.decision_origins.len());
+        for origin in &self.decision_origins {
+            if !decision_ids.contains(&origin.decision_point_id)
+                || !mapped_decisions.insert(origin.decision_point_id)
+            {
+                return Err(
+                    "deep_synthesis.decision_origins contains an unknown or duplicate decision"
+                        .to_owned(),
+                );
+            }
+            validate_origin_findings(
+                "deep_synthesis.decision_origins.finding_ids",
+                &origin.finding_ids,
+                true,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 impl AdvisoryResponse {
@@ -414,6 +856,29 @@ pub fn parse_advisory_response(payload: &str) -> Result<AdvisoryResponse, Struct
 
 pub fn parse_critique_report(payload: &str) -> Result<CritiqueReport, StructuredOutputError> {
     parse_contract(payload, "critique_report", CritiqueReport::validate)
+}
+
+pub fn parse_specialist_report(payload: &str) -> Result<SpecialistReport, StructuredOutputError> {
+    parse_contract(payload, "specialist_report", SpecialistReport::validate)
+}
+
+pub fn parse_deep_synthesis(payload: &str) -> Result<DeepSynthesis, StructuredOutputError> {
+    let synthesis = parse_contract(payload, "deep_synthesis", DeepSynthesis::validate)?;
+    let validated_draft =
+        reconstruct_change_set_draft(synthesis.draft.clone()).map_err(|error| {
+            StructuredOutputError::invalid_content("deep_synthesis", payload, error.to_string())
+        })?;
+    validate_document_content_references(&validated_draft).map_err(|error| {
+        StructuredOutputError::invalid_content("deep_synthesis", payload, error)
+    })?;
+    Ok(DeepSynthesis {
+        draft: validated_draft,
+        ..synthesis
+    })
+}
+
+pub fn parse_import_extraction(payload: &str) -> Result<ImportExtraction, StructuredOutputError> {
+    parse_contract(payload, "import_extraction", ImportExtraction::validate)
 }
 
 pub fn parse_change_set_draft(
@@ -654,6 +1119,128 @@ where
     for item in items {
         if !seen.insert(item) {
             return Err(format!("{field} cannot contain duplicates"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_text_items(field: &str, items: &[String], max_items: usize) -> Result<(), String> {
+    validate_max_items(field, items.len(), max_items)?;
+    for item in items {
+        if item.trim().is_empty() {
+            return Err(format!("{field} cannot contain empty text"));
+        }
+        validate_max_chars(field, item, MAX_RESOLUTION_CHARS)?;
+    }
+    Ok(())
+}
+
+fn validate_origin_findings(
+    field: &str,
+    finding_ids: &[ContractId],
+    requires_disagreement: bool,
+) -> Result<(), String> {
+    if finding_ids.is_empty() {
+        return Err(format!("{field} must cite at least one specialist finding"));
+    }
+    if requires_disagreement && finding_ids.len() < 2 {
+        return Err(format!(
+            "{field} must cite at least two findings for a decision point"
+        ));
+    }
+    validate_unique_items(field, finding_ids.iter().cloned())
+}
+
+fn validate_import_candidate(candidate: &ImportCandidate) -> Result<(), String> {
+    let citations = candidate.citations();
+    validate_max_items(
+        "import_candidate.citations",
+        citations.len(),
+        MAX_IMPORT_CITATIONS,
+    )?;
+    if citations.is_empty() {
+        return Err(format!(
+            "import candidate {} must cite at least one chunk",
+            candidate.candidate_id().as_str()
+        ));
+    }
+    if !candidate.technical_confidence().is_finite()
+        || !(0.0..=1.0).contains(&candidate.technical_confidence())
+    {
+        return Err(format!(
+            "import candidate {} has invalid technical confidence",
+            candidate.candidate_id().as_str()
+        ));
+    }
+    for citation in citations {
+        if !citation.source_hash.starts_with("sha256:") || citation.source_hash.len() != 71 {
+            return Err("import citation requires a complete sha256 source hash".to_owned());
+        }
+        validate_required_text("import_candidate.citations.excerpt", &citation.excerpt)?;
+        validate_max_chars(
+            "import_candidate.citations.excerpt",
+            &citation.excerpt,
+            MAX_CITATION_QUOTE_CHARS,
+        )?;
+    }
+    match candidate {
+        ImportCandidate::Entity {
+            name,
+            aliases,
+            summary,
+            ..
+        } => {
+            validate_required_text("import_candidate.name", name)?;
+            validate_max_chars("import_candidate.name", name, MAX_RESOLUTION_CHARS)?;
+            validate_text_items("import_candidate.aliases", aliases, MAX_RELATED_OBJECT_URIS)?;
+            validate_max_chars("import_candidate.summary", summary, MAX_ADVISORY_TEXT_CHARS)?;
+        }
+        ImportCandidate::Relation {
+            source_name,
+            target_name,
+            relation_kind,
+            ..
+        } => {
+            validate_required_text("import_candidate.source_name", source_name)?;
+            validate_required_text("import_candidate.target_name", target_name)?;
+            validate_required_text("import_candidate.relation_kind", relation_kind)?;
+        }
+        ImportCandidate::Event {
+            summary,
+            body_md,
+            participant_names,
+            ..
+        } => {
+            validate_required_text("import_candidate.summary", summary)?;
+            validate_max_chars("import_candidate.body_md", body_md, MAX_ADVISORY_TEXT_CHARS)?;
+            validate_text_items(
+                "import_candidate.participant_names",
+                participant_names,
+                MAX_RELATED_OBJECT_URIS,
+            )?;
+        }
+        ImportCandidate::Claim {
+            subject_name,
+            content_md,
+            predicate_key,
+            object_scalar,
+            ..
+        } => {
+            validate_required_text("import_candidate.subject_name", subject_name)?;
+            validate_required_text("import_candidate.content_md", content_md)?;
+            if predicate_key.is_some() != object_scalar.is_some() {
+                return Err(
+                    "import claim predicate_key and object_scalar must appear together".to_owned(),
+                );
+            }
+        }
+        ImportCandidate::Rule {
+            statement_md,
+            scope,
+            ..
+        } => {
+            validate_required_text("import_candidate.statement_md", statement_md)?;
+            validate_required_text("import_candidate.scope", scope)?;
         }
     }
     Ok(())

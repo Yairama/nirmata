@@ -5,10 +5,12 @@ mod document;
 mod entity;
 mod event;
 mod goal;
+mod lore_import;
 mod relation;
 mod rule;
 mod schema;
 mod search;
+mod variant;
 mod world_store;
 
 pub use change_set::{
@@ -16,13 +18,18 @@ pub use change_set::{
     CommittedChangeSetRecord, OperationAudit, OperationDecision, StoredRevision,
 };
 pub use event::EventAggregate;
+pub use lore_import::{
+    StoredImportBatch, StoredImportCandidate, StoredImportChunk, StoredImportSource,
+};
 pub use nirmata_core::document::DocumentAggregate;
 pub use search::{
     AnchorContextBundle, AnchorContextEntry, AnchorContextQuery, LogicalVfsDirectory,
-    LogicalVfsNode, LogicalVfsObject, ResolvedObject, StructuredSearchHit, StructuredSearchKind,
-    StructuredSearchQuery, StructuredSearchStage, StructuredSearchTemporal,
+    LogicalVfsNode, LogicalVfsObject, ResolvedObject, SEMANTIC_MODEL_ID, SEMANTIC_MODEL_VERSION,
+    StructuredSearchHit, StructuredSearchKind, StructuredSearchQuery, StructuredSearchStage,
+    StructuredSearchTemporal,
 };
-pub use world_store::{CanonAggregate, StoreError, WorldStore};
+pub use variant::{ReadScope, Variant, VariantComparison, VariantDiff, VariantDiffKind};
+pub use world_store::{CanonAggregate, CanonSnapshot, StoreError, WorldStore};
 
 pub(crate) use world_store::{
     ensure_world, expected_version, invalid_data, invalid_domain, invalid_value,

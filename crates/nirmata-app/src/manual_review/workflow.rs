@@ -1,4 +1,5 @@
 pub(crate) fn create_undo_review(
+    variant_id: VariantId,
     world_id: WorldId,
     base_revision: RevisionId,
     target_revision: &StoredRevision,
@@ -57,6 +58,7 @@ pub(crate) fn create_undo_review(
         })
         .collect();
     ManualReviewSession::rebuild(
+        variant_id,
         original_draft,
         reviewed_operations,
         decisions,

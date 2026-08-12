@@ -627,26 +627,21 @@ impl WorldStore {
         &mut self,
         record: &CommittedChangeSetRecord,
     ) -> Result<StoredRevision, StoreError> {
+        self.commit_change_set_from_source(record, None)
+    }
+
+    pub fn commit_change_set_from_source(
+        &mut self,
+        record: &CommittedChangeSetRecord,
+        source_revision: Option<RevisionId>,
+    ) -> Result<StoredRevision, StoreError> {
         ensure_world(self, record.change_set().world_id())?;
         let transaction = self
             .connection
             .transaction()
             .map_err(|error| map_database_error(&self.path, error))?;
-        let changed = transaction
-            .execute(
-                "UPDATE worlds
-                 SET current_revision = ?1, updated_at_ms = ?2
-                 WHERE id = ?3 AND current_revision = ?4",
-                params![
-                    record.revision().id().to_string(),
-                    record.revision().created_at_ms(),
-                    record.change_set().world_id().to_string(),
-                    record.change_set().base_revision().to_string(),
-                ],
-            )
-            .map_err(|error| map_database_error(&self.path, error))?;
-        if changed == 0 {
-            let expected_current = current_head(&transaction, &self.path)?;
+        let expected_current = current_head(&transaction, &self.path)?;
+        if expected_current != record.change_set().base_revision() {
             return Err(StoreError::StaleRevision {
                 expected_current,
                 found_base: record.change_set().base_revision(),
@@ -654,6 +649,14 @@ impl WorldStore {
         }
 
         apply_change_operations(&transaction, &self.path, record.change_set().operations())?;
+
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_derived_index_update) {
+            return Err(StoreError::Database(
+                self.path.clone(),
+                "simulated derived index update failure".to_owned(),
+            ));
+        }
 
         insert_change_set_row(
             &transaction,
@@ -695,11 +698,74 @@ impl WorldStore {
             record.audits(),
         )?;
         insert_revision(&transaction, &self.path, record.revision())?;
+        if let Some(source_revision) = source_revision {
+            if source_revision == record.revision().id() {
+                return Err(StoreError::InvalidChangeSet(
+                    "merge source revision cannot be the result revision".to_owned(),
+                ));
+            }
+            let changed = transaction
+                .execute(
+                    "UPDATE revisions SET source_revision_id = ?1 WHERE id = ?2",
+                    params![
+                        source_revision.to_string(),
+                        record.revision().id().to_string()
+                    ],
+                )
+                .map_err(|error| map_database_error(&self.path, error))?;
+            if changed != 1 {
+                return Err(StoreError::InvalidChangeSet(
+                    "merge source revision could not be recorded".to_owned(),
+                ));
+            }
+        }
         insert_undo_link(
             &transaction,
             &self.path,
             record.revision().id(),
             record.undone_revision_id(),
+        )?;
+        let changed = transaction
+            .execute(
+                "UPDATE variants
+                 SET head_revision_id = ?1
+                 WHERE id = (SELECT active_variant_id FROM worlds WHERE id = ?2)
+                   AND head_revision_id = ?3 AND archived = 0",
+                params![
+                    record.revision().id().to_string(),
+                    record.change_set().world_id().to_string(),
+                    record.change_set().base_revision().to_string(),
+                ],
+            )
+            .map_err(|error| map_database_error(&self.path, error))?;
+        if changed != 1 {
+            return Err(StoreError::StaleRevision {
+                expected_current: current_head(&transaction, &self.path)?,
+                found_base: record.change_set().base_revision(),
+            });
+        }
+        transaction
+            .execute(
+                "UPDATE worlds
+                 SET current_revision = ?1, updated_at_ms = ?2
+                 WHERE id = ?3",
+                params![
+                    record.revision().id().to_string(),
+                    record.revision().created_at_ms(),
+                    record.change_set().world_id().to_string(),
+                ],
+            )
+            .map_err(|error| map_database_error(&self.path, error))?;
+        let snapshot = crate::world_store::read_canon_snapshot_from_connection(
+            &transaction,
+            &self.path,
+            self.world_id,
+        )?;
+        crate::variant::store_revision_snapshot_in_tx(
+            &transaction,
+            &self.path,
+            record.revision().id(),
+            &snapshot,
         )?;
         transaction
             .commit()

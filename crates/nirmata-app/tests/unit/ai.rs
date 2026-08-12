@@ -657,6 +657,29 @@ async fn query_cancellation_stops_the_request_and_keeps_the_app_usable() {
     assert_eq!(opened.result.uri, uri);
 
     drop(app);
+    let reopened = WorldStore::open(&path).expect("reopen after cancelled query stream");
+    assert_eq!(
+        reopened
+            .load_world()
+            .expect("world after cancelled query stream")
+            .current_revision(),
+        world.current_revision()
+    );
+    assert_eq!(
+        reopened
+            .list_revisions()
+            .expect("history after cancelled query stream")
+            .len(),
+        1
+    );
+    assert_eq!(
+        reopened
+            .list_entities()
+            .expect("canon after cancelled query stream")
+            .len(),
+        2
+    );
+    drop(reopened);
     fs::remove_file(path).expect("remove project");
 }
 
@@ -1018,9 +1041,9 @@ async fn two_parsing_failures_stop_after_the_single_repair() {
         "Unused",
         "unused",
     );
-    let first =
-        nirmata_ai::contracts::parse_change_set_draft("{").expect_err("first truncated output");
-    let second = nirmata_ai::contracts::parse_change_set_draft("{\"id\":")
+    let first = nirmata_ai::contracts::parse_change_set_draft("{\"objective\":\"PRIVATE_LORE_BODY")
+        .expect_err("first truncated output");
+    let second = nirmata_ai::contracts::parse_change_set_draft("{\"id\":\"PRIVATE_API_KEY_VALUE")
         .expect_err("second truncated output");
     let fake = FakeClient::new(advisory_response(vec![]), unused).with_proposal_replies(vec![
         FakeProposalReply::Structured(first),
@@ -1040,10 +1063,36 @@ async fn two_parsing_failures_stop_after_the_single_repair() {
         .expect_err("second parser failure ends the workflow");
 
     assert!(matches!(error, AppError::Ai(AiError::InvalidResponse(_))));
+    let error_output = error.to_string();
+    assert!(!error_output.contains("PRIVATE_LORE_BODY"));
+    assert!(!error_output.contains("PRIVATE_API_KEY_VALUE"));
     assert_eq!(fake.proposal_calls(), 2);
     assert_eq!(fake.critique_calls(), 0);
 
     drop(app);
+    let reopened = WorldStore::open(&path).expect("reopen after truncated AI output");
+    assert_eq!(
+        reopened
+            .load_world()
+            .expect("world after truncated output")
+            .current_revision(),
+        world.current_revision()
+    );
+    assert_eq!(
+        reopened
+            .list_revisions()
+            .expect("history after truncated output")
+            .len(),
+        1
+    );
+    assert_eq!(
+        reopened
+            .list_entities()
+            .expect("canon after truncated output")
+            .len(),
+        2
+    );
+    drop(reopened);
     fs::remove_file(path).expect("remove project");
 }
 
@@ -1370,6 +1419,26 @@ async fn cancelled_ai_run_records_terminal_state_without_changing_canon() {
             .as_deref()
             .is_some_and(|value| value.contains("cancel"))
     );
+    let retry_fake = FakeClient::new(
+        advisory_response(vec![]),
+        draft_for_new_faction(
+            &world,
+            ObjectRef::Entity(seeded.mara.id()),
+            "Guardia Reintentada",
+            "guardia-reintentada",
+        ),
+    );
+    let retried = app
+        .execute_ai_proposal_run_with(
+            &retry_fake,
+            "Reintenta crear una guardia.".to_owned(),
+            &context_request(ObjectRef::Entity(seeded.mara.id())),
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect("cancelled proposal can be retried");
+    assert_eq!(retried.status, AiRunStatus::AwaitingReview);
     drop(app);
 
     let store = WorldStore::open(&path).expect("reopen store");
@@ -1378,6 +1447,7 @@ async fn cancelled_ai_run_records_terminal_state_without_changing_canon() {
         world.current_revision()
     );
     assert_eq!(store.list_entities().expect("entities").len(), 2);
+    assert_eq!(store.list_revisions().expect("revisions").len(), 1);
     drop(store);
     fs::remove_file(path).expect("remove project");
 }

@@ -1,6 +1,6 @@
 use crate::AppError;
 use nirmata_core::{
-    ChangeOperationId, DecisionPointId, RevisionId, World, WorldId,
+    ChangeOperationId, DecisionPointId, RevisionId, VariantId, World, WorldId,
     change_set::{ChangeOperation, ChangeSetDraft, DecisionPoint, RetconKind},
     claim::{Claim, ClaimObject},
     document::{Document, DocumentAggregate, ObjectRef},

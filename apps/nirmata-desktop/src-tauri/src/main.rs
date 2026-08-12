@@ -3,11 +3,16 @@
 use nirmata_app::{
     AiError, AiProviderConfig, AiQueryResponse, AiRequestOptions, AiRunId, AiRunSnapshot, AppError,
     CancellationToken, ContextBudget, ContextBundleRequest, ContextIntent, CreateWorldInput,
-    EmptySearchClassification, IntentBrief, LogicalVfsDirectory, ManualDraftRequest,
-    ManualDraftResponse, ManualReviewActionRequest, ManualReviewSnapshot, NirmataApp, ObjectRef,
-    OpenUriResponse, ProviderCredentialStatus, RelatedContextRequest, RelatedContextResponse,
-    RevisionHistorySnapshot, RevisionId, SearchWorldRequest, SearchWorldResponse, StoreError,
-    StructuredSearchKind, TimelineOverview, WorldSession,
+    DeepReviewMode, DeepReviewPlan, DeepReviewRun, DeepReviewRunId, EmptySearchClassification,
+    ExportSnapshotInput, ExportSnapshotResult, ImportBatchSnapshot, ImportCandidate,
+    ImportCandidateDecisionRequest, ImportCandidateSnapshot, ImportChunkLocation,
+    ImportExtractionResult, ImportReviewPreparation, ImportSnapshotInput, ImportSnapshotResult,
+    IntentBrief, LogicalVfsDirectory, ManualDraftRequest, ManualDraftResponse,
+    ManualReviewActionRequest, ManualReviewSnapshot, MergeReviewResult, NirmataApp, ObjectRef,
+    OpenUriResponse, ProviderCredentialStatus, ReadScope, RelatedContextRequest,
+    RelatedContextResponse, RevisionHistorySnapshot, RevisionId, SearchWorldRequest,
+    SearchWorldResponse, SpecialistRole, StoreError, StructuredSearchKind, TimelineOverview,
+    Variant, VariantComparison, VariantId, WorldSession,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -48,6 +53,68 @@ struct RelatedContextCommand {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ExportSnapshotCommand {
+    parent_directory: PathBuf,
+    snapshot_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportSnapshotCommand {
+    snapshot_directory: PathBuf,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateLoreImportCommand {
+    source_file: PathBuf,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoreImportCommand {
+    batch_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoreImportChunkCommand {
+    batch_id: String,
+    chunk_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReplaceLoreSourceCommand {
+    batch_id: String,
+    source_id: String,
+    source_file: PathBuf,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DecideLoreCandidateCommand {
+    batch_id: String,
+    decision: ImportCandidateDecisionRequest,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EditLoreCandidateCommand {
+    batch_id: String,
+    candidate_id: String,
+    replacement: ImportCandidate,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiLoreImportCommand {
+    request_id: String,
+    batch_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ManualReviewActionCommand {
     review_key: String,
     action: ManualReviewActionRequest,
@@ -70,6 +137,46 @@ struct ReviewOperationCommand {
 #[serde(rename_all = "camelCase")]
 struct RevisionCommand {
     revision_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateVariantCommand {
+    name: String,
+    from_revision_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenameVariantCommand {
+    variant_id: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VariantCommand {
+    variant_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchiveVariantCommand {
+    variant_id: String,
+    allow_referenced: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadScopeCommand {
+    scope: ReadScope,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompareScopesCommand {
+    left: ReadScope,
+    right: ReadScope,
 }
 
 #[derive(Deserialize)]
@@ -117,6 +224,24 @@ struct AiCritiqueDecisionCommand {
     judgment: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeepReviewPlanCommand {
+    mode: String,
+    request: String,
+    anchor_uri: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeepReviewExecuteCommand {
+    request_id: String,
+    mode: String,
+    request: String,
+    roles: Vec<SpecialistRole>,
+    anchor_uri: Option<String>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AiProgressEvent<T> {
@@ -135,8 +260,10 @@ impl From<AppError> for CommandError {
         let code = match &error {
             AppError::WorldAlreadyOpen => "world_already_open",
             AppError::NoWorldOpen => "no_world_open",
+            AppError::ReadOnlyScope => "read_only_scope",
             AppError::ManualReviewNotReady => "manual_review_not_ready",
             AppError::ManualReviewStale { .. } => "manual_review_stale",
+            AppError::ManualReviewVariantMismatch { .. } => "manual_review_stale",
             AppError::ManualReviewRevalidationFailed => "manual_review_revalidation_failed",
             AppError::NoUndoableRevision => "no_undoable_revision",
             AppError::UndoTargetNotCurrentLogicalAncestor { .. } => "undo_target_invalid",
@@ -148,6 +275,15 @@ impl From<AppError> for CommandError {
             AppError::IncompatibleSchema { .. } => "incompatible_schema",
             AppError::ProjectLocked(_) => "project_locked",
             AppError::CorruptProject(_, _) => "corrupt_project",
+            AppError::InvalidSnapshotParent(_) => "invalid_snapshot_parent",
+            AppError::InvalidSnapshotName(_) => "invalid_snapshot_name",
+            AppError::SnapshotDestinationOccupied(_) => "snapshot_destination_occupied",
+            AppError::SnapshotIo { .. } => "snapshot_io_error",
+            AppError::SnapshotSerialization(_) => "snapshot_serialization_error",
+            AppError::InvalidSnapshotImport { .. } => "invalid_snapshot_import",
+            AppError::SnapshotHasNoChanges => "snapshot_has_no_changes",
+            AppError::InvalidLoreImport { .. } => "invalid_lore_import",
+            AppError::LoreImportBatchNotFound(_) => "lore_import_not_found",
             AppError::InvalidObjectUri(_) => "invalid_object_uri",
             AppError::ObjectNotFound { .. } => "object_not_found",
             AppError::ReviewSessionNotFound(_) => "review_not_found",
@@ -173,6 +309,8 @@ impl From<AppError> for CommandError {
             }
             AppError::AiBaseRevisionMismatch { .. } => "ai_context_stale",
             AppError::AiRunNotFound(_) => "ai_run_not_found",
+            AppError::DeepReviewRunNotFound(_) => "deep_review_run_not_found",
+            AppError::InvalidDeepReview(_) => "invalid_deep_review",
             AppError::AiCritiqueIssueNotFound { .. } => "ai_critique_issue_not_found",
             AppError::InvalidAiRunTransition { .. } => "invalid_ai_run_transition",
             AppError::Domain(_) => "invalid_world",
@@ -302,6 +440,200 @@ fn read_logical_vfs(
 }
 
 #[tauri::command]
+fn export_vfs_snapshot(
+    input: ExportSnapshotCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<ExportSnapshotResult, CommandError> {
+    let parent_directory = parse_snapshot_parent(&input.parent_directory)?;
+    let snapshot_name = parse_snapshot_name(&input.snapshot_name)?;
+    lock_app(&state)?
+        .export_vfs_snapshot(ExportSnapshotInput {
+            parent_directory,
+            snapshot_name,
+        })
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn import_vfs_snapshot(
+    input: ImportSnapshotCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<ImportSnapshotResult, CommandError> {
+    let snapshot_directory = parse_snapshot_directory(&input.snapshot_directory)?;
+    lock_app(&state)?
+        .import_vfs_snapshot(ImportSnapshotInput { snapshot_directory })
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn create_lore_import(
+    input: CreateLoreImportCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<ImportBatchSnapshot, CommandError> {
+    let source_file = input.source_file;
+    let source_root = source_file.parent().ok_or(CommandError {
+        code: "invalid_lore_import",
+        message: "The selected source has no parent directory.".to_owned(),
+    })?;
+    lock_app(&state)?
+        .create_import_batch(nirmata_app::CreateImportBatchInput {
+            source_root: source_root.to_path_buf(),
+            files: vec![source_file.clone()],
+        })
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn read_lore_import(
+    input: LoreImportCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<ImportBatchSnapshot, CommandError> {
+    lock_app(&state)?
+        .read_import_batch(input.batch_id.trim())
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn read_lore_candidates(
+    input: LoreImportCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<Vec<ImportCandidateSnapshot>, CommandError> {
+    lock_app(&state)?
+        .read_import_candidates(input.batch_id.trim())
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn open_lore_chunk(
+    input: LoreImportChunkCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<ImportChunkLocation, CommandError> {
+    lock_app(&state)?
+        .open_import_chunk(input.batch_id.trim(), input.chunk_id.trim())
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn replace_lore_source(
+    input: ReplaceLoreSourceCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<ImportBatchSnapshot, CommandError> {
+    lock_app(&state)?
+        .replace_import_source(
+            input.batch_id.trim(),
+            input.source_id.trim(),
+            input.source_file,
+        )
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn decide_lore_candidate(
+    input: DecideLoreCandidateCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<Vec<ImportCandidateSnapshot>, CommandError> {
+    lock_app(&state)?
+        .decide_import_candidate(input.batch_id.trim(), input.decision)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn edit_lore_candidate(
+    input: EditLoreCandidateCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<Vec<ImportCandidateSnapshot>, CommandError> {
+    lock_app(&state)?
+        .edit_import_candidate(
+            input.batch_id.trim(),
+            input.candidate_id.trim(),
+            input.replacement,
+        )
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn delete_lore_import(
+    input: LoreImportCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<(), CommandError> {
+    lock_app(&state)?
+        .delete_import_batch(input.batch_id.trim())
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn extract_lore_import(
+    input: AiLoreImportCommand,
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<ImportExtractionResult, CommandError> {
+    let provider = provider_config()?;
+    let token = register_cancellation(&cancellations, &input.request_id)?;
+    let request_id = input.request_id.clone();
+    let cleanup_id = input.request_id.clone();
+    let app_state = Arc::clone(state.inner());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut app = app_state.lock().map_err(|_| internal_error())?;
+        tauri::async_runtime::block_on(app.execute_import_extraction(
+            input.batch_id.trim(),
+            &provider,
+            AiRequestOptions::default().with_cancellation(token),
+            move |progress| {
+                let _ = app_handle.emit(
+                    "lore-import-progress",
+                    AiProgressEvent {
+                        request_id: request_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        ))
+        .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| internal_error())?;
+    remove_cancellation(&cancellations, &cleanup_id);
+    result
+}
+
+#[tauri::command]
+async fn prepare_lore_import_review(
+    input: AiLoreImportCommand,
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<ImportReviewPreparation, CommandError> {
+    let provider = provider_config()?;
+    let token = register_cancellation(&cancellations, &input.request_id)?;
+    let request_id = input.request_id.clone();
+    let cleanup_id = input.request_id.clone();
+    let app_state = Arc::clone(state.inner());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut app = app_state.lock().map_err(|_| internal_error())?;
+        tauri::async_runtime::block_on(app.prepare_import_review(
+            input.batch_id.trim(),
+            &provider,
+            AiRequestOptions::default().with_cancellation(token),
+            move |progress| {
+                let _ = app_handle.emit(
+                    "ai-proposal-progress",
+                    AiProgressEvent {
+                        request_id: request_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        ))
+        .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| internal_error())?;
+    remove_cancellation(&cancellations, &cleanup_id);
+    result
+}
+
+#[tauri::command]
 fn get_provider_credential_status(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ProviderCredentialStatus, CommandError> {
@@ -408,6 +740,72 @@ async fn execute_ai_proposal(
     .map_err(|_| internal_error())?;
     remove_cancellation(&cancellations, &cleanup_id);
     result
+}
+
+#[tauri::command]
+fn prepare_deep_review(
+    input: DeepReviewPlanCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<DeepReviewPlan, CommandError> {
+    let mode = parse_deep_review_mode(&input.mode)?;
+    let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::ImpactAnalysis)?;
+    lock_app(&state)?
+        .prepare_deep_review(mode, input.request, None, &context)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn execute_deep_review(
+    input: DeepReviewExecuteCommand,
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<DeepReviewRun, CommandError> {
+    let provider = provider_config()?;
+    let mode = parse_deep_review_mode(&input.mode)?;
+    let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::ImpactAnalysis)?;
+    let token = register_cancellation(&cancellations, &input.request_id)?;
+    let request_id = input.request_id.clone();
+    let cleanup_id = input.request_id.clone();
+    let app_state = Arc::clone(state.inner());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut app = app_state.lock().map_err(|_| internal_error())?;
+        let plan = app
+            .prepare_deep_review(mode, input.request, Some(input.roles.clone()), &context)
+            .map_err(CommandError::from)?
+            .confirm(input.roles)
+            .map_err(CommandError::from)?;
+        tauri::async_runtime::block_on(app.execute_deep_review(
+            &provider,
+            plan,
+            &context,
+            token,
+            move |progress| {
+                let _ = app_handle.emit(
+                    "deep-review-progress",
+                    AiProgressEvent {
+                        request_id: request_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        ))
+        .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| internal_error())?;
+    remove_cancellation(&cancellations, &cleanup_id);
+    result
+}
+
+#[tauri::command]
+fn read_deep_review_run(
+    run_id: String,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<DeepReviewRun, CommandError> {
+    lock_app(&state)?
+        .read_deep_review_run(parse_deep_review_run_id(&run_id)?)
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -593,6 +991,16 @@ fn read_manual_review(
 }
 
 #[tauri::command]
+fn discard_manual_review(
+    input: ReviewKeyCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<(), CommandError> {
+    lock_app(&state)?
+        .discard_stored_manual_review(parse_review_key(&input.review_key)?)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 fn begin_manual_review_edit(
     input: ReviewOperationCommand,
     state: State<'_, Arc<Mutex<NirmataApp>>>,
@@ -642,6 +1050,88 @@ fn list_revision_history(
 ) -> Result<RevisionHistorySnapshot, CommandError> {
     lock_app(&state)?
         .list_revision_history()
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn list_variants(state: State<'_, Arc<Mutex<NirmataApp>>>) -> Result<Vec<Variant>, CommandError> {
+    lock_app(&state)?.list_variants().map_err(Into::into)
+}
+
+#[tauri::command]
+fn create_variant(
+    input: CreateVariantCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<Variant, CommandError> {
+    lock_app(&state)?
+        .create_variant(&input.name, parse_revision_id(&input.from_revision_id)?)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn rename_variant(
+    input: RenameVariantCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<Variant, CommandError> {
+    lock_app(&state)?
+        .rename_variant(parse_variant_id(&input.variant_id)?, &input.name)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn switch_variant(
+    input: VariantCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<WorldSession, CommandError> {
+    lock_app(&state)?
+        .switch_variant(parse_variant_id(&input.variant_id)?)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn archive_variant(
+    input: ArchiveVariantCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<(), CommandError> {
+    lock_app(&state)?
+        .archive_variant(parse_variant_id(&input.variant_id)?, input.allow_referenced)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn set_read_scope(
+    input: ReadScopeCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<WorldSession, CommandError> {
+    lock_app(&state)?
+        .set_read_scope(input.scope)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn view_active_head(
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<WorldSession, CommandError> {
+    lock_app(&state)?.view_active_head().map_err(Into::into)
+}
+
+#[tauri::command]
+fn compare_variant_scopes(
+    input: CompareScopesCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<VariantComparison, CommandError> {
+    lock_app(&state)?
+        .compare_scopes(input.left, input.right)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn prepare_variant_merge(
+    input: ReadScopeCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<MergeReviewResult, CommandError> {
+    lock_app(&state)?
+        .prepare_variant_merge(input.scope)
         .map_err(Into::into)
 }
 
@@ -825,6 +1315,24 @@ fn parse_ai_run_id(value: &str) -> Result<AiRunId, CommandError> {
     })
 }
 
+fn parse_deep_review_run_id(value: &str) -> Result<DeepReviewRunId, CommandError> {
+    DeepReviewRunId::from_str(value.trim()).map_err(|_| CommandError {
+        code: "invalid_deep_review_run_id",
+        message: format!("invalid deep review run id: {value}"),
+    })
+}
+
+fn parse_deep_review_mode(value: &str) -> Result<DeepReviewMode, CommandError> {
+    match value.trim() {
+        "deep_impact" => Ok(DeepReviewMode::DeepImpact),
+        "audit" => Ok(DeepReviewMode::Audit),
+        _ => Err(CommandError {
+            code: "invalid_deep_review_mode",
+            message: format!("unsupported deep review mode: {value}"),
+        }),
+    }
+}
+
 fn parse_project_path(path: &Path) -> Result<PathBuf, CommandError> {
     if path.as_os_str().is_empty() {
         return Err(CommandError {
@@ -843,6 +1351,44 @@ fn parse_project_path(path: &Path) -> Result<PathBuf, CommandError> {
         });
     }
     Ok(path.to_path_buf())
+}
+
+fn parse_snapshot_parent(path: &Path) -> Result<PathBuf, CommandError> {
+    if path.as_os_str().is_empty() || !path.is_absolute() {
+        return Err(CommandError {
+            code: "invalid_snapshot_parent",
+            message: "snapshot parent must be an absolute directory selected by the user"
+                .to_owned(),
+        });
+    }
+    Ok(path.to_path_buf())
+}
+
+fn parse_snapshot_directory(path: &Path) -> Result<PathBuf, CommandError> {
+    if path.as_os_str().is_empty() || !path.is_absolute() {
+        return Err(CommandError {
+            code: "invalid_snapshot_directory",
+            message: "snapshot import path must be an absolute directory selected by the user"
+                .to_owned(),
+        });
+    }
+    Ok(path.to_path_buf())
+}
+
+fn parse_snapshot_name(value: &str) -> Result<String, CommandError> {
+    if value.is_empty()
+        || value.len() > 80
+        || value.starts_with('.')
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(CommandError {
+            code: "invalid_snapshot_name",
+            message: "snapshot name must contain only letters, numbers, '-' or '_'".to_owned(),
+        });
+    }
+    Ok(value.to_owned())
 }
 
 fn parse_object_uri<'a>(value: &'a str) -> Result<&'a str, CommandError> {
@@ -864,6 +1410,13 @@ fn parse_revision_id(value: &str) -> Result<RevisionId, CommandError> {
     RevisionId::from_str(value.trim()).map_err(|_| CommandError {
         code: "invalid_revision_id",
         message: format!("invalid revision id: {value}"),
+    })
+}
+
+fn parse_variant_id(value: &str) -> Result<VariantId, CommandError> {
+    VariantId::from_str(value).map_err(|_| CommandError {
+        code: "invalid_variant_id",
+        message: "variant ID must be a UUID".to_owned(),
     })
 }
 
@@ -894,11 +1447,26 @@ fn main() {
             open_uri,
             get_related_context,
             read_logical_vfs,
+            export_vfs_snapshot,
+            import_vfs_snapshot,
+            create_lore_import,
+            read_lore_import,
+            read_lore_candidates,
+            open_lore_chunk,
+            replace_lore_source,
+            decide_lore_candidate,
+            edit_lore_candidate,
+            delete_lore_import,
+            extract_lore_import,
+            prepare_lore_import_review,
             get_provider_credential_status,
             set_provider_api_key,
             clear_provider_api_key,
             execute_ai_query,
             execute_ai_proposal,
+            prepare_deep_review,
+            execute_deep_review,
+            read_deep_review_run,
             execute_ai_proposal_from_brief,
             revalidate_ai_run,
             read_ai_run,
@@ -908,12 +1476,22 @@ fn main() {
             preview_manual_draft,
             apply_manual_review_action,
             read_manual_review,
+            discard_manual_review,
             begin_manual_review_edit,
             apply_manual_review_edit,
             revalidate_manual_review,
             confirm_manual_review,
             list_timeline_events,
             list_revision_history,
+            list_variants,
+            create_variant,
+            rename_variant,
+            switch_variant,
+            archive_variant,
+            set_read_scope,
+            view_active_head,
+            compare_variant_scopes,
+            prepare_variant_merge,
             undo_revision,
             close_world
         ])

@@ -121,6 +121,145 @@ fn text_search_indexes_supported_canon_fields_and_rebuilds_equivalently() {
 }
 
 #[test]
+fn semantic_search_is_deterministic_world_isolated_and_never_canonical() {
+    let first_path = project_path("semantic-first-world");
+    let second_path = project_path("semantic-second-world");
+    let first_world = World::new("First", "", "Dawn", 1).expect("first world");
+    let second_world = World::new("Second", "", "Dawn", 1).expect("second world");
+    let mut first_store = WorldStore::create(&first_path, &first_world).expect("first store");
+    let mut second_store = WorldStore::create(&second_path, &second_world).expect("second store");
+    let first_document = Document::new(
+        first_world.id(),
+        "First Senate Record",
+        "minutes",
+        None,
+        None,
+        DocumentCanonStatus::Canonical,
+        "The senate refuses the border pact.",
+        1,
+    )
+    .expect("first document");
+    let second_document = Document::new(
+        second_world.id(),
+        "Second Senate Record",
+        "minutes",
+        None,
+        None,
+        DocumentCanonStatus::Canonical,
+        "The senate refuses the border pact.",
+        1,
+    )
+    .expect("second document");
+    first_store
+        .insert_document(&DocumentAggregate::new(first_document.clone(), vec![]))
+        .expect("insert first document");
+    second_store
+        .insert_document(&DocumentAggregate::new(second_document.clone(), vec![]))
+        .expect("insert second document");
+
+    let semantic_query = || {
+        first_store
+            .search_semantic(
+                "council rejects treaty",
+                &[StructuredSearchKind::Document],
+                5,
+            )
+            .expect("semantic search")
+    };
+    let first_hits = semantic_query();
+    for _ in 0..5 {
+        assert_eq!(semantic_query(), first_hits);
+    }
+    assert_eq!(first_hits.len(), 1);
+    assert_eq!(first_hits[0].object, ObjectRef::Document(first_document.id()));
+    assert_eq!(first_hits[0].stage, StructuredSearchStage::Semantic);
+    assert!(first_hits[0].provenance.starts_with("semantic:wordnet-en-offline:v1:"));
+    assert_eq!(
+        second_store
+            .search_semantic(
+                "council rejects treaty",
+                &[StructuredSearchKind::Document],
+                5,
+            )
+            .expect("second world semantic search")
+            .into_iter()
+            .map(|hit| hit.object)
+            .collect::<Vec<_>>(),
+        vec![ObjectRef::Document(second_document.id())]
+    );
+
+    let exact_query = StructuredSearchQuery {
+        kinds: vec![StructuredSearchKind::Document],
+        text: Some("senate refuses pact".to_owned()),
+        limit: 5,
+        ..Default::default()
+    };
+    let exact_before_rebuild = first_store
+        .search_structured(&exact_query)
+        .expect("exact search before deletion");
+    assert_eq!(
+        exact_before_rebuild[0].object,
+        ObjectRef::Document(first_document.id())
+    );
+
+    let connection = rusqlite::Connection::open(&first_path).expect("inspect derived storage");
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema
+                 WHERE lower(name) LIKE '%semantic%'
+                    OR lower(name) LIKE '%embedding%'
+                    OR lower(name) LIKE '%vector%'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("semantic table count"),
+        0,
+        "the prototype must not persist a semantic index"
+    );
+    connection
+        .execute("DELETE FROM canon_fts", [])
+        .expect("delete rebuildable index contents");
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM documents", [], |row| row.get::<_, i64>(0))
+            .expect("canonical document count"),
+        1
+    );
+    drop(connection);
+
+    assert_eq!(
+        first_store
+            .get_document(first_document.id())
+            .expect("canonical document after index deletion")
+            .expect("document remains canonical")
+            .object(),
+        &first_document
+    );
+    assert_eq!(semantic_query(), first_hits);
+    assert!(
+        first_store
+            .search_structured_fts(&exact_query)
+            .expect("empty exact index")
+            .is_empty()
+    );
+    first_store
+        .rebuild_canon_text_index()
+        .expect("rebuild exact index from canon");
+    assert_eq!(
+        first_store
+            .search_structured(&exact_query)
+            .expect("exact search after rebuild"),
+        exact_before_rebuild
+    );
+
+    drop(first_store);
+    drop(second_store);
+    fs::remove_file(first_path).expect("remove first project");
+    fs::remove_file(second_path).expect("remove second project");
+}
+
+#[test]
 fn text_search_tracks_updated_text() {
     let path = project_path("fts-update");
     let world = World::new("Arcadia", "", "First Dawn", 1).expect("world");
@@ -215,7 +354,7 @@ fn text_search_drops_deleted_objects_after_commit() {
         None,
         None,
         DocumentCanonStatus::Canonical,
-        "Stormglass entries line every page.",
+        "Stormglass entries line every page. The senate refuses the border pact.",
         1,
     )
     .expect("document");
@@ -227,6 +366,19 @@ fn text_search_drops_deleted_objects_after_commit() {
             .search_canon_text("Stormglass")
             .expect("search before delete"),
         vec![ObjectRef::Document(document.id())]
+    );
+    let semantic_query = StructuredSearchQuery {
+        kinds: vec![StructuredSearchKind::Document],
+        text: Some("council rejects treaty".to_owned()),
+        limit: 5,
+        ..Default::default()
+    };
+    assert_eq!(
+        store
+            .search_structured(&semantic_query)
+            .expect("semantic search before delete")[0]
+            .object,
+        ObjectRef::Document(document.id())
     );
 
     let operation = ChangeOperation::DeleteDocument {
@@ -291,6 +443,12 @@ fn text_search_drops_deleted_objects_after_commit() {
         store
             .search_canon_text("Stormglass")
             .expect("search after delete")
+            .is_empty()
+    );
+    assert!(
+        store
+            .search_structured(&semantic_query)
+            .expect("semantic search after delete")
             .is_empty()
     );
 
