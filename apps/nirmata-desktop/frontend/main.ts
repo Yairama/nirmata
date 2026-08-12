@@ -1,6 +1,7 @@
 import { buildCreateEditor } from "./editor-create.js";
 import "./assistant.js";
 import "./lore-import.js";
+import "./simulation.js";
 import "./variant-ui.js";
 import { currentWorldUri } from "./editor-model.js";
 import {

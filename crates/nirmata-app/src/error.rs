@@ -86,6 +86,14 @@ pub enum AppError {
     InvalidDeepReview(String),
     InvalidSimulationScenario(String),
     SimulationScenarioNotFound(crate::SimulationScenarioId),
+    InvalidSimulationPromotion(String),
+    SimulationScenarioStale {
+        scenario_id: crate::SimulationScenarioId,
+        scenario_variant: VariantId,
+        active_variant: VariantId,
+        base_revision: RevisionId,
+        current_revision: RevisionId,
+    },
     AiCritiqueIssueNotFound {
         run_id: String,
         issue_id: String,
@@ -281,6 +289,19 @@ impl fmt::Display for AppError {
             Self::SimulationScenarioNotFound(scenario_id) => {
                 write!(formatter, "simulation scenario {scenario_id} was not found")
             }
+            Self::InvalidSimulationPromotion(message) => {
+                write!(formatter, "invalid simulation promotion: {message}")
+            }
+            Self::SimulationScenarioStale {
+                scenario_id,
+                scenario_variant,
+                active_variant,
+                base_revision,
+                current_revision,
+            } => write!(
+                formatter,
+                "simulation scenario {scenario_id} is stale: it targets variant {scenario_variant} at revision {base_revision}, but the active head is variant {active_variant} at revision {current_revision}; switch to the scenario variant or rebase the scenario, then run it again"
+            ),
             Self::AiCritiqueIssueNotFound { run_id, issue_id } => write!(
                 formatter,
                 "final critique issue {issue_id} was not found for AI run {run_id}"

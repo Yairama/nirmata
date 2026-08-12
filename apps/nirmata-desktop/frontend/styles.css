@@ -85,6 +85,93 @@ code,
   background: color-mix(in srgb, var(--surface) 92%, #b58b45 8%);
 }
 
+.simulation-panel {
+  padding: 1rem;
+  border: 1px solid #9a6b2f;
+  border-left: 0.35rem solid #f59e0b;
+  border-radius: 0.85rem;
+  background:
+    linear-gradient(120deg, rgb(120 53 15 / 0.24), transparent 50%),
+    rgb(15 23 42 / 0.92);
+  display: grid;
+  gap: 1rem;
+}
+
+.simulation-eyebrow {
+  color: #fbbf24;
+}
+
+.simulation-selectors,
+.simulation-form,
+.simulation-run-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.simulation-selectors {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.simulation-form textarea {
+  min-height: 6rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.84rem;
+}
+
+.simulation-actions,
+.simulation-results,
+.simulation-run-column,
+.simulation-step,
+.simulation-transition,
+.simulation-promotion-fields {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.simulation-actions {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, max-content);
+}
+
+.simulation-run-column,
+.simulation-step,
+.simulation-transition {
+  padding: 0.8rem;
+  border: 1px solid #475569;
+  border-radius: 0.65rem;
+  background: rgb(2 6 23 / 0.5);
+}
+
+.simulation-run-column h4,
+.simulation-step h5,
+.simulation-transition p {
+  margin: 0;
+}
+
+.simulation-transition label:has(input[type="checkbox"]) {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.simulation-transition input[type="checkbox"] {
+  width: auto;
+}
+
+@media (max-width: 920px) {
+  .simulation-selectors,
+  .simulation-form,
+  .simulation-run-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .simulation-actions {
+    grid-column: 1;
+    grid-template-columns: 1fr;
+  }
+}
+
 .lore-import-content {
   display: grid;
   gap: 0.75rem;

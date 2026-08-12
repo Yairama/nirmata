@@ -59,6 +59,7 @@ async function openDiffSide(diff: VariantDiff, scope: ReadScope): Promise<void> 
   state.session = session;
   state.editorMode = null;
   await refreshNavigation();
+  window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
   const uri = objectUri(diff);
   if (uri) {
     await selectUri(uri);
@@ -226,6 +227,7 @@ variantSelect.addEventListener("change", async () => {
     state.editorMode = null;
     variantDiff.replaceChildren();
     await refreshNavigation();
+    window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
   } catch (value) {
     showError(value);
   }
@@ -244,6 +246,7 @@ revisionScopeSelect.addEventListener("change", async () => {
     state.session = await invoke<WorldSession>("set_read_scope", { input: { scope } });
     state.editorMode = null;
     await refreshNavigation();
+    window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
   } catch (value) {
     showError(value);
   }
@@ -253,6 +256,7 @@ viewActiveHeadButton.addEventListener("click", async () => {
   try {
     state.session = await invoke<WorldSession>("view_active_head");
     await refreshNavigation();
+    window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
   } catch (value) {
     showError(value);
   }

@@ -60,8 +60,9 @@ pub use search_use_cases::{
     SearchWorldRequest, SearchWorldResponse,
 };
 pub use simulation::{
-    SimulationResource, SimulationRule, SimulationRun, SimulationScenario, SimulationScenarioId,
-    SimulationScenarioInput, SimulationStock, SimulationTransition,
+    SimulationPromotionInput, SimulationResource, SimulationRule, SimulationRun,
+    SimulationScenario, SimulationScenarioId, SimulationScenarioInput, SimulationStock,
+    SimulationTransition, SimulationTransitionSelection,
 };
 pub use snapshot_export::{ExportSnapshotInput, ExportSnapshotResult};
 pub use snapshot_import::{ImportSnapshotInput, ImportSnapshotResult};

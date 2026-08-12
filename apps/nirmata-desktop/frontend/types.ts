@@ -83,6 +83,78 @@ export type MergeReviewResult = {
   review: ManualReviewSnapshot;
 };
 
+export type SimulationResource = {
+  resourceId: string;
+  unit: string;
+};
+
+export type SimulationStock = {
+  factionId: string;
+  resourceId: string;
+  quantity: number;
+  capacity: number;
+};
+
+export type SimulationRule =
+  | { kind: "production"; faction_id: string; resource_id: string; amount: number }
+  | { kind: "consumption"; faction_id: string; resource_id: string; amount: number }
+  | {
+      kind: "transfer";
+      from_faction_id: string;
+      to_faction_id: string;
+      resource_id: string;
+      amount: number;
+    };
+
+export type SimulationScenarioInput = {
+  worldId: string;
+  variantId: string;
+  baseRevision: string;
+  factions: string[];
+  resources: SimulationResource[];
+  stocks: SimulationStock[];
+  rules: SimulationRule[];
+  maxSteps: number;
+  assumptions: string[];
+};
+
+export type SimulationScenario = SimulationScenarioInput & {
+  id: string;
+};
+
+export type SimulationTransition = {
+  step: number;
+  ruleIndex: number;
+  rule: SimulationRule;
+  before: SimulationStock[];
+  after: SimulationStock[];
+  requested: number;
+  applied: number;
+  shortage: number;
+};
+
+export type SimulationRun = {
+  scenarioId: string;
+  worldId: string;
+  variantId: string;
+  baseRevision: string;
+  stepsCompleted: number;
+  assumptions: string[];
+  transitions: SimulationTransition[];
+  finalStocks: SimulationStock[];
+};
+
+export type SimulationTransitionSelection =
+  | { kind: "create_event"; step: number; ruleIndex: number; summary: string; tick: number | null }
+  | {
+      kind: "create_claim";
+      step: number;
+      ruleIndex: number;
+      subjectEntityId: string;
+      content: string;
+      tick: number | null;
+    };
+
 export type SearchAuthority = "canonical" | "perspective";
 export type SearchClassification =
   | "fact"

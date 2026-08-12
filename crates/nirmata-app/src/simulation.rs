@@ -1,5 +1,15 @@
-use crate::{AppError, NirmataApp};
-use nirmata_core::{EntityId, RevisionId, VariantId, WorldId, entity::EntityKind};
+use crate::{
+    AppError, DraftOperationInput, ManualReviewInput, ManualReviewSession, ManualReviewSnapshot,
+    NirmataApp, app::StoredManualReview,
+};
+use nirmata_core::{
+    EntityId, Period, RevisionId, VariantId, WorldId,
+    change_set::RetconKind,
+    claim::{Claim, ClaimAuthentication, ClaimPolarity},
+    entity::EntityKind,
+    event::{Event, EventAggregate, EventParticipant},
+    time::{Certainty, EventTime, TimePrecision},
+};
 use nirmata_store::{CanonSnapshot, ReadScope};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -133,6 +143,35 @@ pub struct SimulationRun {
     pub final_stocks: Vec<SimulationStock>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SimulationPromotionInput {
+    pub selections: Vec<SimulationTransitionSelection>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum SimulationTransitionSelection {
+    CreateEvent {
+        step: u32,
+        rule_index: usize,
+        summary: String,
+        tick: Option<i64>,
+    },
+    CreateClaim {
+        step: u32,
+        rule_index: usize,
+        subject_entity_id: EntityId,
+        content: String,
+        tick: Option<i64>,
+    },
+}
+
 type StockKey = (EntityId, EntityId);
 
 impl NirmataApp {
@@ -190,6 +229,206 @@ impl NirmataApp {
         validate_scenario(active, &scenario.as_input())?;
         run_scenario(scenario)
     }
+
+    pub fn prepare_simulation_review(
+        &mut self,
+        id: SimulationScenarioId,
+        input: SimulationPromotionInput,
+    ) -> Result<ManualReviewSnapshot, AppError> {
+        if input.selections.is_empty() {
+            return invalid_promotion("select at least one transition to promote");
+        }
+
+        let (review, review_key) = {
+            let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+            crate::app::ensure_active_write_scope(active)?;
+            let scenario = self
+                .simulation_scenarios
+                .get(&id)
+                .ok_or(AppError::SimulationScenarioNotFound(id))?;
+            let active_variant = active.store.active_variant()?;
+            let world = active.store.load_world()?;
+            if active_variant.id != scenario.variant_id
+                || world.current_revision() != scenario.base_revision
+            {
+                return Err(AppError::SimulationScenarioStale {
+                    scenario_id: id,
+                    scenario_variant: scenario.variant_id,
+                    active_variant: active_variant.id,
+                    base_revision: scenario.base_revision,
+                    current_revision: world.current_revision(),
+                });
+            }
+
+            validate_scenario(active, &scenario.as_input())?;
+            let run = run_scenario(scenario)?;
+            let transitions = run
+                .transitions
+                .iter()
+                .map(|transition| ((transition.step, transition.rule_index), transition))
+                .collect::<BTreeMap<_, _>>();
+            let now_ms = crate::app::now_ms()?;
+            let mut operations = Vec::with_capacity(input.selections.len());
+            let mut assumptions = scenario.assumptions.clone();
+            for selection in input.selections {
+                let key = selection.transition_key();
+                let transition = transitions.get(&key).ok_or_else(|| {
+                    AppError::InvalidSimulationPromotion(format!(
+                        "transition step {} rule {} does not exist in the recalculated run",
+                        key.0, key.1
+                    ))
+                })?;
+                let source = simulation_transition_uri(id, key.0, key.1);
+                if !assumptions.contains(&source) {
+                    assumptions.push(source.clone());
+                }
+                operations.push(selection.into_operation(
+                    transition,
+                    scenario.world_id,
+                    scenario.base_revision,
+                    source,
+                    now_ms,
+                )?);
+            }
+
+            let review = ManualReviewSession::create(
+                active_variant.id,
+                scenario.world_id,
+                scenario.base_revision,
+                ManualReviewInput {
+                    objective: format!("Promote selected transitions from simulation {id}"),
+                    sources: vec![],
+                    assumptions,
+                    operations,
+                },
+                &active.store,
+            )?;
+            let review_key = review
+                .operations()
+                .first()
+                .expect("a non-empty selection creates an operation")
+                .current()
+                .primary_ref()
+                .to_string();
+            (review, review_key)
+        };
+
+        if self.manual_reviews.contains_key(&review_key) {
+            return Err(AppError::ReviewSessionConflict(review_key));
+        }
+        let stored = StoredManualReview::new(review);
+        let snapshot = stored.snapshot(&review_key);
+        self.manual_reviews.insert(review_key, stored);
+        Ok(snapshot)
+    }
+}
+
+impl SimulationTransitionSelection {
+    fn transition_key(&self) -> (u32, usize) {
+        match self {
+            Self::CreateEvent {
+                step, rule_index, ..
+            }
+            | Self::CreateClaim {
+                step, rule_index, ..
+            } => (*step, *rule_index),
+        }
+    }
+
+    fn into_operation(
+        self,
+        transition: &SimulationTransition,
+        world_id: WorldId,
+        base_revision: RevisionId,
+        source: String,
+        now_ms: i64,
+    ) -> Result<DraftOperationInput, AppError> {
+        match self {
+            Self::CreateEvent { summary, tick, .. } => {
+                if summary.trim().is_empty() {
+                    return invalid_promotion("create_event summary cannot be empty");
+                }
+                let time = tick.map_or_else(
+                    || EventTime::unknown(Certainty::Uncertain),
+                    |tick| EventTime::instant(tick, TimePrecision::Exact, Certainty::Certain),
+                );
+                let event = Event::new(
+                    world_id,
+                    "simulation_result",
+                    summary,
+                    "",
+                    time,
+                    None,
+                    transition_participants(&transition.rule)?,
+                    vec![],
+                    now_ms,
+                )?;
+                Ok(DraftOperationInput::CreateEvent {
+                    retcon: RetconKind::Additive,
+                    after: EventAggregate::new(event, vec![]),
+                })
+            }
+            Self::CreateClaim {
+                subject_entity_id,
+                content,
+                tick,
+                ..
+            } => {
+                if content.trim().is_empty() {
+                    return invalid_promotion("create_claim content cannot be empty");
+                }
+                let period = tick
+                    .map(|tick| Period::new(Some(tick), Some(tick)))
+                    .transpose()?;
+                let claim = Claim::new(
+                    world_id,
+                    subject_entity_id,
+                    content,
+                    None,
+                    None,
+                    ClaimPolarity::Positive,
+                    ClaimAuthentication::Canonical,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(source),
+                    None,
+                    None,
+                    None,
+                    period,
+                    base_revision,
+                )?;
+                Ok(DraftOperationInput::CreateClaim {
+                    retcon: RetconKind::Additive,
+                    after: claim,
+                })
+            }
+        }
+    }
+}
+
+fn transition_participants(rule: &SimulationRule) -> Result<Vec<EventParticipant>, AppError> {
+    match rule {
+        SimulationRule::Production { faction_id, .. } => {
+            Ok(vec![EventParticipant::new(*faction_id, "producer", 0)?])
+        }
+        SimulationRule::Consumption { faction_id, .. } => {
+            Ok(vec![EventParticipant::new(*faction_id, "consumer", 0)?])
+        }
+        SimulationRule::Transfer {
+            from_faction_id,
+            to_faction_id,
+            ..
+        } => Ok(vec![
+            EventParticipant::new(*from_faction_id, "source", 0)?,
+            EventParticipant::new(*to_faction_id, "destination", 1)?,
+        ]),
+    }
+}
+
+fn simulation_transition_uri(id: SimulationScenarioId, step: u32, rule_index: usize) -> String {
+    format!("simulation://{id}/step/{step}/rule/{rule_index}")
 }
 
 impl SimulationScenario {
@@ -524,4 +763,8 @@ fn missing_stock(key: StockKey) -> AppError {
 
 fn invalid<T>(message: impl Into<String>) -> Result<T, AppError> {
     Err(AppError::InvalidSimulationScenario(message.into()))
+}
+
+fn invalid_promotion<T>(message: impl Into<String>) -> Result<T, AppError> {
+    Err(AppError::InvalidSimulationPromotion(message.into()))
 }

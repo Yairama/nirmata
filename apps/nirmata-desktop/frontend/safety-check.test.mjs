@@ -11,6 +11,8 @@ const frontendSource = (
   )
 ).join("\n");
 const tauriSource = await readFile(new URL("../src-tauri/src/main.rs", import.meta.url), "utf8");
+const simulationSource = await readFile(new URL("simulation.ts", frontendDirectory), "utf8");
+const htmlSource = await readFile(new URL("index.html", frontendDirectory), "utf8");
 
 test("hostile Markdown stays in plain text mode", () => {
   assert.match(frontendSource, /setMarkdownText\(worldPremise,/u);
@@ -75,6 +77,12 @@ test("foundation workflows are wired to specific Tauri commands", () => {
     "export_vfs_snapshot",
     "import_vfs_snapshot",
     "undo_revision",
+    "create_simulation_scenario",
+    "update_simulation_scenario",
+    "delete_simulation_scenario",
+    "list_simulation_scenarios",
+    "run_simulation_scenario",
+    "prepare_simulation_review",
   ];
   for (const command of commands) {
     assert.ok(frontendSource.includes(`"${command}"`), `frontend invokes ${command}`);
@@ -107,4 +115,21 @@ test("calendar UI delegates conversion to Rust and preserves canonical ticks", (
   assert.match(frontendSource, /start_calendar_date/u);
   assert.match(frontendSource, /año\|mes\|día\|sub-tick/u);
   assert.doesNotMatch(frontendSource, /function\s+(tickToDate|dateToTick)/u);
+});
+
+test("simulation stays one-shot, outside canon, and enters only standard review", () => {
+  assert.match(htmlSource, /Fuera del canon/u);
+  assert.match(simulationSource, /session!\.world_id/u);
+  assert.match(simulationSource, /session!\.read_scope\.variantId/u);
+  assert.match(simulationSource, /session!\.world\.current_revision/u);
+  assert.match(simulationSource, /session\.read_only/u);
+  assert.match(simulationSource, /state\.pendingDrafts\.set\(review\.reviewKey/u);
+  assert.match(simulationSource, /Before:/u);
+  assert.match(simulationSource, /After:/u);
+  assert.match(simulationSource, /Requested:/u);
+  assert.match(simulationSource, /Final stocks:/u);
+  assert.doesNotMatch(simulationSource, /confirm_manual_review|setInterval|autoplay/u);
+  assert.match(tauriSource, /struct CreateSimulationScenarioCommand/u);
+  assert.match(tauriSource, /fn parse_simulation_scenario_id/u);
+  assert.match(tauriSource, /deny_unknown_fields\)\]\s*struct PrepareSimulationReviewCommand/u);
 });

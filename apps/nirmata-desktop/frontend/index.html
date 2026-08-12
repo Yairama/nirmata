@@ -231,6 +231,61 @@
           </div>
         </section>
 
+        <section id="simulation-panel" class="simulation-panel" aria-labelledby="simulation-title">
+          <div class="assistant-heading">
+            <div>
+              <p class="panel-eyebrow simulation-eyebrow">Fuera del canon</p>
+              <h3 id="simulation-title">Simulación acotada</h3>
+            </div>
+            <p id="simulation-status" class="panel-summary">Sin escenarios en esta sesión.</p>
+          </div>
+          <div class="simulation-selectors">
+            <label>
+              Escenario
+              <select id="simulation-scenario-select"></select>
+            </label>
+            <label>
+              Comparar al ejecutar (opcional)
+              <select id="simulation-compare-select"></select>
+            </label>
+            <button id="simulation-new" type="button" class="secondary">Nuevo escenario</button>
+          </div>
+          <form id="simulation-form" class="simulation-form">
+            <label>
+              Factions, UUID uno por línea
+              <textarea id="simulation-factions" rows="4" spellcheck="false"></textarea>
+            </label>
+            <label>
+              Resources, id|unit
+              <textarea id="simulation-resources" rows="4" spellcheck="false"></textarea>
+            </label>
+            <label>
+              Stocks, faction|resource|quantity|capacity
+              <textarea id="simulation-stocks" rows="5" spellcheck="false"></textarea>
+            </label>
+            <label>
+              Rules, production|faction|resource|amount; consumption...; transfer|from|to|resource|amount
+              <textarea id="simulation-rules" rows="6" spellcheck="false"></textarea>
+            </label>
+            <label>
+              Assumptions, una por línea
+              <textarea id="simulation-assumptions" rows="4"></textarea>
+            </label>
+            <label>
+              Max steps
+              <input id="simulation-max-steps" type="number" min="1" max="1000" step="1" value="1" required />
+            </label>
+            <div class="pending-actions simulation-actions">
+              <button type="submit">Guardar escenario</button>
+              <button id="simulation-delete" type="button" class="danger">Eliminar</button>
+              <button id="simulation-run" type="button" class="secondary">Ejecutar una vez</button>
+            </div>
+          </form>
+          <div id="simulation-results" class="simulation-results" aria-live="polite">
+            <p class="empty-state">La ejecución es determinista, no continua y nunca modifica el canon.</p>
+          </div>
+        </section>
+
         <div id="workspace-shell" class="workspace-shell">
           <section id="navigation-panel" class="panel" aria-labelledby="navigation-title">
             <div class="panel-header">

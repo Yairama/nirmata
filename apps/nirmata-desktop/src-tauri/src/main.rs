@@ -11,8 +11,9 @@ use nirmata_app::{
     ManualReviewActionRequest, ManualReviewSnapshot, MergeReviewResult, NirmataApp, ObjectRef,
     OpenUriResponse, ProviderCredentialStatus, ReadScope, RelatedContextRequest,
     RelatedContextResponse, RevisionHistorySnapshot, RevisionId, SearchWorldRequest,
-    SearchWorldResponse, SpecialistRole, StoreError, StructuredSearchKind, TimelineOverview,
-    Variant, VariantComparison, VariantId, WorldSession,
+    SearchWorldResponse, SimulationPromotionInput, SimulationRun, SimulationScenario,
+    SimulationScenarioId, SimulationScenarioInput, SpecialistRole, StoreError,
+    StructuredSearchKind, TimelineOverview, Variant, VariantComparison, VariantId, WorldSession,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -242,6 +243,32 @@ struct DeepReviewExecuteCommand {
     anchor_uri: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateSimulationScenarioCommand {
+    scenario: SimulationScenarioInput,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpdateSimulationScenarioCommand {
+    scenario_id: String,
+    scenario: SimulationScenarioInput,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SimulationScenarioCommand {
+    scenario_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PrepareSimulationReviewCommand {
+    scenario_id: String,
+    promotion: SimulationPromotionInput,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AiProgressEvent<T> {
@@ -313,6 +340,8 @@ impl From<AppError> for CommandError {
             AppError::InvalidDeepReview(_) => "invalid_deep_review",
             AppError::InvalidSimulationScenario(_) => "invalid_simulation_scenario",
             AppError::SimulationScenarioNotFound(_) => "simulation_scenario_not_found",
+            AppError::InvalidSimulationPromotion(_) => "invalid_simulation_promotion",
+            AppError::SimulationScenarioStale { .. } => "simulation_scenario_stale",
             AppError::AiCritiqueIssueNotFound { .. } => "ai_critique_issue_not_found",
             AppError::InvalidAiRunTransition { .. } => "invalid_ai_run_transition",
             AppError::Domain(_) => "invalid_world",
@@ -1040,6 +1069,71 @@ fn revalidate_manual_review(
 }
 
 #[tauri::command]
+fn create_simulation_scenario(
+    input: CreateSimulationScenarioCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<SimulationScenario, CommandError> {
+    lock_app(&state)?
+        .create_simulation_scenario(input.scenario)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn update_simulation_scenario(
+    input: UpdateSimulationScenarioCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<SimulationScenario, CommandError> {
+    lock_app(&state)?
+        .update_simulation_scenario(
+            parse_simulation_scenario_id(&input.scenario_id)?,
+            input.scenario,
+        )
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn delete_simulation_scenario(
+    input: SimulationScenarioCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<SimulationScenario, CommandError> {
+    lock_app(&state)?
+        .delete_simulation_scenario(parse_simulation_scenario_id(&input.scenario_id)?)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn list_simulation_scenarios(
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<Vec<SimulationScenario>, CommandError> {
+    lock_app(&state)?
+        .list_simulation_scenarios()
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn run_simulation_scenario(
+    input: SimulationScenarioCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<SimulationRun, CommandError> {
+    lock_app(&state)?
+        .run_simulation_scenario(parse_simulation_scenario_id(&input.scenario_id)?)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn prepare_simulation_review(
+    input: PrepareSimulationReviewCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<ManualReviewSnapshot, CommandError> {
+    lock_app(&state)?
+        .prepare_simulation_review(
+            parse_simulation_scenario_id(&input.scenario_id)?,
+            input.promotion,
+        )
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 fn list_timeline_events(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<TimelineOverview, CommandError> {
@@ -1324,6 +1418,13 @@ fn parse_deep_review_run_id(value: &str) -> Result<DeepReviewRunId, CommandError
     })
 }
 
+fn parse_simulation_scenario_id(value: &str) -> Result<SimulationScenarioId, CommandError> {
+    SimulationScenarioId::from_str(value.trim()).map_err(|_| CommandError {
+        code: "invalid_simulation_scenario_id",
+        message: format!("invalid simulation scenario id: {value}"),
+    })
+}
+
 fn parse_deep_review_mode(value: &str) -> Result<DeepReviewMode, CommandError> {
     match value.trim() {
         "deep_impact" => Ok(DeepReviewMode::DeepImpact),
@@ -1483,6 +1584,12 @@ fn main() {
             apply_manual_review_edit,
             revalidate_manual_review,
             confirm_manual_review,
+            create_simulation_scenario,
+            update_simulation_scenario,
+            delete_simulation_scenario,
+            list_simulation_scenarios,
+            run_simulation_scenario,
+            prepare_simulation_review,
             list_timeline_events,
             list_revision_history,
             list_variants,

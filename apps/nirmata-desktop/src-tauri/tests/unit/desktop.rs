@@ -1,11 +1,12 @@
 use super::{
-    CommandError, apply_manual_review_action, apply_manual_review_edit, begin_manual_review_edit,
-    close_world, confirm_manual_review, create_world, dotenv_value, get_current_world,
-    get_provider_credential_status, get_related_context, list_revision_history,
-    list_timeline_events, open_uri, open_world, parse_ai_run_id, parse_deep_review_mode,
-    parse_object_uri, parse_project_path, parse_revision_id, parse_snapshot_directory,
-    parse_snapshot_name, parse_snapshot_parent, preview_manual_draft, read_logical_vfs,
-    read_manual_review, revalidate_manual_review, search_world, undo_revision,
+    CommandError, SimulationScenarioCommand, apply_manual_review_action, apply_manual_review_edit,
+    begin_manual_review_edit, close_world, confirm_manual_review, create_world, dotenv_value,
+    get_current_world, get_provider_credential_status, get_related_context, list_revision_history,
+    list_simulation_scenarios, list_timeline_events, open_uri, open_world, parse_ai_run_id,
+    parse_deep_review_mode, parse_object_uri, parse_project_path, parse_revision_id,
+    parse_simulation_scenario_id, parse_snapshot_directory, parse_snapshot_name,
+    parse_snapshot_parent, preview_manual_draft, read_logical_vfs, read_manual_review,
+    revalidate_manual_review, run_simulation_scenario, search_world, undo_revision,
 };
 use nirmata_app::{AiError, AppError, NirmataApp, StoreError};
 use serde_json::{Value, json};
@@ -126,6 +127,29 @@ fn invalid_ai_run_ids_are_rejected_before_dispatch() {
 }
 
 #[test]
+fn simulation_scenario_ids_and_command_dtos_are_strict() {
+    let id = "1f2c8be0-093a-4f31-b6b4-c8db7c1fa2da";
+    assert_eq!(
+        parse_simulation_scenario_id(id)
+            .unwrap_or_else(|_| panic!("valid simulation scenario id"))
+            .to_string(),
+        id
+    );
+    let error =
+        parse_simulation_scenario_id("not-a-scenario").expect_err("scenario ids must be UUIDs");
+    assert_eq!(error.code, "invalid_simulation_scenario_id");
+
+    assert!(
+        serde_json::from_value::<SimulationScenarioCommand>(json!({
+            "scenarioId": id,
+            "unexpected": true
+        }))
+        .is_err(),
+        "command DTOs must reject unknown fields"
+    );
+}
+
+#[test]
 fn deep_review_mode_is_explicit_and_closed() {
     assert_eq!(
         parse_deep_review_mode("deep_impact").unwrap_or_else(|_| panic!("deep mode")),
@@ -181,6 +205,33 @@ fn invoke_ipc(
 fn invoke_ok(webview: &WebviewWindow<MockRuntime>, command: &str, body: Value) -> Value {
     invoke_ipc(webview, command, body)
         .unwrap_or_else(|error| panic!("{command} failed across IPC: {error}"))
+}
+
+#[test]
+fn simulation_commands_preserve_boundary_errors_across_ipc() {
+    let app = mock_builder()
+        .manage(Arc::new(Mutex::new(NirmataApp::default())))
+        .invoke_handler(tauri::generate_handler![
+            list_simulation_scenarios,
+            run_simulation_scenario,
+        ])
+        .build(mock_context(noop_assets()))
+        .expect("build simulation command app");
+    let webview = WebviewWindowBuilder::new(&app, "simulation", Default::default())
+        .build()
+        .expect("build simulation command webview");
+
+    let no_world = invoke_ipc(&webview, "list_simulation_scenarios", json!({}))
+        .expect_err("listing without a world must fail");
+    assert_eq!(no_world["code"], "no_world_open");
+
+    let invalid_id = invoke_ipc(
+        &webview,
+        "run_simulation_scenario",
+        json!({ "input": { "scenarioId": "not-a-scenario" } }),
+    )
+    .expect_err("invalid scenario ids must fail at the command boundary");
+    assert_eq!(invalid_id["code"], "invalid_simulation_scenario_id");
 }
 
 fn preview_form(
