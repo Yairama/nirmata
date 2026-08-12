@@ -16,7 +16,7 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
 
 ## Estado actual
 
-- NIR-001–NIR-078 están completadas (78 de 89; 87,6 % del backlog general y
+- NIR-001–NIR-080 están completadas (80 de 89; 89,9 % del backlog general y
   100 % del fundamento funcional).
 - El workspace Rust incluye `nirmata-core`, `nirmata-store`, `nirmata-ai`,
   `nirmata-app` y la aplicación Tauri.
@@ -26,14 +26,16 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
   perspectivas, FTS5 y WordNet local con ranking y fuentes navegables.
 - La frontera de IA incluye credenciales seguras, streaming, contratos
   estrictos, modo `Consultar` y generación validada de propuestas.
-- La siguiente tarea funcional es NIR-079, definir escenarios externos al canon
-  para facciones y recursos discretos.
+- La siguiente tarea funcional es NIR-081, promover resultados seleccionados de
+  simulación a un ChangeSet revisable.
 - El esquema 9 protege por constraints ejecutables la pertenencia de cabezas,
   revisiones, ChangeSets e import batches. Las consultas IA conservan el scope
   observado y las propuestas no se ejecutan fuera de la cabeza activa.
 - El esquema 10 persiste un calendario fijo opcional dentro de `World`; timeline,
   citas, variantes, historia y snapshots derivan etiquetas sin alterar ticks.
-- La regresión actual ejecuta 236 pruebas offline: 236 pasaron y 1 smoke test de
+- Los escenarios de simulación viven fuera del canon, fijan variante/revisión y
+  ejecutan producción, consumo y transferencias enteras sin IA ni azar.
+- La regresión actual ejecuta 239 pruebas offline: 239 pasaron y 1 smoke test de
   red quedó omitido. Frontend build, 7 checks de seguridad y desktop build
   también pasaron.
 - NIR-055 integró WordNet en la ruta activa después de las etapas autoritativas
@@ -513,9 +515,9 @@ del canon y solo los resultados elegidos se convierten en propuestas.
 
 | Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-079 | Pendiente | NIR-010, NIR-012, NIR-052, NIR-072 | Definir escenarios y estado simulado de facciones/recursos. | Crear tipos para escenario, revisión/variante base, facciones participantes, recursos discretos, existencias, capacidad, transferencias, producción/consumo fijos, pasos y supuestos. El estado es una copia externa al canon; cantidades y reglas usan enteros/unidades declaradas. No modelar precios, mercados, combate, población o economía universal. | Un escenario serializa y valida referencias, unidades, cantidades no negativas y base; crearlo, editarlo o borrarlo no genera revisión canónica. | [Visión](docs/product/vision.md), [Modelo](docs/domain/model.md) |
-| NIR-080 | Pendiente | NIR-015, NIR-079 | Implementar transiciones deterministas y ejecución inspeccionable. | Aplicar por paso reglas explícitas en orden estable para producción, consumo, transferencia y escasez; registrar before/after, regla, fuente y eventos disparados. Sin aleatoriedad, LLM en el motor, agentes continuos ni ejecución en background después de cerrar el escenario. Detener en límite de pasos o condición declarada. | La misma entrada produce byte-for-byte el mismo resultado lógico, una regla inválida detiene sin resultado parcial presentado como completo y cada delta explica la transición que lo causó. | [Validación](docs/architecture/validation-pipeline.md), [Fases](docs/roadmap/phases.md) |
-| NIR-081 | Pendiente | NIR-018–NIR-024, NIR-080 | Inspeccionar resultados y promover selecciones a ChangeSet. | Mostrar serie por paso, recursos agotados, transferencias, supuestos y consecuencias candidatas. Permitir seleccionar resultados y mapearlos a eventos, relaciones, goals o claims mediante operaciones tipadas; exigir fuente al escenario y decisión humana para cualquier interpretación no mecánica. Revalidar contra cabeza vigente. | Ejecutar no cambia canon; seleccionar dos deltas produce solo sus operaciones revisables, un escenario stale exige rebase/re-ejecución y rechazar el draft conserva únicamente el escenario. | [Interacción](docs/architecture/interaction-model.md), [Validación](docs/architecture/validation-pipeline.md) |
+| NIR-079 | Completado | NIR-010, NIR-012, NIR-052, NIR-072 | Definir escenarios y estado simulado de facciones/recursos. | Crear tipos para escenario, revisión/variante base, facciones participantes, recursos discretos, existencias, capacidad, transferencias, producción/consumo fijos, pasos y supuestos. El estado es una copia externa al canon; cantidades y reglas usan enteros/unidades declaradas. No modelar precios, mercados, combate, población o economía universal. | Un escenario serializa y valida referencias, unidades, cantidades no negativas y base; crearlo, editarlo o borrarlo no genera revisión canónica. | [Visión](docs/product/vision.md), [Modelo](docs/domain/model.md) |
+| NIR-080 | Completado | NIR-015, NIR-079 | Implementar transiciones deterministas y ejecución inspeccionable. | Aplicar por paso reglas explícitas en orden estable para producción, consumo, transferencia y escasez; registrar before/after, regla, fuente y eventos disparados. Sin aleatoriedad, LLM en el motor, agentes continuos ni ejecución en background después de cerrar el escenario. Detener en límite de pasos o condición declarada. | La misma entrada produce byte-for-byte el mismo resultado lógico, una regla inválida detiene sin resultado parcial presentado como completo y cada delta explica la transición que lo causó. | [Validación](docs/architecture/validation-pipeline.md), [Fases](docs/roadmap/phases.md) |
+| NIR-081 | En progreso | NIR-018–NIR-024, NIR-080 | Inspeccionar resultados y promover selecciones a ChangeSet. | Mostrar serie por paso, recursos agotados, transferencias, supuestos y consecuencias candidatas. Permitir seleccionar resultados y mapearlos a eventos, relaciones, goals o claims mediante operaciones tipadas; exigir fuente al escenario y decisión humana para cualquier interpretación no mecánica. Revalidar contra cabeza vigente. | Ejecutar no cambia canon; seleccionar dos deltas produce solo sus operaciones revisables, un escenario stale exige rebase/re-ejecución y rechazar el draft conserva únicamente el escenario. | [Interacción](docs/architecture/interaction-model.md), [Validación](docs/architecture/validation-pipeline.md) |
 | NIR-082 | Pendiente | NIR-079–NIR-081 | Añadir UI y regresión de simulación acotada. | Incorporar editor de escenario, ejecución paso a paso, comparación de escenarios y promoción al panel de cambios. Probar escasez, transferencia, límite de capacidad, orden estable, stale base, variante, cancelación y round-trip de resultados. | La GUI etiqueta siempre “fuera del canon”, no ofrece modo continuo y todos los casos verifican determinismo, trazabilidad y ausencia de escritura antes de confirmación estándar. | [Interacción](docs/architecture/interaction-model.md), [Fases](docs/roadmap/phases.md) |
 
 ## Fase 13 — Extracción narrativa y documentos derivados

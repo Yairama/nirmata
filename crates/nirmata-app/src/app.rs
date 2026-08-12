@@ -27,7 +27,7 @@ use nirmata_store::{
 use serde::Serialize;
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::PathBuf,
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
@@ -143,6 +143,8 @@ pub struct NirmataApp {
     pub(crate) ai_runs: HashMap<AiRunId, AiRun>,
     pub(crate) deep_review_runs: HashMap<DeepReviewRunId, DeepReviewRun>,
     pub(crate) import_review_traces: HashMap<String, Value>,
+    pub(crate) simulation_scenarios:
+        BTreeMap<crate::SimulationScenarioId, crate::SimulationScenario>,
     pub(crate) provider_credentials: ProviderCredentialStore,
 }
 
@@ -154,6 +156,7 @@ impl Default for NirmataApp {
             ai_runs: HashMap::new(),
             deep_review_runs: HashMap::new(),
             import_review_traces: HashMap::new(),
+            simulation_scenarios: BTreeMap::new(),
             provider_credentials: ProviderCredentialStore::new(),
         }
     }
@@ -346,6 +349,7 @@ impl NirmataApp {
         self.manual_reviews.clear();
         self.ai_runs.clear();
         self.import_review_traces.clear();
+        self.simulation_scenarios.clear();
         Ok(())
     }
 
@@ -974,6 +978,7 @@ impl NirmataApp {
         self.manual_reviews.clear();
         self.ai_runs.clear();
         self.import_review_traces.clear();
+        self.simulation_scenarios.clear();
         let active_variant = store.active_variant()?;
         let read_scope = ReadScope::head(active_variant.id);
         let session = WorldSession {

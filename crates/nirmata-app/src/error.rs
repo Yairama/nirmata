@@ -84,6 +84,8 @@ pub enum AppError {
     AiRunNotFound(String),
     DeepReviewRunNotFound(String),
     InvalidDeepReview(String),
+    InvalidSimulationScenario(String),
+    SimulationScenarioNotFound(crate::SimulationScenarioId),
     AiCritiqueIssueNotFound {
         run_id: String,
         issue_id: String,
@@ -273,6 +275,12 @@ impl fmt::Display for AppError {
                 write!(formatter, "deep review run {run_id} was not found")
             }
             Self::InvalidDeepReview(message) => write!(formatter, "invalid deep review: {message}"),
+            Self::InvalidSimulationScenario(message) => {
+                write!(formatter, "invalid simulation scenario: {message}")
+            }
+            Self::SimulationScenarioNotFound(scenario_id) => {
+                write!(formatter, "simulation scenario {scenario_id} was not found")
+            }
             Self::AiCritiqueIssueNotFound { run_id, issue_id } => write!(
                 formatter,
                 "final critique issue {issue_id} was not found for AI run {run_id}"

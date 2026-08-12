@@ -47,6 +47,7 @@ Cada archivo cubre una sola responsabilidad y puede referenciarse por su ruta.
 - [`validation/lore-import-e2e.md`](validation/lore-import-e2e.md): ingestion hostil, procedencia, revision estandar, commit y undo offline.
 - [`validation/variants-history.md`](validation/variants-history.md): migracion, aislamiento, historia, comparacion y merge limitado.
 - [`validation/calendar-history.md`](validation/calendar-history.md): conversion por ticks, ChangeSet, variantes, snapshots e historia del calendario fijo.
+- [`validation/simulation-engine.md`](validation/simulation-engine.md): escenarios externos, validación, determinismo y trazas de recursos.
 
 ## Convencion
 

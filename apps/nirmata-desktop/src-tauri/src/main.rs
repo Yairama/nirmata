@@ -311,6 +311,8 @@ impl From<AppError> for CommandError {
             AppError::AiRunNotFound(_) => "ai_run_not_found",
             AppError::DeepReviewRunNotFound(_) => "deep_review_run_not_found",
             AppError::InvalidDeepReview(_) => "invalid_deep_review",
+            AppError::InvalidSimulationScenario(_) => "invalid_simulation_scenario",
+            AppError::SimulationScenarioNotFound(_) => "simulation_scenario_not_found",
             AppError::AiCritiqueIssueNotFound { .. } => "ai_critique_issue_not_found",
             AppError::InvalidAiRunTransition { .. } => "invalid_ai_run_transition",
             AppError::Domain(_) => "invalid_world",

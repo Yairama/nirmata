@@ -7,6 +7,7 @@ mod lore_import;
 mod manual_forms;
 mod manual_review;
 mod search_use_cases;
+mod simulation;
 mod snapshot_export;
 mod snapshot_import;
 mod variants;
@@ -57,6 +58,10 @@ pub use search_use_cases::{
     EmptySearchClassification, OpenUriResponse, RelatedContextEntry, RelatedContextRequest,
     RelatedContextResponse, SearchAbsence, SearchAuthority, SearchClassification, SearchResult,
     SearchWorldRequest, SearchWorldResponse,
+};
+pub use simulation::{
+    SimulationResource, SimulationRule, SimulationRun, SimulationScenario, SimulationScenarioId,
+    SimulationScenarioInput, SimulationStock, SimulationTransition,
 };
 pub use snapshot_export::{ExportSnapshotInput, ExportSnapshotResult};
 pub use snapshot_import::{ImportSnapshotInput, ImportSnapshotResult};
