@@ -75,9 +75,10 @@ el evento ocurrio en la fecha de edicion.
 
 ## Calendarios ficticios
 
-La conversion `tick <-> fecha mostrada` es una capa futura. El MVP puede mostrar
-ticks o etiquetas autorales y conservar precision/certidumbre. No debe incluir
-un motor de calendarios antes de que un mundo real lo necesite.
+`WorldCalendar` implementa la conversión pura `tick <-> fecha mostrada` como una
+capa opcional: epoch, ticks por día, weekdays nombrados y meses de longitud fija.
+Acepta ticks negativos y conserva sub-ticks diarios. No altera `EventTime`, no
+introduce leap rules, astronomía, zonas horarias, calendarios múltiples ni DSL.
 
 ## Alternativas rechazadas
 

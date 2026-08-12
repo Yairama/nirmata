@@ -60,6 +60,40 @@ fn create_initial_project(path: &Path, world: &World) {
     transaction.commit().expect("commit initial schema");
 }
 
+fn downgrade_to_schema_seven(path: &Path) {
+    let connection = Connection::open(path).expect("open project as old build");
+    connection
+        .execute_batch(
+            "DROP TRIGGER variants_head_world_insert;
+             DROP TRIGGER variants_head_world_update;
+             DROP TRIGGER worlds_active_variant_update;
+             DROP TRIGGER revisions_variant_insert;
+             DROP TRIGGER revisions_variant_update;
+             DROP TRIGGER revisions_source_insert;
+             DROP TRIGGER revisions_source_update;
+             DROP TRIGGER change_sets_variant_insert;
+             DROP TRIGGER change_sets_variant_update;
+             DROP TRIGGER import_batches_variant_insert;
+             DROP TRIGGER import_batches_variant_update;
+             DROP INDEX revisions_variant_parent;
+             DROP INDEX revisions_variant_id;
+             DROP INDEX change_sets_variant_id;
+             DROP INDEX import_batches_variant_id;
+             DROP TABLE revision_snapshots;
+             DROP TABLE variants;
+             ALTER TABLE worlds DROP COLUMN active_variant_id;
+             ALTER TABLE revisions DROP COLUMN source_revision_id;
+             ALTER TABLE revisions DROP COLUMN variant_id;
+             ALTER TABLE change_sets DROP COLUMN variant_id;
+             ALTER TABLE import_batches DROP COLUMN variant_id;
+             CREATE UNIQUE INDEX revisions_linear_parent ON revisions (parent_revision_id)
+                 WHERE parent_revision_id IS NOT NULL;
+             UPDATE schema_migrations SET version = 7 WHERE version = 9;
+             PRAGMA user_version = 7;",
+        )
+        .expect("downgrade fixture to schema seven");
+}
+
 fn insert_entity(connection: &Connection, world_id: &str, id: &str, slug: &str) {
     connection
         .execute(
@@ -236,38 +270,7 @@ fn migrates_version_seven_to_main_without_changing_ids_or_history() {
     );
     drop(store);
 
-    let connection = Connection::open(&path).expect("open project as old build");
-    connection
-        .execute_batch(
-            "DROP TRIGGER variants_head_world_insert;
-             DROP TRIGGER variants_head_world_update;
-             DROP TRIGGER worlds_active_variant_update;
-             DROP TRIGGER revisions_variant_insert;
-             DROP TRIGGER revisions_variant_update;
-             DROP TRIGGER revisions_source_insert;
-             DROP TRIGGER revisions_source_update;
-             DROP TRIGGER change_sets_variant_insert;
-             DROP TRIGGER change_sets_variant_update;
-             DROP TRIGGER import_batches_variant_insert;
-             DROP TRIGGER import_batches_variant_update;
-             DROP INDEX revisions_variant_parent;
-             DROP INDEX revisions_variant_id;
-             DROP INDEX change_sets_variant_id;
-             DROP INDEX import_batches_variant_id;
-             DROP TABLE revision_snapshots;
-             DROP TABLE variants;
-             ALTER TABLE worlds DROP COLUMN active_variant_id;
-             ALTER TABLE revisions DROP COLUMN source_revision_id;
-             ALTER TABLE revisions DROP COLUMN variant_id;
-             ALTER TABLE change_sets DROP COLUMN variant_id;
-             ALTER TABLE import_batches DROP COLUMN variant_id;
-             CREATE UNIQUE INDEX revisions_linear_parent ON revisions (parent_revision_id)
-                 WHERE parent_revision_id IS NOT NULL;
-             UPDATE schema_migrations SET version = 7 WHERE version = 9;
-             PRAGMA user_version = 7;",
-        )
-        .expect("downgrade fixture to schema seven");
-    drop(connection);
+    downgrade_to_schema_seven(&path);
 
     let migrated = WorldStore::open(&path).expect("migrate variants");
     let variant = migrated.active_variant().expect("main variant");
@@ -288,6 +291,57 @@ fn migrates_version_seven_to_main_without_changing_ids_or_history() {
     );
     assert_eq!(migrated.list_revisions().expect("history").len(), 1);
     drop(migrated);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
+fn failed_variant_backfill_rolls_back_schema_main_and_snapshots() {
+    let path = project_path("variant-backfill-rollback");
+    let world = World::new("Arcadia", "", "Dawn", 42).expect("world");
+    let store = WorldStore::create(&path, &world).expect("create current project");
+    drop(store);
+
+    let missing_parent = RevisionId::new();
+    let connection = Connection::open(&path).expect("open fixture");
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .expect("disable foreign keys for corrupt fixture");
+    connection
+        .execute(
+            "UPDATE revisions SET parent_revision_id = ?1 WHERE id = ?2",
+            params![
+                missing_parent.to_string(),
+                world.current_revision().to_string()
+            ],
+        )
+        .expect("break revision chain");
+    drop(connection);
+    downgrade_to_schema_seven(&path);
+
+    assert!(WorldStore::open(&path).is_err());
+    let connection = Connection::open(&path).expect("inspect rolled back migration");
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("schema version");
+    assert_eq!(version, 7);
+    let variant_tables: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_schema
+             WHERE type = 'table' AND name IN ('variants', 'revision_snapshots')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("variant tables");
+    assert_eq!(variant_tables, 0);
+    assert_eq!(
+        connection
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("recorded version"),
+        7
+    );
+    drop(connection);
     fs::remove_file(path).expect("remove project");
 }
 

@@ -3,8 +3,9 @@ use crate::{
     ChangeOperationValue, LogicalVfsDirectory, LogicalVfsNode, LogicalVfsObject, ResolvedObject,
     StoreError, StructuredSearchHit, StructuredSearchKind, StructuredSearchQuery,
     StructuredSearchStage, StructuredSearchTemporal, WorldStore, map_database_error,
-    map_schema_error, stored_version,
+    map_schema_error, stored_version, world_store::read_canon_snapshot_from_connection,
 };
+use nirmata_core::change_set::RetconKind;
 use nirmata_core::{ChangeSetId, RevisionId, VariantId, WorldId, document::ObjectRef};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -69,8 +70,20 @@ pub struct VariantDiff {
     pub after: Option<Value>,
     pub left_scope: ReadScope,
     pub right_scope: ReadScope,
-    pub left_source: Option<String>,
-    pub right_source: Option<String>,
+    pub left_source: Option<VariantDiffSource>,
+    pub right_source: Option<VariantDiffSource>,
+    pub affected_references: Vec<ObjectRef>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariantDiffSource {
+    pub revision_id: RevisionId,
+    pub change_set_id: ChangeSetId,
+    pub operation_id: nirmata_core::ChangeOperationId,
+    pub retcon: RetconKind,
+    pub audit_source: String,
+    pub scope: ReadScope,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -81,64 +94,139 @@ pub struct VariantComparison {
     pub differences: Vec<VariantDiff>,
 }
 
-impl WorldStore {
-    pub(crate) fn initialize_variants(&mut self, now_ms: i64) -> Result<(), StoreError> {
-        let count: i64 = self
-            .connection
-            .query_row("SELECT COUNT(*) FROM variants", [], |row| row.get(0))
-            .map_err(|error| map_schema_error(&self.path, error))?;
-        if count == 0 {
-            let world = self.load_world()?;
-            let variant_id = VariantId::new();
-            let transaction = self
-                .connection
-                .transaction()
-                .map_err(|error| map_database_error(&self.path, error))?;
-            transaction
-                .execute(
-                    "INSERT INTO variants (
+pub(crate) fn initialize_variant_history_in_tx(
+    connection: &Connection,
+    path: &Path,
+    world_id: WorldId,
+    now_ms: i64,
+) -> Result<(), StoreError> {
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM variants", [], |row| row.get(0))
+        .map_err(|error| map_schema_error(path, error))?;
+    if count == 0 {
+        let head_revision: String = connection
+            .query_row(
+                "SELECT current_revision FROM worlds WHERE id = ?1",
+                [world_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(|error| map_schema_error(path, error))?;
+        let variant_id = VariantId::new();
+        connection
+            .execute(
+                "INSERT INTO variants (
                         id, world_id, name, head_revision_id, archived,
                         created_from_revision_id, created_at_ms
                      ) VALUES (?1, ?2, 'main', ?3, 0, ?3, ?4)",
-                    params![
-                        variant_id.to_string(),
-                        world.id().to_string(),
-                        world.current_revision().to_string(),
-                        now_ms,
-                    ],
-                )
-                .map_err(|error| map_database_error(&self.path, error))?;
-            transaction
-                .execute(
-                    "UPDATE worlds SET active_variant_id = ?1 WHERE id = ?2",
-                    params![variant_id.to_string(), world.id().to_string()],
-                )
-                .map_err(|error| map_database_error(&self.path, error))?;
-            transaction
-                .execute(
-                    "UPDATE revisions SET variant_id = ?1 WHERE variant_id IS NULL",
-                    [variant_id.to_string()],
-                )
-                .map_err(|error| map_database_error(&self.path, error))?;
-            transaction
-                .execute(
-                    "UPDATE change_sets SET variant_id = ?1 WHERE variant_id IS NULL",
-                    [variant_id.to_string()],
-                )
-                .map_err(|error| map_database_error(&self.path, error))?;
-            transaction
-                .execute(
-                    "UPDATE import_batches SET variant_id = ?1 WHERE variant_id IS NULL",
-                    [variant_id.to_string()],
-                )
-                .map_err(|error| map_database_error(&self.path, error))?;
-            transaction
-                .commit()
-                .map_err(|error| map_database_error(&self.path, error))?;
-        }
-        self.backfill_revision_snapshots()
+                params![
+                    variant_id.to_string(),
+                    world_id.to_string(),
+                    head_revision,
+                    now_ms,
+                ],
+            )
+            .map_err(|error| map_database_error(path, error))?;
+        connection
+            .execute(
+                "UPDATE worlds SET active_variant_id = ?1 WHERE id = ?2",
+                params![variant_id.to_string(), world_id.to_string()],
+            )
+            .map_err(|error| map_database_error(path, error))?;
+        connection
+            .execute(
+                "UPDATE revisions SET variant_id = ?1 WHERE variant_id IS NULL",
+                [variant_id.to_string()],
+            )
+            .map_err(|error| map_database_error(path, error))?;
+        connection
+            .execute(
+                "UPDATE change_sets SET variant_id = ?1 WHERE variant_id IS NULL",
+                [variant_id.to_string()],
+            )
+            .map_err(|error| map_database_error(path, error))?;
+        connection
+            .execute(
+                "UPDATE import_batches SET variant_id = ?1 WHERE variant_id IS NULL",
+                [variant_id.to_string()],
+            )
+            .map_err(|error| map_database_error(path, error))?;
     }
+    backfill_revision_snapshots_in_tx(connection, path, world_id)
+}
 
+fn backfill_revision_snapshots_in_tx(
+    connection: &Connection,
+    path: &Path,
+    world_id: WorldId,
+) -> Result<(), StoreError> {
+    let missing: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM revisions r
+             LEFT JOIN revision_snapshots s ON s.revision_id = r.id
+             WHERE s.revision_id IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| map_schema_error(path, error))?;
+    if missing == 0 {
+        return Ok(());
+    }
+    let head: String = connection
+        .query_row(
+            "SELECT current_revision FROM worlds WHERE id = ?1",
+            [world_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(|error| map_schema_error(path, error))?;
+    let head =
+        RevisionId::from_str(&head).map_err(|_| StoreError::InvalidFormat(path.to_owned()))?;
+    let mut revision = head;
+    let mut snapshot =
+        read_canon_snapshot_from_connection(connection, path, world_id)?.with_revision(head)?;
+    loop {
+        insert_snapshot(connection, path, revision, &snapshot)?;
+        let row = connection
+            .query_row(
+                "SELECT parent_revision_id, change_set_id FROM revisions WHERE id = ?1",
+                [revision.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .map_err(|error| map_schema_error(path, error))?;
+        let Some(parent) = row.0 else { break };
+        let parent = RevisionId::from_str(&parent)
+            .map_err(|_| StoreError::InvalidFormat(path.to_owned()))?;
+        if let Some(change_set_id) = row.1 {
+            let id = ChangeSetId::from_str(&change_set_id)
+                .map_err(|_| StoreError::InvalidFormat(path.to_owned()))?;
+            let record =
+                crate::change_set::load_committed_change_set_from_connection(connection, path, id)?
+                    .ok_or(StoreError::InvalidFormat(path.to_owned()))?;
+            rewind_snapshot(&mut snapshot, record.audits());
+        }
+        snapshot = snapshot.with_revision(parent)?;
+        revision = parent;
+    }
+    let missing: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM revisions r
+             LEFT JOIN revision_snapshots s ON s.revision_id = r.id
+             WHERE s.revision_id IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| map_schema_error(path, error))?;
+    if missing != 0 {
+        return Err(StoreError::InvalidFormat(path.to_owned()));
+    }
+    Ok(())
+}
+
+impl WorldStore {
     pub fn active_variant(&self) -> Result<Variant, StoreError> {
         self.connection
             .query_row(
@@ -254,10 +342,21 @@ impl WorldStore {
         let referenced: bool = self
             .connection
             .query_row(
-                "SELECT EXISTS(
-                    SELECT 1 FROM variants child
-                    JOIN revisions r ON r.id = child.created_from_revision_id
-                    WHERE r.variant_id = ?1 AND child.id <> ?1 AND child.archived = 0
+                "WITH RECURSIVE descendant_origins(child_id, revision_id) AS (
+                    SELECT id, created_from_revision_id
+                    FROM variants
+                    WHERE id <> ?1 AND archived = 0
+                    UNION ALL
+                    SELECT origins.child_id, revisions.parent_revision_id
+                    FROM descendant_origins origins
+                    JOIN revisions ON revisions.id = origins.revision_id
+                    WHERE revisions.parent_revision_id IS NOT NULL
+                 )
+                 SELECT EXISTS(
+                    SELECT 1
+                    FROM descendant_origins origins
+                    JOIN revisions ON revisions.id = origins.revision_id
+                    WHERE revisions.variant_id = ?1
                     UNION ALL
                     SELECT 1 FROM import_batches WHERE variant_id = ?1 LIMIT 1
                  )",
@@ -617,8 +716,23 @@ impl WorldStore {
                 after: after.cloned(),
                 left_scope: ReadScope::historical(left.variant_id, left_revision),
                 right_scope: ReadScope::historical(right.variant_id, right_revision),
-                left_source: before.map(|_| revision_source(object_ref, left_revision)),
-                right_source: after.map(|_| revision_source(object_ref, right_revision)),
+                left_source: self.object_provenance(
+                    left_revision,
+                    ReadScope::historical(left.variant_id, left_revision),
+                    object_ref,
+                    before.is_some(),
+                )?,
+                right_source: self.object_provenance(
+                    right_revision,
+                    ReadScope::historical(right.variant_id, right_revision),
+                    object_ref,
+                    after.is_some(),
+                )?,
+                affected_references: affected_references(
+                    &left_snapshot,
+                    &right_snapshot,
+                    object_ref,
+                ),
             });
         }
         Ok(VariantComparison {
@@ -626,6 +740,58 @@ impl WorldStore {
             right,
             differences,
         })
+    }
+
+    fn object_provenance(
+        &self,
+        terminal_revision: RevisionId,
+        scope: ReadScope,
+        object_ref: ObjectRef,
+        exists: bool,
+    ) -> Result<Option<VariantDiffSource>, StoreError> {
+        let mut current = Some(terminal_revision);
+        while let Some(revision_id) = current {
+            let revision = self
+                .get_revision(revision_id)?
+                .ok_or_else(|| StoreError::InvalidFormat(self.path.clone()))?;
+            current = revision.parent_revision_id();
+            let Some(change_set_id) = revision.change_set_id() else {
+                continue;
+            };
+            let record = self
+                .get_committed_change_set(change_set_id)?
+                .ok_or_else(|| StoreError::InvalidFormat(self.path.clone()))?;
+            for audit in record.audits() {
+                let matches = if exists {
+                    audit
+                        .after()
+                        .is_some_and(|value| value_ref(value) == object_ref)
+                } else {
+                    audit
+                        .before()
+                        .is_some_and(|value| value_ref(value) == object_ref)
+                        && audit.after().is_none()
+                };
+                if !matches {
+                    continue;
+                }
+                let operation = record
+                    .change_set()
+                    .operations()
+                    .iter()
+                    .find(|operation| operation.operation_id() == audit.operation_id())
+                    .ok_or_else(|| StoreError::InvalidFormat(self.path.clone()))?;
+                return Ok(Some(VariantDiffSource {
+                    revision_id,
+                    change_set_id,
+                    operation_id: audit.operation_id(),
+                    retcon: operation.retcon(),
+                    audit_source: audit.source().to_owned(),
+                    scope,
+                }));
+            }
+        }
+        Ok(None)
     }
 
     pub fn common_ancestor(
@@ -666,6 +832,26 @@ impl WorldStore {
                 |row| parse_id(row, 0),
             )
             .map_err(|error| map_schema_error(&self.path, error))
+    }
+
+    pub fn revision_source_revision_id(
+        &self,
+        revision: RevisionId,
+    ) -> Result<Option<RevisionId>, StoreError> {
+        let value = self
+            .connection
+            .query_row(
+                "SELECT source_revision_id FROM revisions WHERE id = ?1",
+                [revision.to_string()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .map_err(|error| map_schema_error(&self.path, error))?;
+        value
+            .map(|value| {
+                RevisionId::from_str(&value)
+                    .map_err(|_| StoreError::InvalidFormat(self.path.clone()))
+            })
+            .transpose()
     }
 
     fn snapshot_for_revision(&self, revision: RevisionId) -> Result<CanonSnapshot, StoreError> {
@@ -716,55 +902,6 @@ impl WorldStore {
                 |row| row.get(0),
             )
             .map_err(|error| map_schema_error(&self.path, error))
-    }
-
-    fn backfill_revision_snapshots(&mut self) -> Result<(), StoreError> {
-        let missing: i64 = self
-            .connection
-            .query_row(
-                "SELECT COUNT(*) FROM revisions r
-                 LEFT JOIN revision_snapshots s ON s.revision_id = r.id
-                 WHERE s.revision_id IS NULL",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|error| map_schema_error(&self.path, error))?;
-        if missing == 0 {
-            return Ok(());
-        }
-        let head = self.load_world()?.current_revision();
-        let mut revision = head;
-        let mut snapshot = self.read_canon_snapshot()?.with_revision(head)?;
-        loop {
-            insert_snapshot(&self.connection, &self.path, revision, &snapshot)?;
-            let row = self
-                .connection
-                .query_row(
-                    "SELECT parent_revision_id, change_set_id FROM revisions WHERE id = ?1",
-                    [revision.to_string()],
-                    |row| {
-                        Ok((
-                            row.get::<_, Option<String>>(0)?,
-                            row.get::<_, Option<String>>(1)?,
-                        ))
-                    },
-                )
-                .map_err(|error| map_schema_error(&self.path, error))?;
-            let Some(parent) = row.0 else { break };
-            let parent = RevisionId::from_str(&parent)
-                .map_err(|_| StoreError::InvalidFormat(self.path.clone()))?;
-            if let Some(change_set_id) = row.1 {
-                let id = ChangeSetId::from_str(&change_set_id)
-                    .map_err(|_| StoreError::InvalidFormat(self.path.clone()))?;
-                let record = self
-                    .get_committed_change_set(id)?
-                    .ok_or(StoreError::InvalidFormat(self.path.clone()))?;
-                rewind_snapshot(&mut snapshot, record.audits());
-            }
-            snapshot = snapshot.with_revision(parent)?;
-            revision = parent;
-        }
-        Ok(())
     }
 }
 
@@ -1035,8 +1172,102 @@ fn visible_name(value: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-fn revision_source(object_ref: ObjectRef, revision: RevisionId) -> String {
-    format!("nirmata://revision/{revision}?object={object_ref}")
+fn value_ref(value: &ChangeOperationValue) -> ObjectRef {
+    match value {
+        ChangeOperationValue::World(value) => ObjectRef::World(value.id()),
+        ChangeOperationValue::Entity(value) => ObjectRef::Entity(value.id()),
+        ChangeOperationValue::Relation(value) => ObjectRef::Relation(value.id()),
+        ChangeOperationValue::Event(value) => ObjectRef::Event(value.event().id()),
+        ChangeOperationValue::Goal(value) => ObjectRef::Goal(value.id()),
+        ChangeOperationValue::Rule(value) => ObjectRef::Rule(value.id()),
+        ChangeOperationValue::Claim(value) => ObjectRef::Claim(value.id()),
+        ChangeOperationValue::Document(value) => ObjectRef::Document(value.object().id()),
+    }
+}
+
+fn affected_references(
+    left: &CanonSnapshot,
+    right: &CanonSnapshot,
+    target: ObjectRef,
+) -> Vec<ObjectRef> {
+    let mut affected = BTreeMap::<ObjectRef, ()>::new();
+    for object in snapshot_objects(left)
+        .into_iter()
+        .chain(snapshot_objects(right))
+    {
+        let object_ref = object.object_ref();
+        let references = resolved_references(&object);
+        if object_ref == target {
+            for reference in references {
+                affected.insert(reference, ());
+            }
+        } else if references.contains(&target) {
+            affected.insert(object_ref, ());
+        }
+    }
+    affected.remove(&target);
+    affected.into_keys().collect()
+}
+
+fn resolved_references(object: &ResolvedObject) -> Vec<ObjectRef> {
+    match object {
+        ResolvedObject::World(_) | ResolvedObject::Entity(_) | ResolvedObject::Rule(_) => vec![],
+        ResolvedObject::Relation(value) => vec![
+            ObjectRef::Entity(value.source_entity_id()),
+            ObjectRef::Entity(value.target_entity_id()),
+        ],
+        ResolvedObject::Goal(value) => vec![ObjectRef::Entity(value.holder_entity_id())],
+        ResolvedObject::Event(value) => value
+            .event()
+            .participants()
+            .iter()
+            .map(|participant| ObjectRef::Entity(participant.entity_id()))
+            .chain(value.event().location_entity_id().map(ObjectRef::Entity))
+            .chain(
+                value
+                    .event()
+                    .affected_goal_ids()
+                    .iter()
+                    .copied()
+                    .map(ObjectRef::Goal),
+            )
+            .chain(value.links().iter().flat_map(|link| {
+                [
+                    ObjectRef::Event(link.source_event_id()),
+                    ObjectRef::Event(link.target_event_id()),
+                ]
+            }))
+            .collect(),
+        ResolvedObject::Claim(value) => {
+            std::iter::once(ObjectRef::Entity(value.subject_entity_id()))
+                .chain(value.holder_entity_id().map(ObjectRef::Entity))
+                .chain(value.object().and_then(|object| match object {
+                    nirmata_core::claim::ClaimObject::Entity(id) => Some(ObjectRef::Entity(*id)),
+                    nirmata_core::claim::ClaimObject::Scalar(_) => None,
+                }))
+                .chain(value.source_document_id().map(ObjectRef::Document))
+                .chain(value.source_claim_id().map(ObjectRef::Claim))
+                .collect()
+        }
+        ResolvedObject::Document(value) => value
+            .object()
+            .author_entity_id()
+            .map(ObjectRef::Entity)
+            .into_iter()
+            .chain(
+                value
+                    .object()
+                    .perspective_entity_id()
+                    .map(ObjectRef::Entity),
+            )
+            .chain(
+                value
+                    .references()
+                    .iter()
+                    .map(|reference| reference.target()),
+            )
+            .collect(),
+    }
 }
 
 fn snapshot_objects(snapshot: &CanonSnapshot) -> Vec<ResolvedObject> {

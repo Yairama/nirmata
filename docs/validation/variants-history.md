@@ -24,6 +24,10 @@ vive junto a las pruebas de `WorldStore`.
   divergente sin unir objetos por slug;
 - merge independiente produce un ChangeSet destino normal y deja la cabeza
   fuente intacta;
+- schema, `main`, asignaciones y snapshots migran en una sola transacción; un
+  fallo de backfill revierte DDL y datos;
+- comparación conserva identidad, retcon, revisión, ChangeSet, operación,
+  fuente auditada y referencias estructuradas;
 - `keep_destination` rechaza solo la operación conflictiva, `take_source`
   conserva y aplica la fuente, y ambos resultados se verifican contra canon;
 - deletes usan `replacement`, juicio y decisión explícitos; claims canónicos
@@ -31,18 +35,21 @@ vive junto a las pruebas de `WorldStore`.
 - renombres solapados del mismo ID y dependencias ausentes generan
   `DecisionPoint`s pendientes con revision fuente, nunca una resolucion
   silenciosa;
+- conflictos temporales cross-ID reutilizan validación core y las operaciones
+  dependientes comparten la decisión manual;
 - el historial sigue el linaje de la variante observada y no ofrece undo desde
   otra cabeza o revisión histórica;
 - consultas IA resuelven citas en el scope observado; propuesta y revisión
   profunda de impacto fallan antes de llamar al modelo fuera de la cabeza activa;
 - la GUI rotula cabeza activa frente a scope observado, abre ambos lados de un
-  diff y entrega merge al panel de revision existente.
+  diff, renombra/archiva variantes y entrega merge o snapshots importados al
+  panel de revisión existente.
 
 ## Resultado vigente
 
 El 12 de agosto de 2026, `cargo nextest run --workspace --no-fail-fast` ejecutó
-218 pruebas offline: 218 pasaron y 1 smoke test de red quedó omitido. La suite
-específica `phase10_variants` pasó 8/8; frontend build, 6 checks de seguridad y
+228 pruebas offline: 228 pasaron y 1 smoke test de red quedó omitido. La suite
+específica `phase10_variants` pasó 14/14; frontend build, 6 checks de seguridad y
 desktop build también pasaron.
 
 ## Comandos

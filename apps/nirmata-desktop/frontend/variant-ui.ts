@@ -5,9 +5,15 @@ import {
   compareVariantSelect,
   compareVariantsButton,
   createVariantForm,
+  archiveVariantButton,
+  dialog,
+  exportVfsSnapshotButton,
+  importVfsSnapshotButton,
   invoke,
   mergeVariantButton,
   readScopeLabel,
+  renameVariantForm,
+  renameVariantNameInput,
   revisionScopeSelect,
   state,
   variantDiff,
@@ -17,6 +23,8 @@ import {
 } from "./state.js";
 import type {
   MergeReviewResult,
+  ExportSnapshotResult,
+  ImportSnapshotResult,
   PendingDraftRecord,
   ReadScope,
   Variant,
@@ -67,6 +75,15 @@ function renderComparison(comparison: VariantComparison): void {
     const item = document.createElement("li");
     const label = document.createElement("span");
     label.textContent = `${humanize(difference.kind)} · ${objectUri(difference)}`;
+    const provenance = document.createElement("small");
+    const source = difference.rightSource ?? difference.leftSource;
+    provenance.textContent = source
+      ? `${humanize(source.retcon)} · revisión ${shortId(source.revisionId)} · ${source.auditSource}`
+      : "Sin operación auditada: objeto raíz o importación anterior al historial.";
+    const references = document.createElement("small");
+    references.textContent = difference.affectedReferences.length > 0
+      ? `Referencias afectadas: ${difference.affectedReferences.map((reference) => objectUri({ ...difference, objectRef: reference })).join(", ")}`
+      : "Sin referencias estructuradas afectadas.";
     const left = document.createElement("button");
     left.type = "button";
     left.className = "ghost";
@@ -79,7 +96,7 @@ function renderComparison(comparison: VariantComparison): void {
     right.textContent = "Abrir derecha";
     right.disabled = difference.after === null;
     right.addEventListener("click", () => void openDiffSide(difference, difference.rightScope));
-    item.append(label, left, right);
+    item.append(label, provenance, references, left, right);
     list.append(item);
   }
   variantDiff.replaceChildren(list);
@@ -106,6 +123,35 @@ function mergeRecord(result: MergeReviewResult): PendingDraftRecord {
       sourceUris: result.review.sources,
       assumptions: result.review.assumptions,
       logicalPath: "/",
+      validationReport: result.review.validationReport,
+      readyToConfirm: result.review.readyToConfirm,
+    },
+    review: result.review,
+    editor,
+  };
+}
+
+function snapshotRecord(result: ImportSnapshotResult): PendingDraftRecord {
+  const editor = buildWorldEditor();
+  if (!editor) {
+    throw new Error("No hay mundo activo para presentar el snapshot.");
+  }
+  editor.title = "Importación de snapshot";
+  editor.description = "Cambios externos revisables; importar nunca escribe canon directamente.";
+  editor.fields = [];
+  editor.values = {};
+  editor.baselineValues = {};
+  return {
+    preview: {
+      draftKey: result.review.reviewKey,
+      targetUri: result.review.reviewKey,
+      objectType: "world",
+      mode: "update",
+      title: "Importación de snapshot",
+      objective: result.review.objective,
+      sourceUris: result.review.sources,
+      assumptions: result.review.assumptions,
+      logicalPath: result.path,
       validationReport: result.review.validationReport,
       readyToConfirm: result.review.readyToConfirm,
     },
@@ -156,6 +202,8 @@ async function refreshVariantPanel(): Promise<void> {
     viewActiveHeadButton.disabled = !readOnly;
     mergeVariantButton.disabled = readOnly || !compareVariantSelect.value;
     compareVariantsButton.disabled = !compareVariantSelect.value;
+    archiveVariantButton.disabled = !compareVariantSelect.value;
+    importVfsSnapshotButton.disabled = readOnly;
   } catch (value) {
     showError(value);
   } finally {
@@ -225,6 +273,96 @@ createVariantForm.addEventListener("submit", async (event) => {
     variantNameInput.value = "";
     await refreshVariantPanel();
     setStatus("Variante creada sin cambiar la cabeza activa.");
+  } catch (value) {
+    showError(value);
+  }
+});
+
+renameVariantForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = renameVariantNameInput.value.trim();
+  const active = state.session?.active_variant;
+  if (!name || !active) {
+    return;
+  }
+  try {
+    const variant = await invoke<Variant>("rename_variant", {
+      input: { variantId: active.id, name },
+    });
+    state.session!.active_variant = variant;
+    renameVariantNameInput.value = "";
+    await refreshVariantPanel();
+    setStatus(`Variante renombrada a ${variant.name}.`);
+  } catch (value) {
+    showError(value);
+  }
+});
+
+archiveVariantButton.addEventListener("click", async () => {
+  const variant = variants.find((item) => item.id === compareVariantSelect.value);
+  if (!variant) {
+    return;
+  }
+  try {
+    await invoke("archive_variant", {
+      input: { variantId: variant.id, allowReferenced: false },
+    });
+  } catch (value) {
+    if (!String(value).includes("descendants or import references")
+      || !window.confirm("La variante tiene descendientes o importaciones. ¿Archivarla igualmente?")) {
+      showError(value);
+      return;
+    }
+    await invoke("archive_variant", {
+      input: { variantId: variant.id, allowReferenced: true },
+    });
+  }
+  variantDiff.replaceChildren();
+  await refreshVariantPanel();
+  setStatus(`Variante ${variant.name} archivada.`);
+});
+
+exportVfsSnapshotButton.addEventListener("click", async () => {
+  if (!state.session) {
+    return;
+  }
+  const parentDirectory = await dialog.open({ multiple: false, directory: true });
+  if (!parentDirectory) {
+    return;
+  }
+  const fallback = `snapshot-${shortId(state.session.read_scope.revisionId ?? state.session.active_variant.headRevisionId)}`;
+  const snapshotName = window.prompt("Nombre del directorio de snapshot", fallback)?.trim();
+  if (!snapshotName) {
+    return;
+  }
+  try {
+    const result = await invoke<ExportSnapshotResult>("export_vfs_snapshot", {
+      input: { parentDirectory, snapshotName },
+    });
+    setStatus(`Snapshot ${result.variant} exportado: ${result.objectCount} objetos en ${result.path}.`);
+  } catch (value) {
+    showError(value);
+  }
+});
+
+importVfsSnapshotButton.addEventListener("click", async () => {
+  if (!state.session || state.session.read_only) {
+    showError("Vuelve a la cabeza activa antes de importar un snapshot.");
+    return;
+  }
+  const snapshotDirectory = await dialog.open({ multiple: false, directory: true });
+  if (!snapshotDirectory) {
+    return;
+  }
+  try {
+    const result = await invoke<ImportSnapshotResult>("import_vfs_snapshot", {
+      input: { snapshotDirectory },
+    });
+    state.pendingDrafts.set(result.review.reviewKey, snapshotRecord(result));
+    renderPending();
+    setStatus(
+      `Snapshot revisable: ${result.createdCount} altas, ${result.updatedCount} cambios y ${result.deletedCount} bajas.`,
+    );
   } catch (value) {
     showError(value);
   }

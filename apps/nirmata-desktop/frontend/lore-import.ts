@@ -52,14 +52,20 @@ function editedCandidate(candidate: ImportCandidate, value: string): ImportCandi
 }
 
 function render(): void {
+  const readOnly = state.session?.read_only ?? false;
   loreImportContent.replaceChildren();
-  loreImportExtract.disabled = !batch || activeRequestId !== null;
+  loreImportSelect.disabled = readOnly || activeRequestId !== null;
+  loreImportExtract.disabled = readOnly || !batch || activeRequestId !== null;
   loreImportCancel.disabled = activeRequestId === null;
-  loreImportReview.disabled = candidates.every((candidate) => candidate.status !== "selected") || activeRequestId !== null;
+  loreImportReview.disabled = readOnly
+    || candidates.every((candidate) => candidate.status !== "selected")
+    || activeRequestId !== null;
   loreImportDelete.disabled = !batch || activeRequestId !== null;
   loreImportStatus.textContent = batch
-    ? `${batch.sources.length} fuente · ${candidates.length} candidatos · base ${batch.targetRevision.slice(0, 8)}`
-    : "Sin lote activo.";
+    ? `${batch.sources.length} fuente · ${candidates.length} candidatos · variante ${batch.variantId.slice(0, 8)} · base ${batch.targetRevision.slice(0, 8)}`
+    : readOnly
+      ? "Solo lectura: vuelve a la cabeza activa para importar lore."
+      : "Sin lote activo.";
   if (!batch) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
@@ -167,6 +173,10 @@ async function decide(item: ImportCandidateSnapshot, value: string, selected: bo
 }
 
 loreImportSelect.addEventListener("click", async () => {
+  if (state.session?.read_only) {
+    showError("Vuelve a la cabeza activa antes de importar lore.");
+    return;
+  }
   try {
     clearError();
     const selected = await dialog.open({ multiple: false, directory: false, filters: loreFilter });
@@ -247,4 +257,5 @@ loreImportReview.addEventListener("click", async () => {
   finally { activeRequestId = null; render(); }
 });
 
+window.addEventListener("nirmata:scope-changed", render);
 render();

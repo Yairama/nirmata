@@ -146,7 +146,7 @@ impl WorldStore {
                     .map_err(|error| map_database_error(path, error))?;
             enable_foreign_keys(path, &connection)?;
             initialize(path, &mut connection, world)?;
-            let mut store = Self {
+            Ok(Self {
                 connection,
                 path: path.to_owned(),
                 world_id: world.id(),
@@ -154,9 +154,7 @@ impl WorldStore {
                 fail_next_derived_index_update: false,
                 #[cfg(test)]
                 fail_semantic_search: false,
-            };
-            store.initialize_variants(world.created_at_ms())?;
-            Ok(store)
+            })
         })();
 
         if result.is_err() {
@@ -182,7 +180,7 @@ impl WorldStore {
         verify_schema(path, &connection)?;
         let world_id = load_world_id(path, &connection)?;
 
-        let mut store = Self {
+        Ok(Self {
             connection,
             path: path.to_owned(),
             world_id,
@@ -190,9 +188,7 @@ impl WorldStore {
             fail_next_derived_index_update: false,
             #[cfg(test)]
             fail_semantic_search: false,
-        };
-        store.initialize_variants(current_time_ms())?;
-        Ok(store)
+        })
     }
 
     pub fn load_world(&self) -> Result<World, StoreError> {
@@ -529,6 +525,12 @@ fn initialize(path: &Path, connection: &mut Connection, world: &World) -> Result
         .execute_batch(LORE_IMPORT_SCHEMA)
         .map_err(|error| map_database_error(path, error))?;
     install_variant_schema(&transaction, path)?;
+    crate::variant::initialize_variant_history_in_tx(
+        &transaction,
+        path,
+        world.id(),
+        world.created_at_ms(),
+    )?;
     transaction
         .execute(
             "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?1, ?2)",
@@ -552,6 +554,11 @@ fn install_variant_schema(connection: &Connection, path: &Path) -> Result<(), St
         .map_err(|error| map_database_error(path, error))
 }
 
+fn initialize_variant_history(connection: &Connection, path: &Path) -> Result<(), StoreError> {
+    let world_id = load_world_id(path, connection)?;
+    crate::variant::initialize_variant_history_in_tx(connection, path, world_id, current_time_ms())
+}
+
 fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
     verify_database(path, connection)?;
     let version = schema_version(path, connection)?;
@@ -565,7 +572,15 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
     verify_schema_version(path, connection, version)?;
 
     match version {
-        SCHEMA_VERSION => Ok(()),
+        SCHEMA_VERSION => {
+            let transaction = connection
+                .transaction()
+                .map_err(|error| map_database_error(path, error))?;
+            initialize_variant_history(&transaction, path)?;
+            transaction
+                .commit()
+                .map_err(|error| map_database_error(path, error))
+        }
         1 => {
             let transaction = connection
                 .transaction()
@@ -595,6 +610,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             install_variant_schema(&transaction, path)?;
+            initialize_variant_history(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -628,6 +644,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             install_variant_schema(&transaction, path)?;
+            initialize_variant_history(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -696,6 +713,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             install_variant_schema(&transaction, path)?;
+            initialize_variant_history(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -733,6 +751,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             install_variant_schema(&transaction, path)?;
+            initialize_variant_history(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -758,6 +777,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             install_variant_schema(&transaction, path)?;
+            initialize_variant_history(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -780,6 +800,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .execute_batch(LORE_IMPORT_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
             install_variant_schema(&transaction, path)?;
+            initialize_variant_history(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -799,6 +820,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .transaction()
                 .map_err(|error| map_database_error(path, error))?;
             install_variant_schema(&transaction, path)?;
+            initialize_variant_history(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)
@@ -820,6 +842,7 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
             transaction
                 .execute_batch(VARIANT_INTEGRITY_SCHEMA)
                 .map_err(|error| map_database_error(path, error))?;
+            initialize_variant_history(&transaction, path)?;
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at_ms)

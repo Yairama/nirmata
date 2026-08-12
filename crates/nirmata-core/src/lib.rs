@@ -1,3 +1,4 @@
+pub mod calendar;
 pub mod change_set;
 pub mod claim;
 pub mod document;

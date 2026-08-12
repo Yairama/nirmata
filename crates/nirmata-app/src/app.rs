@@ -362,7 +362,11 @@ impl NirmataApp {
         name: &str,
     ) -> Result<Variant, AppError> {
         let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
-        active.store.rename_variant(id, name).map_err(Into::into)
+        let variant = active.store.rename_variant(id, name)?;
+        if active.session.active_variant.id == id {
+            active.session.active_variant = variant.clone();
+        }
+        Ok(variant)
     }
 
     pub fn archive_variant(

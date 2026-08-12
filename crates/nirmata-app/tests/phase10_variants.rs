@@ -1,15 +1,19 @@
 use nirmata_app::{
-    AppError, CreateWorldInput, DraftOperationInput, ExportSnapshotInput, ImportSnapshotInput,
-    ManualReviewActionRequest, ManualReviewInput, NirmataApp, ReadScope, VariantDiffKind,
+    AppError, ContextBundleRequest, ContextIntent, CreateWorldInput, DraftOperationInput,
+    ExportSnapshotInput, ImportSnapshotInput, ManualReviewActionRequest, ManualReviewInput,
+    NirmataApp, ReadScope, RelatedContextRequest, SearchWorldRequest, VariantDiffKind,
 };
 use nirmata_core::{
-    Period, WorldId,
+    Period, World, WorldId,
     change_set::RetconKind,
     claim::{Claim, ClaimAuthentication, ClaimObject, ClaimPolarity},
     document::ObjectRef,
     entity::{Entity, EntityKind},
+    event::{Event, EventAggregate, EventParticipant},
+    relation::{Relation, RelationDirection},
+    time::{Certainty, EventTime, TimePrecision},
 };
-use nirmata_store::ResolvedObject;
+use nirmata_store::{ResolvedObject, StructuredSearchQuery, WorldStore};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -69,6 +73,62 @@ fn commit_claim(app: &mut NirmataApp, value: Claim) {
         })
         .expect("start claim review");
     app.confirm_manual_review(&review).expect("commit claim");
+}
+
+fn commit_event(app: &mut NirmataApp, value: EventAggregate) {
+    let review = app
+        .start_manual_review(ManualReviewInput {
+            objective: "Create event".to_owned(),
+            sources: vec![],
+            assumptions: vec![],
+            operations: vec![DraftOperationInput::CreateEvent {
+                retcon: RetconKind::Additive,
+                after: value,
+            }],
+        })
+        .expect("start event review");
+    app.confirm_manual_review(&review).expect("commit event");
+}
+
+fn commit_relation(app: &mut NirmataApp, value: Relation) {
+    let review = app
+        .start_manual_review(ManualReviewInput {
+            objective: "Create relation".to_owned(),
+            sources: vec![],
+            assumptions: vec![],
+            operations: vec![DraftOperationInput::CreateRelation {
+                retcon: RetconKind::Additive,
+                after: value,
+            }],
+        })
+        .expect("start relation review");
+    app.confirm_manual_review(&review).expect("commit relation");
+}
+
+fn participant_event(
+    world_id: WorldId,
+    entity_id: nirmata_core::EntityId,
+    kind: &str,
+    summary: &str,
+    tick: i64,
+    role: &str,
+    now: i64,
+) -> EventAggregate {
+    EventAggregate::new(
+        Event::new(
+            world_id,
+            kind,
+            summary,
+            "",
+            EventTime::instant(tick, TimePrecision::Exact, Certainty::Certain),
+            None,
+            vec![EventParticipant::new(entity_id, role, 0).expect("participant")],
+            vec![],
+            now,
+        )
+        .expect("event"),
+        vec![],
+    )
 }
 
 fn canonical_claim(
@@ -135,6 +195,38 @@ fn update_entity(
         .expect("start update");
     app.confirm_manual_review(&review).expect("commit update");
     after
+}
+
+fn update_world_premise(app: &mut NirmataApp, premise: &str) {
+    let session = app
+        .get_current_world()
+        .expect("session")
+        .expect("open world");
+    let before = session.world;
+    let after = World::restore(
+        before.id(),
+        before.name(),
+        premise,
+        before.epoch_label(),
+        before.current_revision(),
+        before.created_at_ms(),
+        before.updated_at_ms() + 1,
+    )
+    .expect("updated world");
+    let review = app
+        .start_manual_review(ManualReviewInput {
+            objective: "Update world premise".to_owned(),
+            sources: vec![],
+            assumptions: vec![],
+            operations: vec![DraftOperationInput::UpdateWorld {
+                retcon: RetconKind::Additive,
+                before,
+                after,
+            }],
+        })
+        .expect("world review");
+    app.confirm_manual_review(&review)
+        .expect("commit world update");
 }
 
 fn delete_entity(app: &mut NirmataApp, before: &Entity) {
@@ -321,11 +413,22 @@ fn compare_and_limited_merge_use_ids_and_leave_source_untouched() {
             ReadScope::head(branch.id),
         )
         .expect("compare variants");
-    assert!(comparison.differences.iter().any(|difference| {
-        difference.object_ref == ObjectRef::Entity(source_only.id())
-            && difference.kind == VariantDiffKind::Deleted
-            && difference.left_source.is_some()
-    }));
+    let source_difference = comparison
+        .differences
+        .iter()
+        .find(|difference| difference.object_ref == ObjectRef::Entity(source_only.id()))
+        .expect("source-only difference");
+    assert_eq!(source_difference.kind, VariantDiffKind::Deleted);
+    let provenance = source_difference
+        .left_source
+        .as_ref()
+        .expect("audited source provenance");
+    assert_eq!(provenance.revision_id, source_head);
+    assert_eq!(provenance.retcon, RetconKind::Additive);
+    assert_eq!(
+        provenance.scope,
+        ReadScope::historical(main.active_variant.id, source_head)
+    );
 
     let merge = app
         .prepare_variant_merge(ReadScope::head(main.active_variant.id))
@@ -335,6 +438,11 @@ fn compare_and_limited_merge_use_ids_and_leave_source_untouched() {
     assert!(merge.review.ready_to_confirm);
     app.confirm_stored_manual_review(&merge.review.review_key)
         .expect("commit merge");
+    let merged_head = app
+        .get_current_world()
+        .expect("session")
+        .expect("open")
+        .current_revision;
     assert!(matches!(
         app.open_uri(&ObjectRef::Entity(source_only.id()).to_string())
             .expect("merged entity")
@@ -351,6 +459,15 @@ fn compare_and_limited_merge_use_ids_and_leave_source_untouched() {
         .current_revision;
     assert_eq!(source_after, source_head);
     assert_ne!(source_after, destination_head);
+    app.close_world().expect("close for provenance check");
+    let store = WorldStore::open(&path).expect("reopen merge store");
+    assert_eq!(
+        store
+            .revision_source_revision_id(merged_head)
+            .expect("merge provenance"),
+        Some(source_head)
+    );
+    drop(store);
     fs::remove_dir_all(exported.path).expect("remove snapshot");
 }
 
@@ -518,6 +635,14 @@ fn take_source_keeps_and_applies_the_conflicting_operation() {
         .expect("prepare merge");
     let operation = merge.review.operations.first().expect("merge operation");
     let decision = operation.decision_points.first().expect("merge decision");
+    app.apply_stored_manual_review_action(
+        &merge.review.review_key,
+        ManualReviewActionRequest::RecordJudgment {
+            operation_id: operation.operation_id.clone(),
+            judgment: "Replace the destination value with the reviewed source value.".to_owned(),
+        },
+    )
+    .expect("record replacement judgment");
     let updated = app
         .apply_stored_manual_review_action(
             &merge.review.review_key,
@@ -769,4 +894,482 @@ fn source_delete_is_a_reviewed_replacement_and_can_remove_destination_canon() {
         app.open_uri(&ObjectRef::Entity(shared.id()).to_string()),
         Err(AppError::ObjectNotFound { .. })
     ));
+}
+
+#[test]
+fn cross_id_temporal_conflict_requires_a_manual_merge_decision() {
+    let path = project_path("phase10-temporal-merge");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path,
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let mara = entity(main.world_id, "Mara", "mara", 2);
+    commit_entity(&mut app, mara.clone());
+    let fork = app.get_current_world().expect("session").expect("open");
+    let branch = app
+        .create_variant("alternate", fork.current_revision)
+        .expect("branch");
+    let return_event = participant_event(
+        main.world_id,
+        mara.id(),
+        "return",
+        "Mara returns",
+        20,
+        "actor",
+        3,
+    );
+    commit_event(&mut app, return_event.clone());
+    app.switch_variant(branch.id).expect("switch destination");
+    let death_event = participant_event(
+        main.world_id,
+        mara.id(),
+        "death",
+        "Mara dies",
+        10,
+        "subject",
+        4,
+    );
+    commit_event(&mut app, death_event.clone());
+
+    let merge = app
+        .prepare_variant_merge(ReadScope::head(fork.active_variant.id))
+        .expect("prepare temporal merge");
+    assert!(merge.automatic_operation_ids.is_empty());
+    assert_eq!(merge.decision_operation_ids.len(), 1);
+    assert!(
+        merge
+            .review
+            .validation_report
+            .conflicts
+            .iter()
+            .any(|issue| { issue.code == "lifecycle.participation_after_death" })
+    );
+    let operation = merge
+        .review
+        .operations
+        .iter()
+        .find(|operation| {
+            operation.target_uri == ObjectRef::Event(return_event.event().id()).to_string()
+        })
+        .expect("return operation");
+    let decision = operation
+        .decision_points
+        .first()
+        .expect("temporal decision");
+    assert!(
+        decision
+            .prompt
+            .contains(&death_event.event().id().to_string())
+    );
+    let updated = app
+        .apply_stored_manual_review_action(
+            &merge.review.review_key,
+            ManualReviewActionRequest::ResolveDecision {
+                decision_point_id: decision.decision_point_id.clone(),
+                alternative: "keep_destination".to_owned(),
+            },
+        )
+        .expect("keep destination timeline");
+    assert!(updated.effective_report.conflicts.is_empty());
+    assert!(!updated.operations[0].selected);
+}
+
+#[test]
+fn rename_and_archive_persist_and_detect_transitive_descendants() {
+    let path = project_path("phase10-variant-lifecycle");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path: path.clone(),
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let renamed = app
+        .rename_variant(main.active_variant.id, "primary")
+        .expect("rename active variant");
+    assert_eq!(renamed.name, "primary");
+    assert_eq!(
+        app.get_current_world()
+            .expect("session")
+            .expect("open")
+            .active_variant
+            .name,
+        "primary"
+    );
+    assert!(
+        app.create_variant("PRIMARY", main.current_revision)
+            .is_err(),
+        "variant names are unique case-insensitively"
+    );
+
+    let parent = app
+        .create_variant("parent", main.current_revision)
+        .expect("parent variant");
+    app.switch_variant(parent.id).expect("switch parent");
+    commit_entity(
+        &mut app,
+        entity(main.world_id, "Parent", "parent-entity", 2),
+    );
+    let parent_head = app
+        .get_current_world()
+        .expect("session")
+        .expect("open")
+        .current_revision;
+    let child = app
+        .create_variant("child", parent_head)
+        .expect("child variant");
+    app.switch_variant(child.id).expect("switch child");
+    commit_entity(&mut app, entity(main.world_id, "Child", "child-entity", 3));
+    let child_head = app
+        .get_current_world()
+        .expect("session")
+        .expect("open")
+        .current_revision;
+    let grandchild = app
+        .create_variant("grandchild", child_head)
+        .expect("grandchild variant");
+    app.switch_variant(main.active_variant.id)
+        .expect("return to main");
+
+    assert!(app.archive_variant(child.id, false).is_err());
+    app.archive_variant(child.id, true)
+        .expect("archive referenced child explicitly");
+    assert!(
+        app.archive_variant(parent.id, false).is_err(),
+        "active grandchild remains a transitive descendant"
+    );
+    app.archive_variant(parent.id, true)
+        .expect("archive transitive parent explicitly");
+    assert!(app.switch_variant(child.id).is_err());
+
+    app.close_world().expect("close");
+    let reopened = app.open_world(path).expect("reopen");
+    assert_eq!(reopened.active_variant.name, "primary");
+    let variants = app.list_variants().expect("variants");
+    assert!(
+        variants
+            .iter()
+            .any(|variant| variant.id == child.id && variant.archived)
+    );
+    assert!(
+        variants
+            .iter()
+            .any(|variant| variant.id == parent.id && variant.archived)
+    );
+    assert!(
+        variants
+            .iter()
+            .any(|variant| variant.id == grandchild.id && !variant.archived)
+    );
+}
+
+#[test]
+fn comparison_keeps_same_names_separate_and_reports_structured_references() {
+    let path = project_path("phase10-comparison-identity");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path,
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let left = entity(main.world_id, "Left", "left", 2);
+    let right = entity(main.world_id, "Right", "right", 3);
+    commit_entity(&mut app, left.clone());
+    commit_entity(&mut app, right.clone());
+    let fork = app.get_current_world().expect("session").expect("open");
+    let branch = app
+        .create_variant("alternate", fork.current_revision)
+        .expect("branch");
+
+    let source_twin = entity(main.world_id, "Twin", "twin", 4);
+    commit_entity(&mut app, source_twin.clone());
+    let relation = Relation::new(
+        main.world_id,
+        left.id(),
+        right.id(),
+        "connects",
+        RelationDirection::Directed,
+        None,
+        None,
+        Certainty::Certain,
+        None,
+        "{}",
+    )
+    .expect("relation");
+    commit_relation(&mut app, relation.clone());
+    app.switch_variant(branch.id).expect("switch destination");
+    let destination_twin = entity(main.world_id, "Twin", "twin", 5);
+    commit_entity(&mut app, destination_twin.clone());
+
+    let comparison = app
+        .compare_scopes(
+            ReadScope::head(fork.active_variant.id),
+            ReadScope::head(branch.id),
+        )
+        .expect("compare identities");
+    assert!(comparison.differences.iter().any(|difference| {
+        difference.object_ref == ObjectRef::Entity(source_twin.id())
+            && difference.kind == VariantDiffKind::Deleted
+    }));
+    assert!(comparison.differences.iter().any(|difference| {
+        difference.object_ref == ObjectRef::Entity(destination_twin.id())
+            && difference.kind == VariantDiffKind::Created
+    }));
+    let relation_diff = comparison
+        .differences
+        .iter()
+        .find(|difference| difference.object_ref == ObjectRef::Relation(relation.id()))
+        .expect("relation difference");
+    assert_eq!(relation_diff.kind, VariantDiffKind::Deleted);
+    let mut expected_references = vec![ObjectRef::Entity(left.id()), ObjectRef::Entity(right.id())];
+    expected_references.sort();
+    assert_eq!(relation_diff.affected_references, expected_references);
+    let provenance = relation_diff
+        .left_source
+        .as_ref()
+        .expect("relation provenance");
+    assert_eq!(provenance.retcon, RetconKind::Additive);
+    assert_eq!(provenance.audit_source, "manual_review");
+}
+
+#[test]
+fn historical_scope_unifies_uri_search_context_timeline_and_vfs() {
+    let path = project_path("phase10-historical-reads");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path,
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let mara = entity(main.world_id, "Mara Old", "mara-old", 2);
+    commit_entity(&mut app, mara.clone());
+    let old_event = participant_event(
+        main.world_id,
+        mara.id(),
+        "arrival",
+        "Old arrival",
+        5,
+        "actor",
+        3,
+    );
+    commit_event(&mut app, old_event.clone());
+    let historical = app.get_current_world().expect("session").expect("open");
+    update_entity(&mut app, &mara, "Mara Future", "mara-future", 4);
+    commit_event(
+        &mut app,
+        participant_event(
+            main.world_id,
+            mara.id(),
+            "departure",
+            "Future departure",
+            20,
+            "actor",
+            5,
+        ),
+    );
+    let current_head = app
+        .get_current_world()
+        .expect("session")
+        .expect("open")
+        .current_revision;
+    app.set_read_scope(ReadScope::historical(
+        historical.active_variant.id,
+        historical.current_revision,
+    ))
+    .expect("observe history");
+
+    let ResolvedObject::Entity(opened) = app
+        .open_uri(&ObjectRef::Entity(mara.id()).to_string())
+        .expect("open historical entity")
+        .object
+    else {
+        panic!("expected entity");
+    };
+    assert_eq!(opened.name(), "Mara Old");
+    let search = app
+        .search_world(&SearchWorldRequest::new(StructuredSearchQuery {
+            text: Some("Mara Old".to_owned()),
+            limit: 10,
+            ..Default::default()
+        }))
+        .expect("historical search");
+    assert!(
+        search
+            .hits
+            .iter()
+            .any(|hit| hit.object_ref == ObjectRef::Entity(mara.id()))
+    );
+    let mut context_request = ContextBundleRequest::new(ContextIntent::ImpactAnalysis);
+    context_request.anchors = vec![ObjectRef::Entity(mara.id())];
+    let context = app
+        .get_related_context(&RelatedContextRequest::new(context_request))
+        .expect("historical context");
+    assert!(
+        context
+            .canon
+            .iter()
+            .any(|entry| entry.result.snippet.contains("Mara Old"))
+    );
+    let timeline = app.list_timeline_events().expect("historical timeline");
+    assert!(
+        timeline
+            .known
+            .iter()
+            .any(|event| event.summary == "Old arrival")
+    );
+    assert!(
+        timeline
+            .known
+            .iter()
+            .all(|event| event.summary != "Future departure")
+    );
+    let vfs = format!("{:?}", app.read_logical_vfs().expect("historical VFS"));
+    assert!(vfs.contains("Mara Old"));
+    assert!(!vfs.contains("Mara Future"));
+    assert_eq!(
+        app.get_current_world()
+            .expect("session")
+            .expect("open")
+            .current_revision,
+        current_head,
+        "observing history cannot move the materialized head"
+    );
+}
+
+#[test]
+fn world_metadata_is_mergeable_without_treating_revision_ids_as_canon_changes() {
+    let path = project_path("phase10-world-merge");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path,
+            name: "Arcadia".to_owned(),
+            premise_md: "Original".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let branch = app
+        .create_variant("alternate", main.current_revision)
+        .expect("branch");
+    update_world_premise(&mut app, "Source premise");
+    app.switch_variant(branch.id).expect("switch destination");
+
+    let merge = app
+        .prepare_variant_merge(ReadScope::head(main.active_variant.id))
+        .expect("prepare world merge");
+    assert_eq!(merge.automatic_operation_ids.len(), 1);
+    assert!(merge.decision_operation_ids.is_empty());
+    app.confirm_stored_manual_review(&merge.review.review_key)
+        .expect("commit world merge");
+    assert_eq!(
+        app.get_current_world()
+            .expect("session")
+            .expect("open")
+            .world
+            .premise_md(),
+        "Source premise"
+    );
+}
+
+#[test]
+fn merge_decision_groups_operations_that_depend_on_the_conflicted_object() {
+    let path = project_path("phase10-dependent-merge");
+    let mut app = NirmataApp::default();
+    let main = app
+        .create_world(CreateWorldInput {
+            path,
+            name: "Arcadia".to_owned(),
+            premise_md: "".to_owned(),
+            epoch_label: "Dawn".to_owned(),
+        })
+        .expect("create world");
+    let anchor = entity(main.world_id, "Anchor", "anchor", 2);
+    commit_entity(&mut app, anchor.clone());
+    let fork = app.get_current_world().expect("session").expect("open");
+    let branch = app
+        .create_variant("alternate", fork.current_revision)
+        .expect("branch");
+    let source_dependency = entity(main.world_id, "Source dependency", "dependency", 3);
+    commit_entity(&mut app, source_dependency.clone());
+    let relation = Relation::new(
+        main.world_id,
+        anchor.id(),
+        source_dependency.id(),
+        "depends_on",
+        RelationDirection::Directed,
+        None,
+        None,
+        Certainty::Certain,
+        None,
+        "{}",
+    )
+    .expect("relation");
+    commit_relation(&mut app, relation.clone());
+    app.switch_variant(branch.id).expect("switch destination");
+    let destination_dependency = Entity::restore(
+        source_dependency.id(),
+        source_dependency.world_id(),
+        source_dependency.kind(),
+        "Destination dependency",
+        "dependency",
+        "",
+        "",
+        "{}",
+        vec![],
+        1,
+        source_dependency.created_at_ms(),
+        4,
+    )
+    .expect("destination dependency");
+    commit_entity(&mut app, destination_dependency);
+
+    let merge = app
+        .prepare_variant_merge(ReadScope::head(fork.active_variant.id))
+        .expect("prepare dependent merge");
+    assert!(merge.automatic_operation_ids.is_empty());
+    assert_eq!(merge.decision_operation_ids.len(), 2);
+    let decision = merge
+        .review
+        .operations
+        .iter()
+        .find(|operation| {
+            operation.target_uri == ObjectRef::Entity(source_dependency.id()).to_string()
+        })
+        .and_then(|operation| operation.decision_points.first())
+        .expect("grouped decision");
+    let updated = app
+        .apply_stored_manual_review_action(
+            &merge.review.review_key,
+            ManualReviewActionRequest::ResolveDecision {
+                decision_point_id: decision.decision_point_id.clone(),
+                alternative: "keep_destination".to_owned(),
+            },
+        )
+        .expect("keep destination dependency");
+    assert!(
+        updated
+            .operations
+            .iter()
+            .all(|operation| !operation.selected)
+    );
+    assert!(
+        updated
+            .effective_report
+            .errors
+            .iter()
+            .all(|issue| { issue.code != "change_set.dependency_missing" })
+    );
 }

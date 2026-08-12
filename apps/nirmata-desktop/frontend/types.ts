@@ -40,8 +40,18 @@ export type VariantDiff = {
   after: unknown | null;
   leftScope: ReadScope;
   rightScope: ReadScope;
-  leftSource: string | null;
-  rightSource: string | null;
+  leftSource: VariantDiffSource | null;
+  rightSource: VariantDiffSource | null;
+  affectedReferences: ObjectRef[];
+};
+
+export type VariantDiffSource = {
+  revisionId: string;
+  changeSetId: string;
+  operationId: string;
+  retcon: "additive" | "reinterpretive" | "replacement";
+  auditSource: string;
+  scope: ReadScope;
 };
 
 export type VariantComparison = {
@@ -499,7 +509,11 @@ export type TauriApi = {
     invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   };
   dialog: {
-    open(options: { multiple: false; directory: false; filters: DialogFilter[] }): Promise<string | null>;
+    open(options: {
+      multiple: false;
+      directory: boolean;
+      filters?: DialogFilter[];
+    }): Promise<string | null>;
     save(options: { defaultPath: string; filters: DialogFilter[] }): Promise<string | null>;
   };
   event: {
@@ -513,6 +527,26 @@ export type ProviderCredentialStatus = {
   persistence: "none" | "system_secure_store" | "session";
   secureStoreAvailable: boolean;
   limitation: string | null;
+};
+
+export type ExportSnapshotResult = {
+  path: string;
+  worldId: string;
+  baseRevision: string;
+  logicalHash: string;
+  objectCount: number;
+  variantId: string;
+  variant: string;
+};
+
+export type ImportSnapshotResult = {
+  path: string;
+  logicalHash: string;
+  objectCount: number;
+  createdCount: number;
+  updatedCount: number;
+  deletedCount: number;
+  review: ManualReviewSnapshot;
 };
 
 export type AiQueryItem = {
@@ -617,6 +651,7 @@ export type ImportChunkSnapshot = {
 export type ImportBatchSnapshot = {
   id: string;
   worldId: string;
+  variantId: string;
   targetRevision: string;
   status: string;
   sources: Array<{

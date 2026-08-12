@@ -65,11 +65,15 @@ test("foundation workflows are wired to specific Tauri commands", () => {
     "list_revision_history",
     "list_variants",
     "create_variant",
+    "rename_variant",
     "switch_variant",
+    "archive_variant",
     "set_read_scope",
     "view_active_head",
     "compare_variant_scopes",
     "prepare_variant_merge",
+    "export_vfs_snapshot",
+    "import_vfs_snapshot",
     "undo_revision",
   ];
   for (const command of commands) {
@@ -83,6 +87,9 @@ test("variant UI separates viewed scope from the active write head", () => {
   assert.match(frontendSource, /Solo lectura:/u);
   assert.match(frontendSource, /return to the active variant head|Vuelve a la cabeza activa/u);
   assert.match(frontendSource, /decisionOperationIds/u);
+  assert.match(frontendSource, /descendants or import references/u);
+  assert.match(frontendSource, /affectedReferences/u);
+  assert.match(frontendSource, /auditSource/u);
   assert.match(tauriSource, /AppError::ReadOnlyScope => "read_only_scope"/u);
 });
 

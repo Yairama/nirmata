@@ -28,7 +28,9 @@ pub use search::{
     StructuredSearchHit, StructuredSearchKind, StructuredSearchQuery, StructuredSearchStage,
     StructuredSearchTemporal,
 };
-pub use variant::{ReadScope, Variant, VariantComparison, VariantDiff, VariantDiffKind};
+pub use variant::{
+    ReadScope, Variant, VariantComparison, VariantDiff, VariantDiffKind, VariantDiffSource,
+};
 pub use world_store::{CanonAggregate, CanonSnapshot, StoreError, WorldStore};
 
 pub(crate) use world_store::{

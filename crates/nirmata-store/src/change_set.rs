@@ -781,14 +781,7 @@ impl WorldStore {
         &self,
         id: ChangeSetId,
     ) -> Result<Option<CommittedChangeSetRecord>, StoreError> {
-        let row = load_change_set_row(
-            &self.connection,
-            &self.path,
-            id,
-            StoredChangeSetKind::Committed,
-        )?;
-        row.map(|row| restore_committed_record(&self.connection, &self.path, row))
-            .transpose()
+        load_committed_change_set_from_connection(&self.connection, &self.path, id)
     }
 
     pub fn get_revision(&self, id: RevisionId) -> Result<Option<StoredRevision>, StoreError> {
@@ -1064,6 +1057,16 @@ impl WorldStore {
             revisions,
         })
     }
+}
+
+pub(crate) fn load_committed_change_set_from_connection(
+    connection: &Connection,
+    path: &Path,
+    id: ChangeSetId,
+) -> Result<Option<CommittedChangeSetRecord>, StoreError> {
+    let row = load_change_set_row(connection, path, id, StoredChangeSetKind::Committed)?;
+    row.map(|row| restore_committed_record(connection, path, row))
+        .transpose()
 }
 
 mod storage;

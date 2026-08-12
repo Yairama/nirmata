@@ -3,7 +3,7 @@ use crate::{
     app::{StoredManualReview, ensure_active_write_scope},
 };
 use nirmata_core::{
-    ChangeOperationId, DecisionPointId, RevisionId,
+    ChangeOperationId, DecisionPointId, RevisionId, World,
     change_set::{ChangeOperation, ChangeSetDraft, DecisionPoint, RetconKind},
     claim::Claim,
     document::{DocumentAggregate, ObjectRef},
@@ -36,6 +36,7 @@ pub struct MergeReviewResult {
 
 #[derive(Clone, Debug, PartialEq)]
 enum MergeValue {
+    World(MergeWorld),
     Entity(Entity),
     Relation(Relation),
     Event(EventAggregate),
@@ -43,6 +44,19 @@ enum MergeValue {
     Rule(Rule),
     Goal(Goal),
     Document(DocumentAggregate),
+}
+
+#[derive(Clone, Debug)]
+struct MergeWorld(World);
+
+impl PartialEq for MergeWorld {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id() == other.0.id()
+            && self.0.name() == other.0.name()
+            && self.0.premise_md() == other.0.premise_md()
+            && self.0.epoch_label() == other.0.epoch_label()
+            && self.0.created_at_ms() == other.0.created_at_ms()
+    }
 }
 
 impl NirmataApp {
@@ -107,7 +121,7 @@ impl NirmataApp {
                 continue;
             }
             let overlap = destination_value != base_value;
-            let operation = merge_operation(object_ref, source_value, destination_value)?;
+            let operation = merge_operation(object_ref, source_value, destination_value, overlap)?;
             let operation_id = operation.operation_id();
             let missing_dependency = source_value.is_some_and(|value| {
                 dependencies(value).into_iter().any(|dependency| {
@@ -159,16 +173,60 @@ impl NirmataApp {
             )
             .into());
         }
+        decisions = expand_dependent_decisions(decisions, &operations)?;
         let sources = destination_sources(&operations, &destination);
+        let objective = format!("Merge variant revision {source_revision}");
+        let assumptions = vec![
+            format!("merge source revision: {source_revision}"),
+            format!("common ancestor revision: {common_ancestor}"),
+        ];
+        let provisional = ChangeSetDraft::new(
+            active.session.world_id,
+            destination_revision,
+            objective.clone(),
+            sources.clone(),
+            assumptions.clone(),
+            operations.clone(),
+            decisions.clone(),
+        )?;
+        let report = active.store.validate_change_set_draft(&provisional)?;
+        let mut manual_operation_ids = decisions
+            .iter()
+            .flat_map(|decision| decision.operation_ids().iter().copied())
+            .collect::<BTreeSet<_>>();
+        for operation in &operations {
+            if manual_operation_ids.contains(&operation.operation_id()) {
+                continue;
+            }
+            let Some(reason) = temporal_merge_conflict_reason(&report, operation.primary_ref())
+            else {
+                continue;
+            };
+            decisions.push(merge_decision(
+                operation.operation_id(),
+                operation.primary_ref(),
+                source_revision,
+                &reason,
+                false,
+            )?);
+            manual_operation_ids.insert(operation.operation_id());
+        }
+        automatic_operation_ids = operations
+            .iter()
+            .filter(|operation| !manual_operation_ids.contains(&operation.operation_id()))
+            .map(|operation| operation.operation_id().to_string())
+            .collect();
+        decision_operation_ids = operations
+            .iter()
+            .filter(|operation| manual_operation_ids.contains(&operation.operation_id()))
+            .map(|operation| operation.operation_id().to_string())
+            .collect();
         let draft = ChangeSetDraft::new(
             active.session.world_id,
             destination_revision,
-            format!("Merge variant revision {source_revision}"),
+            objective,
             sources,
-            vec![
-                format!("merge source revision: {source_revision}"),
-                format!("common ancestor revision: {common_ancestor}"),
-            ],
+            assumptions,
             operations,
             decisions,
         )?;
@@ -254,8 +312,98 @@ fn merge_decision(
     )?)
 }
 
+fn expand_dependent_decisions(
+    decisions: Vec<DecisionPoint>,
+    operations: &[ChangeOperation],
+) -> Result<Vec<DecisionPoint>, AppError> {
+    decisions
+        .into_iter()
+        .map(|decision| {
+            let mut operation_ids = decision
+                .operation_ids()
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>();
+            let mut decided_refs = operations
+                .iter()
+                .filter(|operation| operation_ids.contains(&operation.operation_id()))
+                .map(ChangeOperation::primary_ref)
+                .collect::<BTreeSet<_>>();
+            loop {
+                let mut changed = false;
+                for operation in operations {
+                    if operation_ids.contains(&operation.operation_id()) {
+                        continue;
+                    }
+                    if operation
+                        .affected_ids()
+                        .iter()
+                        .any(|object_ref| decided_refs.contains(object_ref))
+                    {
+                        operation_ids.insert(operation.operation_id());
+                        decided_refs.insert(operation.primary_ref());
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            Ok(DecisionPoint::restore(
+                decision.decision_point_id(),
+                operation_ids.into_iter().collect(),
+                decision.prompt().to_owned(),
+                decision.alternatives().to_vec(),
+                decision.replacement_target(),
+                decision.reason().map(str::to_owned),
+                decision.resolved_alternative().map(str::to_owned),
+            )?)
+        })
+        .collect()
+}
+
+fn temporal_merge_conflict_reason(
+    report: &nirmata_core::validation::ValidationReport,
+    primary_ref: ObjectRef,
+) -> Option<String> {
+    let ObjectRef::Event(primary_id) = primary_ref else {
+        return None;
+    };
+    let primary_id = primary_id.to_string();
+    report.conflicts.iter().find_map(|issue| {
+        if !matches!(
+            issue.code.as_str(),
+            "causality.cause_after_effect"
+                | "lifecycle.participation_before_birth"
+                | "lifecycle.participation_after_death"
+        ) {
+            return None;
+        }
+        let events = issue
+            .objects
+            .iter()
+            .filter(|object| object.kind == "event")
+            .map(|object| object.id.as_str())
+            .collect::<Vec<_>>();
+        if !events.contains(&primary_id.as_str()) {
+            return None;
+        }
+        let related = events
+            .into_iter()
+            .find(|event_id| *event_id != primary_id)?;
+        Some(format!(
+            "deterministic temporal conflict {} with nirmata://event/{related}",
+            issue.code
+        ))
+    })
+}
+
 fn merge_values(snapshot: &CanonSnapshot) -> BTreeMap<ObjectRef, MergeValue> {
     let mut values = BTreeMap::new();
+    values.insert(
+        ObjectRef::World(snapshot.world().id()),
+        MergeValue::World(MergeWorld(snapshot.world().clone())),
+    );
     values.extend(
         snapshot
             .entities()
@@ -310,6 +458,7 @@ fn merge_operation(
     object_ref: ObjectRef,
     source: Option<&MergeValue>,
     destination: Option<&MergeValue>,
+    overlap: bool,
 ) -> Result<ChangeOperation, AppError> {
     let operation_id = ChangeOperationId::new();
     let mut affected_ids = vec![object_ref];
@@ -325,7 +474,11 @@ fn merge_operation(
                     operation_id,
                     affected_ids,
                     expected_version: 0,
-                    retcon: RetconKind::Additive,
+                    retcon: if overlap {
+                        RetconKind::Replacement
+                    } else {
+                        RetconKind::Additive
+                    },
                     after: normalize(after, 1, $version)?,
                 },
                 (Some(MergeValue::$variant(after)), Some(MergeValue::$variant(before))) => {
@@ -333,7 +486,11 @@ fn merge_operation(
                         operation_id,
                         affected_ids,
                         expected_version: $version(before),
-                        retcon: RetconKind::Additive,
+                        retcon: if overlap {
+                            RetconKind::Replacement
+                        } else {
+                            RetconKind::Additive
+                        },
                         before: before.clone(),
                         after: normalize(after, $version(before) + 1, $version)?,
                     }
@@ -355,6 +512,36 @@ fn merge_operation(
         };
     }
     Ok(match object_ref {
+        ObjectRef::World(_) => match (source, destination) {
+            (Some(MergeValue::World(after)), Some(MergeValue::World(before))) => {
+                ChangeOperation::UpdateWorld {
+                    operation_id,
+                    affected_ids,
+                    expected_version: 0,
+                    retcon: if overlap {
+                        RetconKind::Replacement
+                    } else {
+                        RetconKind::Additive
+                    },
+                    before: before.0.clone(),
+                    after: World::restore(
+                        before.0.id(),
+                        after.0.name(),
+                        after.0.premise_md(),
+                        after.0.epoch_label(),
+                        before.0.current_revision(),
+                        before.0.created_at_ms(),
+                        after.0.updated_at_ms(),
+                    )?,
+                }
+            }
+            _ => {
+                return Err(nirmata_store::StoreError::InvalidChangeSet(
+                    "world metadata can only be updated by a limited merge".to_owned(),
+                )
+                .into());
+            }
+        },
         ObjectRef::Entity(_) => operation!(
             CreateEntity,
             UpdateEntity,
@@ -391,12 +578,6 @@ fn merge_operation(
             Document,
             |v: &DocumentAggregate| v.object().version()
         ),
-        ObjectRef::World(_) => {
-            return Err(nirmata_store::StoreError::InvalidChangeSet(
-                "world metadata merge is not supported by the limited merge".to_owned(),
-            )
-            .into());
-        }
     })
 }
 
@@ -419,7 +600,7 @@ where
 
 fn dependencies(value: &MergeValue) -> Vec<ObjectRef> {
     match value {
-        MergeValue::Entity(_) | MergeValue::Rule(_) => vec![],
+        MergeValue::World(_) | MergeValue::Entity(_) | MergeValue::Rule(_) => vec![],
         MergeValue::Relation(value) => vec![
             ObjectRef::Entity(value.source_entity_id()),
             ObjectRef::Entity(value.target_entity_id()),

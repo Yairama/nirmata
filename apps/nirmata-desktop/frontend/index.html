@@ -98,6 +98,13 @@
             </label>
             <button type="submit">Crear</button>
           </form>
+          <form id="rename-variant-form" class="compact-form">
+            <label>
+              Renombrar variante activa
+              <input id="rename-variant-name" maxlength="80" placeholder="Nuevo nombre" required />
+            </label>
+            <button type="submit" class="secondary">Renombrar</button>
+          </form>
           <label>
             Comparar / fusionar desde
             <select id="compare-variant-select"></select>
@@ -105,6 +112,9 @@
           <div class="pending-actions">
             <button id="compare-variants" type="button" class="secondary">Comparar</button>
             <button id="merge-variant" type="button">Preparar merge</button>
+            <button id="archive-variant" type="button" class="danger">Archivar seleccionada</button>
+            <button id="export-vfs-snapshot" type="button" class="secondary">Exportar snapshot</button>
+            <button id="import-vfs-snapshot" type="button" class="secondary">Importar snapshot</button>
           </div>
           <div id="variant-diff" class="variant-diff" aria-live="polite"></div>
         </section>
