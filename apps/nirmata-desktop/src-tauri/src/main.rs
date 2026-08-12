@@ -340,6 +340,7 @@ impl From<AppError> for CommandError {
             AppError::InvalidDeepReview(_) => "invalid_deep_review",
             AppError::InvalidSimulationScenario(_) => "invalid_simulation_scenario",
             AppError::SimulationScenarioNotFound(_) => "simulation_scenario_not_found",
+            AppError::InvalidNarrativeQuery(_) => "invalid_narrative_query",
             AppError::InvalidSimulationPromotion(_) => "invalid_simulation_promotion",
             AppError::SimulationScenarioStale { .. } => "simulation_scenario_stale",
             AppError::AiCritiqueIssueNotFound { .. } => "ai_critique_issue_not_found",

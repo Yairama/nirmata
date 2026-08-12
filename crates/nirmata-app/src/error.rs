@@ -87,6 +87,7 @@ pub enum AppError {
     InvalidSimulationScenario(String),
     SimulationScenarioNotFound(crate::SimulationScenarioId),
     InvalidSimulationPromotion(String),
+    InvalidNarrativeQuery(String),
     SimulationScenarioStale {
         scenario_id: crate::SimulationScenarioId,
         scenario_variant: VariantId,
@@ -291,6 +292,9 @@ impl fmt::Display for AppError {
             }
             Self::InvalidSimulationPromotion(message) => {
                 write!(formatter, "invalid simulation promotion: {message}")
+            }
+            Self::InvalidNarrativeQuery(message) => {
+                write!(formatter, "invalid narrative query: {message}")
             }
             Self::SimulationScenarioStale {
                 scenario_id,

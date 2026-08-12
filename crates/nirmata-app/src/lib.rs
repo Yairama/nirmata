@@ -6,6 +6,7 @@ mod error;
 mod lore_import;
 mod manual_forms;
 mod manual_review;
+mod narrative;
 mod search_use_cases;
 mod simulation;
 mod snapshot_export;
@@ -45,6 +46,11 @@ pub use manual_review::{
     ManualReviewFreshnessStatus, ManualReviewInput, ManualReviewLineItem,
     ManualReviewObjectSnapshot, ManualReviewOperation, ManualReviewSession, ManualReviewSnapshot,
     ManualReviewWaiverSnapshot,
+};
+pub use narrative::{
+    MAX_CAUSAL_DEPTH, MAX_CAUSAL_RESULTS, NarrativeCausalLink, NarrativeCausalThread,
+    NarrativeCausalThreads, NarrativeDiscourseEvent, NarrativeDiscourseSequence, NarrativeLooseEnd,
+    NarrativeLooseEnds, NarrativeObjectReference, NarrativeTimeline, NarrativeTimelineEvent,
 };
 pub use nirmata_ai::contracts::SpecialistRole;
 pub use nirmata_ai::contracts::{ImportCandidate, ImportCitation, ImportExtraction};

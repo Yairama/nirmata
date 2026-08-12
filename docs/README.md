@@ -48,6 +48,7 @@ Cada archivo cubre una sola responsabilidad y puede referenciarse por su ruta.
 - [`validation/variants-history.md`](validation/variants-history.md): migracion, aislamiento, historia, comparacion y merge limitado.
 - [`validation/calendar-history.md`](validation/calendar-history.md): conversion por ticks, ChangeSet, variantes, snapshots e historia del calendario fijo.
 - [`validation/simulation-engine.md`](validation/simulation-engine.md): escenarios externos, validación, determinismo y trazas de recursos.
+- [`validation/narrative-derivations.md`](validation/narrative-derivations.md): story time, discurso, causalidad y cabos heurísticos citados.
 
 ## Convencion
 

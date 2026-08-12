@@ -16,7 +16,7 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
 
 ## Estado actual
 
-- NIR-001–NIR-082 están completadas (82 de 89; 92,1 % del backlog general y
+- NIR-001–NIR-083 están completadas (83 de 89; 93,3 % del backlog general y
   100 % del fundamento funcional).
 - El workspace Rust incluye `nirmata-core`, `nirmata-store`, `nirmata-ai`,
   `nirmata-app` y la aplicación Tauri.
@@ -26,8 +26,8 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
   perspectivas, FTS5 y WordNet local con ranking y fuentes navegables.
 - La frontera de IA incluye credenciales seguras, streaming, contratos
   estrictos, modo `Consultar` y generación validada de propuestas.
-- La siguiente tarea funcional es NIR-083, derivar timelines, hilos causales y
-  cabos sueltos con evidencia desde el canon observado.
+- La siguiente tarea funcional es NIR-084, generar documentos internos limitados
+  por perspectiva y fuentes como drafts revisables.
 - El esquema 9 protege por constraints ejecutables la pertenencia de cabezas,
   revisiones, ChangeSets e import batches. Las consultas IA conservan el scope
   observado y las propuestas no se ejecutan fuera de la cabeza activa.
@@ -37,7 +37,9 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
   ejecutan producción, consumo y transferencias enteras sin IA ni azar.
 - La simulación se inspecciona y compara en GUI como estado fuera del canon; solo
   selecciones Event/Claim explícitas entran al panel estándar de revisión.
-- La regresión actual ejecuta 244 pruebas offline: 244 pasaron y 1 smoke test de
+- Las derivaciones narrativas separan story time/discourse order, recorren
+  causalidad acotada y etiquetan cabos con heurísticas y evidencia navegable.
+- La regresión actual ejecuta 245 pruebas offline: 245 pasaron y 1 smoke test de
   red quedó omitido. Frontend build, 7 checks de seguridad y desktop build
   también pasaron.
 - NIR-055 integró WordNet en la ruta activa después de las etapas autoritativas
@@ -530,7 +532,7 @@ una novela completa.
 
 | Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-083 | Pendiente | NIR-012–NIR-014, NIR-055, NIR-075 | Derivar timelines, hilos causales y cabos sueltos. | Construir consultas de solo lectura que agrupen eventos por tiempo, sigan enlaces causales con profundidad/límite y detecten heurísticas explícitas: goals activos sin resolución, eventos ongoing, claims disputados sin cierre, causas sin consecuencia registrada y referencias narrativas pendientes. Conservar variante, revisión y citas; no persistir inferencias como canon. | Fixtures producen hilos reproducibles, separan orden de discurso/story time y etiquetan cada cabo con regla heurística y evidencia, sin afirmar que la ausencia sea falsedad. | [Visión](docs/product/vision.md), [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md) |
+| NIR-083 | Completado | NIR-012–NIR-014, NIR-055, NIR-075 | Derivar timelines, hilos causales y cabos sueltos. | Construir consultas de solo lectura que agrupen eventos por tiempo, sigan enlaces causales con profundidad/límite y detecten heurísticas explícitas: goals activos sin resolución, eventos ongoing, claims disputados sin cierre, causas sin consecuencia registrada y referencias narrativas pendientes. Conservar variante, revisión y citas; no persistir inferencias como canon. | Fixtures producen hilos reproducibles, separan orden de discurso/story time y etiquetan cada cabo con regla heurística y evidencia, sin afirmar que la ausencia sea falsedad. | [Visión](docs/product/vision.md), [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md) |
 | NIR-084 | Pendiente | NIR-043, NIR-055, NIR-083 | Generar documentos internos dependientes de perspectiva. | Permitir crear crónica, carta, informe, mito o historia corta desde objetos/hilos seleccionados. Recuperar solo conocimiento accesible al autor/perspectiva y tick elegido; distinguir hechos, rumores e inferencias en las fuentes. La salida es un `Document` draft con `ContentReference`s, nunca una novela ni canon automático. | Un narrador sin acceso a un secreto no lo presenta como conocido, todas las menciones importantes tienen referencias y cancelar o fallar parsing no crea documento. | [Interacción](docs/architecture/interaction-model.md), [Conocimiento incierto](docs/research/critical-fronts/uncertain-knowledge.md) |
 | NIR-085 | Pendiente | NIR-044–NIR-048, NIR-083, NIR-084 | Proponer continuidad narrativa como cambios revisables. | Desde un hilo o cabo suelto ofrecer preguntas, alternativas y consecuencias candidatas; si el usuario elige desarrollar una, producir `IntentBrief` y `ChangeSetDraft` para eventos, goals, claims o documentos. Mantener alternativas como DecisionPoints y usar revisión profunda solo por petición explícita. | Ninguna sugerencia modifica canon, las alternativas incompatibles permanecen visibles y una propuesta aceptada atraviesa validadores, crítico, revisión y commit normal con fuentes al hilo original. | [Cocreación](docs/research/critical-fronts/human-ai-cocreation.md), [Grafo de agentes](docs/architecture/agent-graph.md) |
 | NIR-086 | Pendiente | NIR-083–NIR-085 | Añadir UI y regresión narrativa. | Crear vistas de timeline derivada, hilo causal y cabos sueltos con filtros por perspectiva/variante, acciones de generar documento o proponer continuidad y panel de fuentes. Probar flashback, rumor, secreto, causalidad parcial, goal resuelto, revisión histórica y salida hostil. | La UI distingue derivación, inferencia, documento y ChangeSet; todas las salidas abren fuentes, respetan perspectiva y no ofrecen una acción de “generar novela”. | [Interacción](docs/architecture/interaction-model.md), [Visión](docs/product/vision.md) |
