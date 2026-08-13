@@ -46,7 +46,7 @@ documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
 - El gate de proveedor cerró sin segunda implementación: Azure Foundry cubre
   query, streaming, propose, critic, especialistas, importación y documentos.
 - La regresión final ejecuta 256 pruebas offline: 256 pasaron y 1 smoke test de
-  red quedó omitido. Frontend build, 7 checks de seguridad y desktop build
+  red quedó omitido. Frontend build, 9 checks de seguridad y desktop build
   también pasaron.
 - NIR-055 integró WordNet en la ruta activa después de las etapas autoritativas
   y FTS5. Sobre `nir-053-v1` mantuvo 25 % de recall de paráfrasis (3/12), 100 %
