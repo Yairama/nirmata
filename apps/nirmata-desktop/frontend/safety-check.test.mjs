@@ -6,14 +6,67 @@ const frontendDirectory = new URL("./", import.meta.url);
 const frontendSource = (
   await Promise.all(
     (await readdir(frontendDirectory))
-      .filter((name) => name.endsWith(".ts"))
+      .filter((name) => name.endsWith(".ts") || name.endsWith(".tsx"))
       .map((name) => readFile(new URL(name, frontendDirectory), "utf8")),
   )
 ).join("\n");
 const tauriSource = await readFile(new URL("../src-tauri/src/main.rs", import.meta.url), "utf8");
 const simulationSource = await readFile(new URL("simulation.ts", frontendDirectory), "utf8");
 const narrativeSource = await readFile(new URL("narrative.ts", frontendDirectory), "utf8");
+const assistantSource = await readFile(new URL("assistant.ts", frontendDirectory), "utf8");
+const variantSource = await readFile(new URL("variant-ui.ts", frontendDirectory), "utf8");
+const workspaceSource = await readFile(new URL("workspace.ts", frontendDirectory), "utf8");
+const pendingSource = await readFile(new URL("render-pending.ts", frontendDirectory), "utf8");
+const editorModelSource = await readFile(new URL("editor-model.ts", frontendDirectory), "utf8");
 const htmlSource = await readFile(new URL("index.html", frontendDirectory), "utf8");
+const cssSource = await readFile(new URL("styles.css", frontendDirectory), "utf8");
+const closedViewSource = await readFile(new URL("closed-view.tsx", frontendDirectory), "utf8");
+const mainSource = await readFile(new URL("main.tsx", frontendDirectory), "utf8");
+
+test("hidden application views stay out of layout and accessibility flow", () => {
+  assert.match(cssSource, /\[hidden\]\s*\{\s*display:\s*none\s*!important;/u);
+  assert.match(htmlSource, /id="world-view" hidden/u);
+});
+
+test("component colors consume semantic tokens instead of literals", () => {
+  const componentCss = cssSource
+    .split(/\r?\n/u)
+    .filter((line) => !line.includes("--n-color-"))
+    .join("\n");
+  assert.doesNotMatch(componentCss, /#[0-9a-f]{3,8}\b|\brgb\(|\bcolor-mix\(/iu);
+  assert.doesNotMatch(cssSource, /var\(--(?:border|surface|accent|mono|danger)\)/u);
+});
+
+test("dirty navigation is guarded before selection or scope changes", () => {
+  assert.match(workspaceSource, /confirmDiscardPending\("editor"\)/u);
+  assert.match(workspaceSource, /export async function selectUriInScope/u);
+  assert.match(assistantSource, /selectUriInScope\(citation\.source\.uri/u);
+  assert.match(narrativeSource, /selectUriInScope\(uri, scope\)/u);
+  assert.match(variantSource, /selectUriInScope\(uri, scope\)/u);
+  assert.doesNotMatch(assistantSource, /invoke<WorldSession>\("set_read_scope"/u);
+  assert.doesNotMatch(narrativeSource, /invoke<WorldSession>\("set_read_scope"/u);
+});
+
+test("ephemeral feature work participates in close and variant guards", () => {
+  assert.match(workspaceSource, /state\.ephemeralWork\.size/u);
+  assert.match(workspaceSource, /trabajo de sesión que se perderá/u);
+  assert.match(simulationSource, /setEphemeralWork/u);
+  assert.match(narrativeSource, /setEphemeralWork/u);
+  assert.match(frontendSource, /"nirmata:discard-ephemeral-work"/u);
+  assert.match(htmlSource, /se borra al cerrar el mundo/u);
+});
+
+test("pending reviews have one edit route and are discarded in their backend owner", () => {
+  assert.match(pendingSource, /"discard_manual_review"/u);
+  assert.match(pendingSource, /"discard_ai_run"/u);
+  assert.match(pendingSource, /"Editar cambio"/u);
+  assert.match(pendingSource, /"Ver objeto actual"/u);
+  assert.match(pendingSource, /"Aplicar al mundo"/u);
+  assert.doesNotMatch(pendingSource, /Abrir formulario|openPendingDraft/u);
+  assert.doesNotMatch(editorModelSource, /restorePendingValues/u);
+  assert.match(workspaceSource, /"begin_manual_review_edit"/u);
+  assert.match(workspaceSource, /"apply_manual_review_edit"/u);
+});
 
 test("hostile Markdown stays in plain text mode", () => {
   assert.match(frontendSource, /setMarkdownText\(worldPremise,/u);
@@ -34,11 +87,68 @@ test("desktop sources avoid default console or stdout logging", () => {
   assert.doesNotMatch(tauriSource, /\b(?:println!|eprintln!|dbg!)\b/u);
 });
 
+test("Tauri IPC uses tree-shakeable package imports without a window global", () => {
+  assert.match(frontendSource, /from "@tauri-apps\/api\/core"/u);
+  assert.match(frontendSource, /from "@tauri-apps\/api\/event"/u);
+  assert.match(frontendSource, /from "@tauri-apps\/plugin-dialog"/u);
+  assert.doesNotMatch(frontendSource, /window\.__TAURI__|TauriApi/u);
+  assert.match(tauriSource, /tauri_plugin_dialog::init\(\)/u);
+});
+
 test("failure states preserve recovery paths", () => {
-  assert.match(frontendSource, /El draft se conservó para corregirlo o reintentarlo\./u);
-  assert.match(frontendSource, /El canon no cambió\. El draft se conservó y puedes reintentar\./u);
+  assert.match(frontendSource, /La propuesta se conservó para corregirla o reintentarlo\./u);
+  assert.match(frontendSource, /El canon no cambió\. La propuesta se conservó y puedes reintentar\./u);
   assert.match(frontendSource, /La ejecución terminó sin modificar el canon\. Puedes reintentar\./u);
-  assert.match(frontendSource, /Revalidar contra la cabeza vigente/u);
+  assert.match(frontendSource, /Actualizar y volver a comprobar/u);
+});
+
+test("creation journey exposes three paths through one project form", () => {
+  assert.match(closedViewSource, /Empezar manualmente/u);
+  assert.match(closedViewSource, /Crear una base del mundo con IA/u);
+  assert.match(closedViewSource, /Estructurar material existente/u);
+  assert.equal((closedViewSource.match(/<form/gu) ?? []).length, 1);
+  assert.equal((frontendSource.match(/"create_world"/gu) ?? []).length, 1);
+  assert.match(frontendSource, /"nirmata:start-proposal"/u);
+  assert.match(frontendSource, /"nirmata:start-lore-import"/u);
+});
+
+test("React owns the closed-project surface without an imperative renderer", () => {
+  assert.match(mainSource, /createRoot\(document\.querySelector\("#closed-root"\)!\)/u);
+  assert.match(mainSource, /<RootErrorBoundary>/u);
+  assert.match(mainSource, /<SessionProvider>/u);
+  assert.doesNotMatch(htmlSource, /id="closed-view"|id="create-form"/u);
+  assert.doesNotMatch(frontendSource, /document\.querySelector<[^>]+>\("#(?:create-form|creation-|name|premise|epoch-label|create-path|open-button)"\)/u);
+  assert.doesNotMatch(frontendSource, /dangerouslySetInnerHTML/u);
+  assert.match(closedViewSource, /if \(session === null\)[\s\S]{0,240}setBusy\(false\)/u);
+});
+
+test("queries and selected objects enter the same explicit proposal workflow", () => {
+  assert.match(assistantSource, /response\.proposalAction\?\.action === "start_proposal"/u);
+  assert.match(assistantSource, /Convertir en propuesta/u);
+  assert.match(assistantSource, /window\.confirm/u);
+  assert.match(frontendSource, /Pedir un cambio sobre la selección/u);
+  assert.equal((assistantSource.match(/"execute_ai_proposal"/gu) ?? []).length, 1);
+});
+
+test("AI busy state is global, cancelable, and blocks world controls", () => {
+  assert.match(tauriSource, /fn get_ai_activity/u);
+  assert.match(tauriSource, /current_ai_activity/u);
+  assert.match(frontendSource, /beginAiActivity/u);
+  assert.match(frontendSource, /endAiActivity/u);
+  assert.match(frontendSource, /"app_busy"/u);
+  assert.match(htmlSource, /id="ai-busy-cancel"/u);
+  assert.match(frontendSource, /control\.disabled = !allowed/u);
+  assert.match(frontendSource, /aiBusyMessage\.textContent !== message/u);
+});
+
+test("provider diagnostics distinguish local configuration from connectivity", () => {
+  assert.match(tauriSource, /credential_missing/u);
+  assert.match(tauriSource, /endpoint_missing/u);
+  assert.match(tauriSource, /model_missing/u);
+  assert.match(tauriSource, /connection_unchecked/u);
+  assert.match(tauriSource, /fn diagnose_ai_provider/u);
+  assert.match(assistantSource, /"provider_transport_error"/u);
+  assert.match(assistantSource, /No se creó ninguna propuesta/u);
 });
 
 test("foundation workflows are wired to specific Tauri commands", () => {
@@ -48,7 +158,9 @@ test("foundation workflows are wired to specific Tauri commands", () => {
     "search_world",
     "open_uri",
     "get_related_context",
-    "get_provider_credential_status",
+    "get_ai_activity",
+    "get_ai_provider_status",
+    "diagnose_ai_provider",
     "execute_ai_query",
     "execute_ai_proposal",
     "prepare_deep_review",
@@ -62,6 +174,7 @@ test("foundation workflows are wired to specific Tauri commands", () => {
     "delete_lore_import",
     "apply_manual_review_action",
     "apply_manual_review_edit",
+    "discard_manual_review",
     "revalidate_manual_review",
     "revalidate_ai_run",
     "confirm_manual_review",
@@ -97,10 +210,12 @@ test("foundation workflows are wired to specific Tauri commands", () => {
   }
 });
 
-test("variant UI separates viewed scope from the active write head", () => {
+test("variant UI separates writing and viewed versions without visible IDs", () => {
   assert.match(frontendSource, /state\.session\?\.read_only/u);
-  assert.match(frontendSource, /Solo lectura:/u);
-  assert.match(frontendSource, /return to the active variant head|Vuelve a la cabeza activa/u);
+  assert.match(variantSource, /Escribiendo en:/u);
+  assert.match(variantSource, /Viendo:/u);
+  assert.match(htmlSource, /Volver a la versión actual/u);
+  assert.doesNotMatch(variantSource, /option\.textContent = `\$\{variant\.name\} · \$\{shortId/u);
   assert.match(frontendSource, /decisionOperationIds/u);
   assert.match(frontendSource, /descendants or import references/u);
   assert.match(frontendSource, /affectedReferences/u);
@@ -114,6 +229,10 @@ test("lore import uses standard AI and explicit review without deep-review coupl
   assert.match(importModule, /"read_manual_review"/u);
   assert.doesNotMatch(importModule, /prepare_deep_review|execute_deep_review/u);
   assert.match(importModule, /original permanecen intactos/u);
+  assert.match(importModule, /"lore-import-progress"/u);
+  assert.match(importModule, /decisionPoints = prepared\.decisionPoints/u);
+  assert.match(importModule, /state\.pendingDrafts\.delete\(batchReviewKey\)/u);
+  assert.match(importModule, /mark_canonical/u);
 });
 
 test("calendar UI delegates conversion to Rust and preserves canonical ticks", () => {
@@ -131,10 +250,10 @@ test("simulation stays one-shot, outside canon, and enters only standard review"
   assert.match(simulationSource, /session!\.world\.current_revision/u);
   assert.match(simulationSource, /session\.read_only/u);
   assert.match(simulationSource, /state\.pendingDrafts\.set\(review\.reviewKey/u);
-  assert.match(simulationSource, /Before:/u);
-  assert.match(simulationSource, /After:/u);
-  assert.match(simulationSource, /Requested:/u);
-  assert.match(simulationSource, /Final stocks:/u);
+  assert.match(simulationSource, /Antes:/u);
+  assert.match(simulationSource, /Después:/u);
+  assert.match(simulationSource, /Solicitado:/u);
+  assert.match(simulationSource, /Existencias finales:/u);
   assert.doesNotMatch(simulationSource, /confirm_manual_review|setInterval|autoplay/u);
   assert.match(tauriSource, /struct CreateSimulationScenarioCommand/u);
   assert.match(tauriSource, /fn parse_simulation_scenario_id/u);

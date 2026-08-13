@@ -124,7 +124,7 @@ export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
         }),
         createField("name", "Nombre", "text", values.name, { required: true }),
         createField("slug", "Slug", "text", values.slug, { required: true }),
-        createField("aliases", "Aliases (uno por línea)", "textarea", values.aliases, { rows: 4 }),
+        createField("aliases", "Nombres alternativos (uno por línea)", "textarea", values.aliases, { rows: 4 }),
         createField("summary", "Resumen", "textarea", values.summary, { rows: 4 }),
         createField("body_md", "Cuerpo Markdown", "textarea", values.body_md, { rows: 7 }),
         createField("attributes_json", "Atributos JSON", "textarea", values.attributes_json, {
@@ -208,12 +208,12 @@ export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
           help: "UUID o nirmata://entity/...",
         }),
         createField("content_md", "Contenido Markdown", "textarea", values.content_md, { rows: 5 }),
-        createField("predicate_key", "Predicate key", "text", values.predicate_key),
+        createField("predicate_key", "Tipo de afirmación", "text", values.predicate_key),
         createField("object_kind", "Tipo de objeto", "select", values.object_kind, {
           options: [
-            { value: "none", label: "None" },
-            { value: "entity", label: "Entity" },
-            { value: "scalar", label: "Scalar" },
+            { value: "none", label: "Sin objeto" },
+            { value: "entity", label: "Otra entidad" },
+            { value: "scalar", label: "Valor textual" },
           ],
         }),
         createField("object_value", "Objeto", "text", values.object_value, {
@@ -227,7 +227,7 @@ export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
           required: true,
           options: enumOptions(["canonical", "attributed", "disputed"]),
         }),
-        createField("holder_entity", "Holder", "text", values.holder_entity, {
+        createField("holder_entity", "Quien sostiene la afirmación", "text", values.holder_entity, {
           help: "UUID o nirmata://entity/...",
         }),
         createField("modality", "Modalidad", "select", values.modality, {
@@ -247,7 +247,7 @@ export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
         createField("source_claim", "Claim fuente", "text", values.source_claim, {
           help: "UUID o nirmata://claim/...",
         }),
-        createField("holder_confidence", "Confianza holder", "number", values.holder_confidence),
+        createField("holder_confidence", "Confianza declarada", "number", values.holder_confidence),
         createField("period_start_tick", "Periodo inicio", "number", values.period_start_tick),
         createField("period_end_tick", "Periodo fin", "number", values.period_end_tick),
       );
@@ -262,7 +262,7 @@ export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
           rows: 4,
           required: true,
         }),
-        createField("scope", "Scope", "text", values.scope, { required: true }),
+        createField("scope", "Alcance", "text", values.scope, { required: true }),
         createField("severity", "Severidad", "select", values.severity, {
           required: true,
           options: enumOptions(["advisory", "hard"]),
@@ -282,7 +282,7 @@ export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
       break;
     case "goal":
       fields.push(
-        createField("holder_entity", "Holder", "text", values.holder_entity, {
+        createField("holder_entity", "Titular de la meta", "text", values.holder_entity, {
           required: true,
           help: "UUID o nirmata://entity/...",
         }),
@@ -337,14 +337,14 @@ export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
     existingUri: null,
     targetUri: null,
     title: `Nuevo ${humanize(kind).toLowerCase()}`,
-    subtitle: `Draft manual · ${humanize(kind)}`,
+    subtitle: `Propuesta manual · ${humanize(kind)}`,
     description: `Completa un formulario mínimo para proponer un nuevo ${humanize(kind).toLowerCase()}.`,
     logicalPath: null,
     fields,
     metadata: state.session ? [{ label: "Mundo", value: state.session.world.name }] : [],
     warnings: [],
     links: [],
-    objective: `Create ${kind}`,
+    objective: `Crear ${humanize(kind).toLowerCase()}`,
     sourceUrisText,
     assumptionsText: "",
   });

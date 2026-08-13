@@ -2,4 +2,6 @@
 /target/
 **/node_modules/
 apps/nirmata-desktop/frontend/dist/
+apps/nirmata-desktop/frontend/test-results/
+apps/nirmata-desktop/frontend/playwright-report/
 apps/nirmata-desktop/src-tauri/gen/

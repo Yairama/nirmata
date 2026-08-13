@@ -58,7 +58,9 @@ pub use nirmata_ai::contracts::SpecialistRole;
 pub use nirmata_ai::contracts::{
     ImportCandidate, ImportCitation, ImportExtraction, InternalDocumentKind,
 };
-pub use nirmata_ai::{AiError, CancellationToken, ProviderCredentialStatus};
+pub use nirmata_ai::{
+    AiError, CancellationToken, CredentialPersistence, CredentialSource, ProviderCredentialStatus,
+};
 pub use nirmata_core::{
     ChangeOperationId, EntityId, EventId, RevisionId, VariantId, document::ObjectRef,
 };

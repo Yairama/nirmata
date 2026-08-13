@@ -3,6 +3,8 @@ import { button, formatEventTime, formatObjectRef, humanize, showError } from ".
 import {
   invoke,
   listen,
+  beginAiActivity,
+  endAiActivity,
   narrativeCancel,
   narrativeCausal,
   narrativeDocumentForm,
@@ -19,6 +21,7 @@ import {
   narrativeStatus,
   narrativeTick,
   narrativeTimeline,
+  setEphemeralWork,
   state,
 } from "./state.js";
 import type {
@@ -34,7 +37,7 @@ import type {
   WorldSession,
   AiRunSnapshot,
 } from "./types.js";
-import { renderWorkspace, selectUri } from "./workspace.js";
+import { selectUriInScope } from "./workspace.js";
 
 type NarrativeSelectionInput =
   | { kind: "loose_end"; code: string; objectUri: string }
@@ -46,6 +49,19 @@ type ProgressEvent = {
 };
 
 let activeRequestId: string | null = null;
+let formDirty = false;
+
+function syncEphemeralState(): void {
+  setEphemeralWork(
+    "narrative",
+    "derivaciones o formulario narrativo",
+    formDirty
+      || state.narrative.timeline !== null
+      || state.narrative.causalThreads !== null
+      || state.narrative.looseEnds !== null
+      || state.narrative.exploration !== null,
+  );
+}
 
 function selectedScope(): ReadScope | null {
   const session = state.session;
@@ -62,17 +78,30 @@ function renderScopeOptions(): void {
   const observed = document.createElement("option");
   observed.value = "observed";
   observed.textContent = session.read_only
-    ? `Observado · solo lectura · ${session.read_scope.revisionId?.slice(0, 8)}`
-    : "Observado · cabeza activa";
+    ? "Versión observada · solo lectura"
+    : "Versión actual";
   const active = document.createElement("option");
   active.value = "active";
-  active.textContent = `Cabeza de ${session.active_variant.name} · ${session.active_variant.headRevisionId.slice(0, 8)}`;
+  active.textContent = `Versión actual de ${session.active_variant.name}`;
   narrativeScope.append(observed, active);
 }
 
 function setRunning(requestId: string | null): void {
+  const previousRequestId = activeRequestId;
   activeRequestId = requestId;
-  syncAvailability();
+  if (requestId) {
+    syncAvailability();
+    beginAiActivity({
+      requestId,
+      source: "narrative",
+      label: "La IA está preparando un resultado narrativo revisable.",
+    });
+  } else if (previousRequestId) {
+    endAiActivity(previousRequestId);
+    syncAvailability();
+  } else {
+    syncAvailability();
+  }
 }
 
 function syncAvailability(): void {
@@ -89,7 +118,7 @@ function syncAvailability(): void {
       "input, textarea, select, button",
     )
     .forEach((control) => {
-      control.disabled = unavailable || Boolean(session?.read_only);
+      control.disabled = unavailable || Boolean(session?.read_only) || !state.aiProviderReady;
     });
   if (session?.read_only) {
     narrativeStatus.textContent = "Solo lectura: derivaciones habilitadas; documento y propuestas bloqueados.";
@@ -108,15 +137,7 @@ function section(title: string): HTMLElement {
 }
 
 async function openScopedUri(uri: string, scope: ReadScope): Promise<void> {
-  const session = state.session;
-  if (!session) return;
-  const currentRevision = session.read_scope.revisionId ?? session.active_variant.headRevisionId;
-  if (session.read_scope.variantId !== scope.variantId || currentRevision !== scope.revisionId) {
-    state.session = await invoke<WorldSession>("set_read_scope", { input: { scope } });
-    renderWorkspace();
-    window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
-  }
-  await selectUri(uri);
+  await selectUriInScope(uri, scope);
 }
 
 function uriButton(uri: string, scope: ReadScope, label = uri): HTMLButtonElement {
@@ -134,10 +155,10 @@ function appendEvidence(parent: HTMLElement, uris: string[], scope: ReadScope): 
 }
 
 function renderTimelineResult(value: NarrativeTimeline): HTMLElement {
-  const card = section("Story time vs discourse order");
+  const card = section("Orden cronológico y orden en que se cuenta");
   const columns = document.createElement("div");
   columns.className = "narrative-columns";
-  const story = section(`Story time · ${value.storyTime.length}`);
+  const story = section(`Orden cronológico · ${value.storyTime.length}`);
   for (const event of value.storyTime) {
     const item = document.createElement("article");
     item.className = "narrative-item";
@@ -157,7 +178,7 @@ function renderTimelineResult(value: NarrativeTimeline): HTMLElement {
     appendEvidence(item, event.evidenceUris, value.scope);
     unknown.append(item);
   }
-  const discourse = section(`Discurso · ${value.discourseOrder.length} fuentes`);
+  const discourse = section(`Orden en que se cuenta · ${value.discourseOrder.length} fuentes`);
   for (const sequence of value.discourseOrder) {
     const item = document.createElement("article");
     item.className = "narrative-item";
@@ -202,7 +223,7 @@ function renderCausalResult(value: NarrativeCausalThreads): HTMLElement {
 }
 
 function renderLooseEndsResult(value: NarrativeLooseEnds): HTMLElement {
-  const card = section(`Loose ends · ${value.findings.length}`);
+  const card = section(`Cabos abiertos · ${value.findings.length}`);
   for (const finding of value.findings) {
     const item = document.createElement("article");
     item.className = "narrative-item";
@@ -251,7 +272,9 @@ function renderExploration(value: NarrativeContinuityExploration): HTMLElement {
     const consequence = document.createElement("p");
     consequence.textContent = alternative.consequence;
     const choose = button("Elegir y preparar propuesta", "secondary");
-    choose.disabled = Boolean(state.session?.read_only) || activeRequestId !== null;
+    choose.disabled = Boolean(state.session?.read_only)
+      || activeRequestId !== null
+      || !state.aiProviderReady;
     choose.addEventListener("click", () => void proposeContinuity(value, alternative.id));
     item.append(title, consequence, choose);
     card.append(item);
@@ -273,6 +296,7 @@ function renderResults(): void {
   } else {
     narrativeResults.replaceChildren(...values);
   }
+  syncEphemeralState();
 }
 
 function integer(input: HTMLInputElement, label: string, min: number, max: number): number {
@@ -295,7 +319,7 @@ async function deriveTimeline(): Promise<void> {
     state.narrative.timeline = await invoke<NarrativeTimeline>("derive_narrative_timeline", {
       input: { scope },
     });
-    narrativeStatus.textContent = "Story time y discurso derivados sin escritura.";
+    narrativeStatus.textContent = "Orden cronológico y relato derivados sin escritura.";
     renderResults();
   } catch (value) { showError(value); }
 }
@@ -324,7 +348,7 @@ async function deriveLooseEnds(): Promise<void> {
     state.narrative.looseEnds = await invoke<NarrativeLooseEnds>("derive_loose_ends", {
       input: { scope },
     });
-    narrativeStatus.textContent = "Loose ends heurísticos derivados; los codes y fuentes son visibles.";
+    narrativeStatus.textContent = "Cabos abiertos derivados con su regla heurística y fuentes visibles.";
     renderResults();
   } catch (value) { showError(value); }
 }
@@ -345,7 +369,7 @@ async function proposeContinuity(
   alternativeId: string,
 ): Promise<void> {
   if (state.session?.read_only) {
-    showError("Vuelve a la cabeza activa antes de preparar una propuesta de continuidad.");
+    showError("Vuelve a la versión actual antes de preparar una propuesta de continuidad.");
     return;
   }
   const requestId = crypto.randomUUID();
@@ -361,7 +385,7 @@ async function proposeContinuity(
       },
     });
     await attachAiReview(proposal.run, "Continuidad narrativa");
-    narrativeStatus.textContent = "AiRun y revisión estándar añadidos a cambios pendientes.";
+    narrativeStatus.textContent = "Propuesta de continuidad añadida a cambios pendientes.";
   } catch (value) { showError(value); }
   finally { setRunning(null); renderResults(); }
 }
@@ -369,7 +393,7 @@ async function proposeContinuity(
 async function generateDocument(): Promise<void> {
   const session = state.session;
   if (!session || session.read_only) {
-    showError("Vuelve a la cabeza activa antes de generar un documento interno.");
+    showError("Vuelve a la versión actual antes de generar un documento interno.");
     return;
   }
   const tick = integer(narrativeTick, "Tick", Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
@@ -389,7 +413,7 @@ async function generateDocument(): Promise<void> {
       },
     });
     await attachAiReview(run, `Documento interno · ${narrativeDocumentTitle.value.trim()}`);
-    narrativeStatus.textContent = "Documento añadido como AiRun y revisión estándar pendiente.";
+    narrativeStatus.textContent = "Documento añadido como propuesta pendiente de revisión.";
   } catch (value) { showError(value); }
   finally { setRunning(null); }
 }
@@ -400,6 +424,14 @@ narrativeLooseEnds.addEventListener("click", () => void deriveLooseEnds());
 narrativeDocumentForm.addEventListener("submit", (event) => {
   event.preventDefault();
   void generateDocument();
+});
+narrativeDocumentForm.addEventListener("input", () => {
+  formDirty = true;
+  syncEphemeralState();
+});
+narrativeStartEvents.addEventListener("input", () => {
+  formDirty = true;
+  syncEphemeralState();
 });
 narrativeCancel.addEventListener("click", () => {
   if (activeRequestId) void invoke("cancel_ai_request", { requestId: activeRequestId });
@@ -412,6 +444,20 @@ void listen<ProgressEvent>("ai-proposal-progress", ({ payload }) => {
 window.addEventListener("nirmata:scope-changed", () => {
   renderScopeOptions();
   syncAvailability();
+  renderResults();
+});
+window.addEventListener("nirmata:ai-provider-changed", () => {
+  syncAvailability();
+  renderResults();
+});
+window.addEventListener("nirmata:discard-ephemeral-work", () => {
+  formDirty = false;
+  state.narrative.timeline = null;
+  state.narrative.causalThreads = null;
+  state.narrative.looseEnds = null;
+  state.narrative.exploration = null;
+  narrativeDocumentForm.reset();
+  narrativeStartEvents.value = "";
   renderResults();
 });
 renderScopeOptions();

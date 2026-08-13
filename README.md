@@ -65,6 +65,21 @@ La estructura detallada esta en
 
 Las reglas para agentes y contribuidores estan en [`AGENTS.md`](AGENTS.md).
 
+Las tareas habituales estan disponibles desde la raiz mediante
+[`just`](https://just.systems/):
+
+```powershell
+just setup     # instala dependencias frontend exactas
+just dev       # inicia Vite
+just build     # frontend + ejecutable debug
+just test      # unit, E2E, safety y workspace Rust
+just release   # frontend + ejecutable Rust optimizado
+```
+
+`just release` genera el ejecutable en `target\release`; no crea un instalador
+mientras `bundle.active` permanezca deshabilitado en Tauri. Usa `just --list`
+para ver las recetas separadas de check y test.
+
 Validacion del corte actual:
 
 ```powershell
@@ -79,6 +94,27 @@ Para probar la frontera Tauri manualmente:
 ```powershell
 cargo run -p nirmata-desktop
 ```
+
+## Compilacion de produccion
+
+Desde la raiz del repositorio, instala las dependencias exactas del frontend,
+genera los assets y compila el ejecutable optimizado:
+
+```powershell
+npm ci --prefix apps\nirmata-desktop\frontend
+npm run build --prefix apps\nirmata-desktop\frontend
+cargo build --release -p nirmata-desktop
+```
+
+El ejecutable resultante queda en:
+
+```text
+target\release\nirmata-desktop.exe
+```
+
+`cargo build` no ejecuta el `beforeBuildCommand` de Tauri CLI, por eso el build
+del frontend es un paso explicito. El empaquetado de instaladores no esta
+habilitado actualmente (`bundle.active` es `false` en `tauri.conf.json`).
 
 En la ventana, crea un `.nirmata`, cierralo y abre el mismo archivo. La revision
 mostrada debe conservarse.

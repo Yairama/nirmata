@@ -855,7 +855,7 @@ fn build_import_draft(
         .filter(|candidate| candidate.identity_decision.as_deref() == Some("ambiguous"))
         .map(|candidate| ImportDecisionPoint {
             candidate_id: candidate.id.clone(),
-            prompt: "Choose one canonical identity or explicitly create a new object.".to_owned(),
+            prompt: "Elige una identidad canónica existente o crea un objeto nuevo.".to_owned(),
             alternatives: candidate
                 .identity_matches
                 .iter()
@@ -874,9 +874,9 @@ fn build_import_draft(
         ) {
             decision_points.push(ImportDecisionPoint {
                 candidate_id: candidate.id.clone(),
-                prompt: "An attributed claim needs an explicit canonical holder and modality."
+                prompt: "Una afirmación atribuida necesita titular y modalidad. Márcala como canónica solo si expresa un hecho del mundo, o recházala."
                     .to_owned(),
-                alternatives: vec!["edit_candidate".to_owned(), "reject".to_owned()],
+                alternatives: vec!["mark_canonical".to_owned(), "reject".to_owned()],
             });
         }
     }

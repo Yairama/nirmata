@@ -18,7 +18,6 @@ export type WorldSession = {
   read_scope: ReadScope;
   read_only: boolean;
 };
-
 export type CalendarMonth = {
   name: string;
   days: number;
@@ -670,28 +669,6 @@ export type ManualDraftRequest = {
   values: Record<string, string>;
 };
 
-export type DialogFilter = {
-  name: string;
-  extensions: string[];
-};
-
-export type TauriApi = {
-  core: {
-    invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
-  };
-  dialog: {
-    open(options: {
-      multiple: false;
-      directory: boolean;
-      filters?: DialogFilter[];
-    }): Promise<string | null>;
-    save(options: { defaultPath: string; filters: DialogFilter[] }): Promise<string | null>;
-  };
-  event: {
-    listen<T>(event: string, handler: (event: { payload: T }) => void): Promise<() => void>;
-  };
-};
-
 export type ProviderCredentialStatus = {
   configured: boolean;
   source: "missing" | "system_secure_store" | "session_environment" | "session_memory";
@@ -736,6 +713,11 @@ export type AiQueryResponse = {
     readScope: ReadScope;
   };
   items: AiQueryItem[];
+  proposalAction: {
+    action: "start_proposal";
+    label: string;
+    request: string;
+  } | null;
 };
 
 export type AiRunSnapshot = {
@@ -1001,11 +983,40 @@ export type WorkspaceNotice = {
   detail: string;
 };
 
+export type AiActivity = {
+  requestId: string;
+  source: "assistant" | "lore" | "narrative" | "unknown";
+  label: string;
+};
+
+export type AiActivitySnapshot = {
+  busy: boolean;
+  requestIds: string[];
+};
+
+export type RecentProject = {
+  path: string;
+  name: string;
+  worldId: string;
+  lastOpenedMs: number;
+};
+
+export type AiProviderDiagnosticStatus = {
+  state:
+    | "credential_missing"
+    | "endpoint_missing"
+    | "endpoint_invalid"
+    | "model_missing"
+    | "connection_unchecked"
+    | "connected";
+  message: string;
+  canCheckConnection: boolean;
+  connected: boolean;
+  credential: ProviderCredentialStatus;
+};
+
 export type AppState = {
   session: WorldSession | null;
-  queryText: string;
-  activeKind: SearchKind;
-  searchHits: SearchResult[];
   logicalTree: LogicalVfsDirectory | null;
   selectedUri: string | null;
   selectedLogicalPath: string | null;
@@ -1023,7 +1034,10 @@ export type AppState = {
   selectedRevisionId: string | null;
   recentUris: string[];
   pendingDrafts: Map<string, PendingDraftRecord>;
+  ephemeralWork: Map<string, string>;
   workspaceNotice: WorkspaceNotice | null;
+  aiActivity: AiActivity | null;
+  aiProviderReady: boolean;
   panels: {
     leftCollapsed: boolean;
     rightCollapsed: boolean;
@@ -1035,9 +1049,3 @@ export type AppState = {
   navigationRequestId: number;
   selectionRequestId: number;
 };
-
-declare global {
-  interface Window {
-    __TAURI__: TauriApi;
-  }
-}

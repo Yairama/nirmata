@@ -19,6 +19,7 @@ import {
   pendingContent,
   pendingEmpty,
   pendingSummary,
+  setSession,
   state,
 } from "./state.js";
 import type {
@@ -39,6 +40,7 @@ import type {
 import {
   applyCommandStateError,
   closeSession,
+  confirmDiscardPending,
   loadSelection,
   openReviewOperationEditor,
   openSession,
@@ -52,13 +54,12 @@ function issueEntries(report: ValidationReport): Array<[string, ValidationIssue[
     ["Errores", report.errors],
     ["Conflictos", report.conflicts],
     ["Advertencias", report.warnings],
-    ["Info", report.info],
+    ["Información", report.info],
   ];
 }
 
 export {
   attachAiReview,
-  openPendingDraft,
   readPendingDraft,
   renderPending,
   syncPendingReviewRecord,
@@ -142,7 +143,7 @@ async function addWaiver(
   operation: ManualReviewOperationSnapshot,
   issue: ValidationIssue,
 ): Promise<void> {
-  const rationale = window.prompt(`Razón del waiver para ${issue.code}:`, "");
+  const rationale = window.prompt(`Motivo para aceptar la advertencia ${issue.code}:`, "");
   if (!rationale || !rationale.trim()) {
     return;
   }
@@ -181,7 +182,7 @@ async function readPendingDraft(record: PendingDraftRecord): Promise<void> {
 
 async function revalidatePendingDraft(record: PendingDraftRecord): Promise<void> {
   clearError();
-  setStatus("Revalidando contra la cabeza vigente…");
+  setStatus("Comprobando contra la versión actual…");
   try {
     const review = await invoke<ManualReviewSnapshot>("revalidate_manual_review", {
       input: { reviewKey: record.review.reviewKey },
@@ -199,17 +200,20 @@ async function revalidatePendingDraft(record: PendingDraftRecord): Promise<void>
 }
 
 async function confirmPendingDraft(record: PendingDraftRecord): Promise<void> {
+  if (!confirmDiscardPending("editor")) {
+    return;
+  }
   clearError();
-  setStatus("Confirmando ChangeSet…");
+  setStatus("Aplicando conjunto de cambios…");
   try {
     const session = await invoke<WorldSession>("confirm_manual_review", {
       input: { reviewKey: record.review.reviewKey },
     });
-    state.session = session;
+    setSession(session);
     state.pendingDrafts.delete(record.preview.draftKey);
     state.workspaceNotice = {
       kind: "info",
-      title: "ChangeSet persistido",
+      title: "Cambios aplicados",
       detail: `La revisión ${session.current_revision} quedó aplicada en una única transacción.`,
     };
     state.selectedUri = record.preview.targetUri;
@@ -218,7 +222,7 @@ async function confirmPendingDraft(record: PendingDraftRecord): Promise<void> {
     state.selectedLogicalPath = null;
     await refreshNavigation();
     await loadSelection(record.preview.targetUri, true);
-    setStatus(`ChangeSet confirmado: ${record.preview.title}.`);
+    setStatus(`Cambios aplicados: ${record.preview.title}.`);
   } catch (value) {
     applyCommandStateError(value, "");
   }
@@ -291,7 +295,7 @@ function renderRevisionAuditOperation(operation: RevisionAuditOperationSnapshot)
   if (operation.waivers.length > 0) {
     const waiverSection = block("review-issue-group");
     const waiverTitle = document.createElement("h5");
-    waiverTitle.textContent = "Waivers";
+    waiverTitle.textContent = "Advertencias aceptadas con motivo";
     const waiverList = document.createElement("ul");
     waiverList.className = "review-issue-list";
     for (const waiver of operation.waivers) {
@@ -307,23 +311,26 @@ function renderRevisionAuditOperation(operation: RevisionAuditOperationSnapshot)
 }
 
 async function undoRevisionFromHistory(entry: RevisionHistoryEntrySnapshot): Promise<void> {
+  if (!confirmDiscardPending("editor")) {
+    return;
+  }
   clearError();
   setStatus(`Deshaciendo revisión ${shortId(entry.revisionId)}…`);
   try {
     const session = await invoke<WorldSession>("undo_revision", {
       input: { revisionId: entry.revisionId },
     });
-    state.session = session;
+    setSession(session);
     state.workspaceNotice = {
       kind: "info",
-      title: "Undo aplicado",
+      title: "Cambio deshecho",
       detail: `Se creó una nueva revisión que revierte ${shortId(entry.revisionId)} sin perder la auditoría local.`,
     };
     await refreshNavigation();
     if (state.selectedUri) {
       await loadSelection(state.selectedUri, true);
     }
-    setStatus(`Undo confirmado para ${shortId(entry.revisionId)}.`);
+    setStatus("El cambio se deshizo creando una nueva versión.");
   } catch (value) {
     applyCommandStateError(value, "");
   }
@@ -340,8 +347,8 @@ function renderRevisionHistory(): HTMLDivElement | null {
   const detail = document.createElement("p");
   detail.className = "muted";
   detail.textContent = state.revisionHistory.revisions.length === 0
-    ? `La cabeza actual es ${shortId(state.revisionHistory.currentHeadRevisionId)} y todavía no hay ChangeSets confirmados.`
-    : `${state.revisionHistory.revisions.length} revisión${state.revisionHistory.revisions.length === 1 ? "" : "es"} confirmada${state.revisionHistory.revisions.length === 1 ? "" : "s"} · cabeza ${shortId(state.revisionHistory.currentHeadRevisionId)}.`;
+    ? "La versión actual todavía no tiene conjuntos de cambios aplicados."
+    : `${state.revisionHistory.revisions.length} versión${state.revisionHistory.revisions.length === 1 ? "" : "es"} en el historial.`;
   card.append(title, detail);
 
   if (state.revisionHistory.revisions.length === 0) {
@@ -358,11 +365,11 @@ function renderRevisionHistory(): HTMLDivElement | null {
     const meta = block("badge-row");
     meta.append(
       badge(shortId(entry.revisionId), "context"),
-      badge(entry.isCurrentHead ? "Cabeza" : entry.isCurrentUndoTarget ? "Undo disponible" : entry.undoneRevisionId ? "Undo" : entry.author, entry.isCurrentUndoTarget ? "ready" : "info"),
+      badge(entry.isCurrentHead ? "Versión actual" : entry.isCurrentUndoTarget ? "Se puede deshacer" : entry.undoneRevisionId ? "Deshacer" : entry.author, entry.isCurrentUndoTarget ? "ready" : "info"),
     );
     const snippet = document.createElement("p");
     snippet.className = "linked-button-snippet";
-    snippet.textContent = `${formatTimestamp(entry.createdAtMs)} · ${entry.operations.length} operación${entry.operations.length === 1 ? "" : "es"} · ${entry.waivers.length} waiver${entry.waivers.length === 1 ? "" : "s"}`;
+    snippet.textContent = `${formatTimestamp(entry.createdAtMs)} · ${entry.operations.length} operación${entry.operations.length === 1 ? "" : "es"} · ${entry.waivers.length} advertencia${entry.waivers.length === 1 ? "" : "s"} aceptada${entry.waivers.length === 1 ? "" : "s"}`;
     item.append(entryTitle, meta, snippet);
     item.addEventListener("click", () => {
       state.selectedRevisionId = entry.revisionId;
@@ -384,19 +391,19 @@ function renderRevisionHistory(): HTMLDivElement | null {
   selectedMeta.append(
     badge(selected.author, "context"),
     badge(formatTimestamp(selected.createdAtMs), "context"),
-    badge(selected.isCurrentHead ? "Cabeza actual" : selected.isCurrentUndoTarget ? "Undo disponible" : "Histórica", selected.isCurrentUndoTarget ? "ready" : "info"),
+    badge(selected.isCurrentHead ? "Versión actual" : selected.isCurrentUndoTarget ? "Se puede deshacer" : "Versión anterior", selected.isCurrentUndoTarget ? "ready" : "info"),
   );
   const summary = document.createElement("p");
   summary.textContent = selected.summary;
   const ids = document.createElement("p");
   ids.className = "muted";
-  ids.textContent = `change_set ${shortId(selected.changeSetId)} · parent ${selected.parentRevisionId ? shortId(selected.parentRevisionId) : "root"}`;
+  ids.textContent = `Identificador del cambio ${shortId(selected.changeSetId)} · versión anterior ${selected.parentRevisionId ? shortId(selected.parentRevisionId) : "inicial"}`;
   selectedCard.append(selectedTitle, selectedMeta, summary, ids);
 
   if (selected.undoneRevisionId) {
     const undoneNotice = block("notice info");
     const undoneTitle = document.createElement("h4");
-    undoneTitle.textContent = "Undo registrado";
+    undoneTitle.textContent = "Deshacer registrado";
     const undoneDetail = document.createElement("p");
     undoneDetail.textContent = `Esta revisión revierte ${shortId(selected.undoneRevisionId)} y mantiene la auditoría before/after accesible.`;
     undoneNotice.append(undoneTitle, undoneDetail);
@@ -406,7 +413,7 @@ function renderRevisionHistory(): HTMLDivElement | null {
   if (selected.waivers.length > 0) {
     const waiverSection = block("review-issue-group");
     const waiverTitle = document.createElement("h5");
-    waiverTitle.textContent = "Waivers registrados";
+    waiverTitle.textContent = "Advertencias aceptadas con motivo";
     const waiverList = document.createElement("ul");
     waiverList.className = "review-issue-list";
     for (const waiver of selected.waivers) {
@@ -446,6 +453,7 @@ function renderRevisionHistory(): HTMLDivElement | null {
 }
 
 function renderPending(): void {
+  window.dispatchEvent(new CustomEvent("nirmata:pending-changed"));
   const drafts = Array.from(state.pendingDrafts.values()).sort((left, right) =>
     left.preview.title.localeCompare(right.preview.title, "es"),
   );
@@ -453,7 +461,7 @@ function renderPending(): void {
   pendingSummary.textContent = [
     drafts.length === 0
       ? null
-      : `${drafts.length} ChangeSet${drafts.length === 1 ? "" : "s"} pendiente${drafts.length === 1 ? "" : "s"}`,
+      : `${drafts.length} propuesta${drafts.length === 1 ? "" : "s"} pendiente${drafts.length === 1 ? "" : "s"}`,
     revisionCount === 0
       ? null
       : `${revisionCount} revisión${revisionCount === 1 ? "" : "es"} local${revisionCount === 1 ? "" : "es"}`,
@@ -483,10 +491,11 @@ function renderPending(): void {
     title.textContent = record.preview.title;
     const meta = block("badge-row");
     meta.append(
+      badge(reviewOrigin(record), "context"),
       badge(humanize(record.preview.objectType), "kind"),
-      badge(record.preview.mode === "create" ? "Create" : "Update", "info"),
+      badge(record.preview.mode === "create" ? "Crear" : "Modificar", "info"),
       badge(
-        record.review.freshness.status === "current" ? "Revisión vigente" : "Draft stale",
+        record.review.freshness.status === "current" ? "Revisión vigente" : "Propuesta desactualizada",
         record.review.freshness.status === "current" ? "ready" : "warning",
       ),
       badge(
@@ -507,12 +516,12 @@ function renderPending(): void {
       freshnessTitle.textContent =
         record.review.freshness.status === "refresh_restart_required"
           ? "Revalidación interrumpida"
-          : "Draft obsoleto";
+          : "Propuesta desactualizada";
       const freshnessDetail = document.createElement("p");
       freshnessDetail.textContent = record.review.freshness.message;
       freshnessNotice.append(freshnessTitle, freshnessDetail);
       if (record.review.freshness.canRevalidate) {
-        const revalidate = button("Revalidar contra la cabeza vigente", "secondary");
+        const revalidate = button("Actualizar y volver a comprobar", "secondary");
         revalidate.addEventListener("click", () => {
           void revalidatePendingDraft(record);
         });
@@ -590,7 +599,7 @@ function renderPending(): void {
       if (operation.decisionPoints.length > 0) {
         const decisionSection = block("review-issue-group");
         const decisionTitle = document.createElement("h5");
-        decisionTitle.textContent = "DecisionPoints";
+        decisionTitle.textContent = "Decisiones pendientes";
         const decisionList = block("warning-list");
         for (const decision of operation.decisionPoints) {
           const decisionCard = block("warning-card");
@@ -673,7 +682,7 @@ function renderPending(): void {
           message.textContent = issue.message;
           item.append(message);
           if (issue.severity !== "error") {
-            const waiveButton = button("Registrar waiver", "ghost");
+            const waiveButton = button("Aceptar advertencia con motivo", "ghost");
             waiveButton.addEventListener("click", () => {
               void addWaiver(record, operation, issue);
             });
@@ -688,7 +697,7 @@ function renderPending(): void {
       if (operation.waivers.length > 0) {
         const waiverSection = block("review-issue-group");
         const waiverTitle = document.createElement("h5");
-        waiverTitle.textContent = "Waivers";
+        waiverTitle.textContent = "Advertencias aceptadas con motivo";
         const waiverList = document.createElement("ul");
         waiverList.className = "review-issue-list";
         for (const waiver of operation.waivers) {
@@ -708,29 +717,25 @@ function renderPending(): void {
           operationId: operation.operationId,
         });
       });
-      const editButton = button("Editar operación", "ghost");
+      const editButton = button("Editar cambio", "ghost");
       editButton.addEventListener("click", () => {
         void openReviewOperationEditor(record, operation);
       });
       operationActions.append(toggleSelection, editButton);
+      if (operation.before) {
+        const viewCurrent = button("Ver objeto actual", "ghost");
+        viewCurrent.title = "Abre el estado vigente sin aplicar esta propuesta.";
+        viewCurrent.addEventListener("click", () => {
+          void selectUri(operation.targetUri);
+        });
+        operationActions.append(viewCurrent);
+      }
       operationCard.append(operationActions);
       card.append(operationCard);
     }
 
     const actions = block("pending-actions");
-    const reopen = button("Abrir formulario", "ghost");
-    reopen.addEventListener("click", () => {
-      void openPendingDraft(record);
-    });
-    actions.append(reopen);
-    if (record.editor.existingUri) {
-      const openCanon = button("Abrir canon", "ghost");
-      openCanon.addEventListener("click", () => {
-        void selectUri(record.editor.existingUri!);
-      });
-      actions.append(openCanon);
-    }
-    const confirm = button("Confirmar ChangeSet", "primary");
+    const confirm = button("Aplicar al mundo", "primary");
     confirm.disabled = !record.review.readyToConfirm;
     confirm.title = record.review.readyToConfirm
       ? ""
@@ -741,16 +746,32 @@ function renderPending(): void {
       void confirmPendingDraft(record);
     });
     actions.append(confirm);
-    const discard = button("Descartar", "secondary");
+    const discard = button("Descartar propuesta", "secondary");
     discard.addEventListener("click", async () => {
-      if (record.aiRunId) {
-        await invoke("discard_ai_run", { runId: record.aiRunId });
+      if (!window.confirm(`¿Descartar “${record.preview.title}”? El mundo no cambiará.`)) {
+        return;
       }
-      state.pendingDrafts.delete(record.preview.draftKey);
-      if (state.editorMode?.targetUri === record.preview.draftKey) {
-        state.editorMode.issues = [];
+      discard.disabled = true;
+      discard.textContent = "Descartando propuesta…";
+      try {
+        if (record.aiRunId) {
+          await invoke("discard_ai_run", { runId: record.aiRunId });
+        } else {
+          await invoke("discard_manual_review", {
+            input: { reviewKey: record.review.reviewKey },
+          });
+        }
+        state.pendingDrafts.delete(record.review.reviewKey);
+        if (state.editorMode?.reviewEdit?.reviewKey === record.review.reviewKey) {
+          state.editorMode = null;
+        }
+        renderWorkspace();
+        setStatus("Propuesta descartada. El mundo no cambió.");
+      } catch (value) {
+        discard.disabled = false;
+        discard.textContent = "Descartar propuesta";
+        applyCommandStateError(value, "No se pudo descartar la propuesta.");
       }
-      renderWorkspace();
     });
     actions.append(discard);
     card.append(actions);
@@ -774,11 +795,12 @@ function renderPending(): void {
   pendingContent.hidden = false;
 }
 
-async function openPendingDraft(record: PendingDraftRecord): Promise<void> {
-  if (record.editor.existingUri) {
-    await loadSelection(record.editor.existingUri, false);
-  }
-  state.workspaceNotice = null;
-  state.editorMode = cloneEditorMode(record.editor);
-  renderWorkspace();
+function reviewOrigin(record: PendingDraftRecord): string {
+  if (record.aiRunId) return "IA";
+  const title = record.preview.title.toLocaleLowerCase("es");
+  if (title.includes("import") || record.review.sources.some((source) => source.startsWith("import://"))) return "Importación";
+  if (title.includes("simul")) return "Simulación";
+  if (title.includes("snapshot")) return "Snapshot";
+  if (title.includes("traer cambios") || title.includes("merge")) return "Versiones";
+  return "Edición manual";
 }

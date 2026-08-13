@@ -5,49 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nirmata</title>
     <link rel="stylesheet" href="styles.css" />
-    <script type="module" src="main.js" defer></script>
+    <script type="module" src="/main.tsx"></script>
   </head>
   <body>
     <main>
-      <header>
-        <p class="eyebrow">Nirmata</p>
-        <h1>Tu mundo, guardado localmente</h1>
-        <p>Crea o abre un archivo <code>.nirmata</code>. Los formularios manuales generan drafts; no escriben canon.</p>
-      </header>
-
-      <section id="closed-view" aria-labelledby="create-title">
-        <form id="create-form">
-          <h2 id="create-title">Crear mundo</h2>
-          <label>
-            Nombre
-            <input id="name" name="name" maxlength="200" required />
-          </label>
-          <label>
-            Premisa
-            <textarea id="premise" name="premise" rows="5" maxlength="100000"></textarea>
-          </label>
-          <label>
-            Etiqueta del epoch
-            <input id="epoch-label" name="epoch-label" maxlength="200" />
-          </label>
-          <label>
-            Archivo
-            <span class="path-row">
-              <input id="create-path" readonly placeholder="Selecciona dónde guardarlo" />
-              <button id="choose-create-path" type="button">Elegir…</button>
-            </span>
-          </label>
-          <button id="create-button" type="submit">Crear mundo</button>
-        </form>
-
-        <div class="divider" aria-hidden="true"></div>
-
-        <section aria-labelledby="open-title">
-          <h2 id="open-title">Abrir mundo</h2>
-          <p>Selecciona un proyecto existente para continuar con navegación lógica, búsqueda FTS y drafts manuales.</p>
-          <button id="open-button" type="button">Abrir .nirmata…</button>
-        </section>
-      </section>
+      <div id="closed-root"></div>
 
       <section id="world-view" hidden aria-labelledby="world-name">
         <div class="world-header">
@@ -63,12 +25,8 @@
                 <dd id="world-premise"></dd>
               </div>
               <div>
-                <dt>Epoch</dt>
+                <dt>Origen del calendario</dt>
                 <dd id="world-epoch"></dd>
-              </div>
-              <div>
-                <dt>Revisión</dt>
-                <dd id="world-revision" class="path"></dd>
               </div>
             </dl>
             <button id="edit-world-button" type="button">Editar mundo</button>
@@ -76,24 +34,32 @@
           </div>
         </div>
 
-        <section class="variant-bar" aria-labelledby="variant-title">
+        <section id="ai-busy-banner" class="ai-busy-banner" role="status" aria-live="polite" hidden>
           <div>
-            <p class="panel-eyebrow">Alcance editorial</p>
-            <h3 id="variant-title">Variante e historia</h3>
+            <strong>IA trabajando</strong>
+            <p id="ai-busy-message">Espera o cancela antes de modificar el mundo.</p>
+          </div>
+          <button id="ai-busy-cancel" type="button" class="secondary">Cancelar solicitud</button>
+        </section>
+
+        <section id="variant-bar" class="variant-bar" aria-labelledby="variant-title">
+          <div>
+            <p class="panel-eyebrow">Dónde escribes y qué estás viendo</p>
+            <h3 id="variant-title">Versiones</h3>
             <p id="read-scope-label" class="scope-label"></p>
           </div>
           <label>
-            Variante activa
+            Escribiendo en
             <select id="variant-select"></select>
           </label>
           <label>
-            Revisión observada
+            Viendo
             <select id="revision-scope-select"></select>
           </label>
-          <button id="view-active-head" type="button" class="secondary">Volver a cabeza activa</button>
+          <button id="view-active-head" type="button" class="secondary">Volver a la versión actual</button>
           <form id="create-variant-form" class="compact-form">
             <label>
-              Nueva variante desde lo observado
+              Nueva variante desde esta versión
               <input id="variant-name" maxlength="80" placeholder="Nombre" required />
             </label>
             <button type="submit">Crear</button>
@@ -106,17 +72,21 @@
             <button type="submit" class="secondary">Renombrar</button>
           </form>
           <label>
-            Comparar / fusionar desde
+            Traer cambios de
             <select id="compare-variant-select"></select>
           </label>
           <div class="pending-actions">
             <button id="compare-variants" type="button" class="secondary">Comparar</button>
-            <button id="merge-variant" type="button">Preparar merge</button>
+            <button id="merge-variant" type="button">Preparar cambios para traer</button>
             <button id="archive-variant" type="button" class="danger">Archivar seleccionada</button>
-            <button id="export-vfs-snapshot" type="button" class="secondary">Exportar snapshot</button>
-            <button id="import-vfs-snapshot" type="button" class="secondary">Importar snapshot</button>
+            <button id="export-vfs-snapshot" type="button" class="secondary" hidden>Exportar snapshot</button>
+            <button id="import-vfs-snapshot" type="button" class="secondary" hidden>Importar snapshot</button>
           </div>
           <div id="variant-diff" class="variant-diff" aria-live="polite"></div>
+          <details class="technical-details">
+            <summary>Detalles técnicos</summary>
+            <p>Revisión interna: <span id="world-revision" class="path"></span></p>
+          </details>
         </section>
 
         <section class="layout-toolbar" aria-label="Controles de disposición">
@@ -170,12 +140,18 @@
               <p class="panel-eyebrow">Microsoft Foundry · lectura controlada</p>
               <h3 id="assistant-title">Asistente del canon</h3>
             </div>
-            <div id="assistant-credential" class="credential-status">Comprobando credencial…</div>
+            <div class="provider-diagnostic">
+              <div id="assistant-credential" class="credential-status">Comprobando configuración…</div>
+              <div class="pending-actions">
+                <button id="assistant-provider-check" type="button" class="secondary" disabled>Probar conexión</button>
+                <button id="assistant-provider-settings" type="button" class="ghost">Configurar IA</button>
+              </div>
+            </div>
           </div>
           <div class="assistant-controls">
             <div class="mode-switch" role="group" aria-label="Modo del asistente">
               <button id="assistant-query-mode" type="button" aria-pressed="true">Consultar</button>
-              <button id="assistant-propose-mode" type="button" class="secondary" aria-pressed="false">Proponer</button>
+              <button id="assistant-propose-mode" type="button" class="secondary" aria-pressed="false">Proponer cambios</button>
               <button id="assistant-deep-mode" type="button" class="secondary" aria-pressed="false">Revisión profunda</button>
               <button id="assistant-audit-mode" type="button" class="secondary" aria-pressed="false">Auditoría</button>
             </div>
@@ -196,7 +172,7 @@
           <div id="assistant-transcript" class="assistant-transcript" aria-live="polite">
             <p class="empty-state">Las consultas aparecen aquí y nunca se confunden con cambios pendientes.</p>
           </div>
-          <details class="credential-settings">
+          <details id="assistant-credential-settings" class="credential-settings">
             <summary>Credencial del proveedor</summary>
             <form id="assistant-key-form" class="compact-form">
               <label>
@@ -221,7 +197,7 @@
           </div>
           <div class="narrative-filters">
             <label>
-              Scope
+              Vista analizada
               <select id="narrative-scope"></select>
             </label>
             <label>
@@ -238,15 +214,15 @@
             </label>
           </div>
           <div class="pending-actions">
-            <button id="narrative-timeline" type="button">Story time / discurso</button>
+            <button id="narrative-timeline" type="button">Orden cronológico / relato</button>
             <button id="narrative-causal" type="button" class="secondary">Derivar hilos</button>
-            <button id="narrative-loose-ends" type="button" class="secondary">Derivar loose ends</button>
+            <button id="narrative-loose-ends" type="button" class="secondary">Derivar cabos abiertos</button>
             <button id="narrative-cancel" type="button" class="ghost" disabled>Cancelar IA</button>
           </div>
           <form id="narrative-document-form" class="narrative-document-form">
             <h4>Documento interno revisable</h4>
             <label>
-              Kind
+              Tipo
               <select id="narrative-document-kind">
                 <option value="chronicle">Crónica</option>
                 <option value="letter">Carta</option>
@@ -260,15 +236,15 @@
               <input id="narrative-document-title" maxlength="200" required />
             </label>
             <label>
-              Request
+              Instrucciones
               <textarea id="narrative-document-request" rows="3" maxlength="20000" required></textarea>
             </label>
             <label>
-              Perspective entity UUID
+              Perspectiva, identificador técnico
               <input id="narrative-perspective" placeholder="00000000-0000-0000-0000-000000000000" required />
             </label>
             <label>
-              Tick
+              Unidad temporal interna
               <input id="narrative-tick" type="number" step="1" value="0" required />
             </label>
             <button type="submit">Generar documento revisable</button>
@@ -276,6 +252,10 @@
           <div id="narrative-results" class="narrative-results" aria-live="polite">
             <p class="empty-state">Las derivaciones no escriben canon. Documento y continuidad siempre entran en cambios pendientes.</p>
           </div>
+        </section>
+
+        <section id="imports-panel" class="imports-panel" aria-labelledby="imports-page-title">
+          <div id="import-center-react-root"></div>
         </section>
 
         <section id="lore-import-panel" class="lore-import-panel" aria-labelledby="lore-import-title">
@@ -294,14 +274,14 @@
             <button id="lore-import-delete" type="button" class="ghost" disabled>Eliminar lote</button>
           </div>
           <div id="lore-import-content" class="lore-import-content">
-            <p class="empty-state">El original nunca se modifica. Ningún candidato entra al canon antes de la revisión estándar.</p>
+            <p class="empty-state">Los originales nunca se modifican. Ningún candidato entra al canon antes de la revisión estándar.</p>
           </div>
         </section>
 
         <section id="simulation-panel" class="simulation-panel" aria-labelledby="simulation-title">
           <div class="assistant-heading">
             <div>
-              <p class="panel-eyebrow simulation-eyebrow">Fuera del canon</p>
+              <p class="panel-eyebrow simulation-eyebrow">Fuera del canon · se borra al cerrar el mundo</p>
               <h3 id="simulation-title">Simulación acotada</h3>
             </div>
             <p id="simulation-status" class="panel-summary">Sin escenarios en esta sesión.</p>
@@ -319,27 +299,27 @@
           </div>
           <form id="simulation-form" class="simulation-form">
             <label>
-              Factions, UUID uno por línea
+              Facciones, identificador técnico uno por línea
               <textarea id="simulation-factions" rows="4" spellcheck="false"></textarea>
             </label>
             <label>
-              Resources, id|unit
+              Recursos, identificador|unidad
               <textarea id="simulation-resources" rows="4" spellcheck="false"></textarea>
             </label>
             <label>
-              Stocks, faction|resource|quantity|capacity
+              Existencias, facción|recurso|cantidad|capacidad
               <textarea id="simulation-stocks" rows="5" spellcheck="false"></textarea>
             </label>
             <label>
-              Rules, production|faction|resource|amount; consumption...; transfer|from|to|resource|amount
+              Reglas técnicas, producción|facción|recurso|cantidad; consumo...; transferencia|origen|destino|recurso|cantidad
               <textarea id="simulation-rules" rows="6" spellcheck="false"></textarea>
             </label>
             <label>
-              Assumptions, una por línea
+              Supuestos, uno por línea
               <textarea id="simulation-assumptions" rows="4"></textarea>
             </label>
             <label>
-              Max steps
+              Máximo de pasos
               <input id="simulation-max-steps" type="number" min="1" max="1000" step="1" value="1" required />
             </label>
             <div class="pending-actions simulation-actions">
@@ -354,69 +334,8 @@
         </section>
 
         <div id="workspace-shell" class="workspace-shell">
-          <section id="navigation-panel" class="panel" aria-labelledby="navigation-title">
-            <div class="panel-header">
-              <div>
-                <p class="panel-eyebrow">Exploración</p>
-                <h3 id="navigation-title">Navegación y búsqueda</h3>
-              </div>
-              <p id="result-summary" class="panel-summary"></p>
-            </div>
-            <div class="panel-body section-stack">
-              <form id="uri-form" class="search-form compact-form">
-                <label class="search-field">
-                  Abrir por URI
-                  <input id="uri-input" type="text" placeholder="nirmata://entity/..." autocomplete="off" />
-                </label>
-                <button id="uri-button" type="submit">Abrir</button>
-              </form>
-
-              <form id="search-form" class="search-form compact-form">
-                <label class="search-field">
-                  Buscar FTS
-                  <input
-                    id="search-input"
-                    type="search"
-                    name="query"
-                    placeholder="Nombre, alias, cita o texto"
-                    autocomplete="off"
-                  />
-                </label>
-                <button id="search-button" type="submit">Buscar</button>
-              </form>
-
-              <div id="kind-filters" class="kind-filters" aria-label="Filtros por tipo"></div>
-
-              <section class="subsection" aria-labelledby="recents-title">
-                <div class="subsection-header">
-                  <h4 id="recents-title">Recientes de la sesión</h4>
-                </div>
-                <div id="recents-list" class="results-list"></div>
-                <p id="recents-empty" class="empty-state" hidden>
-                  La sesión todavía no tiene recientes.
-                </p>
-              </section>
-
-              <section class="subsection" aria-labelledby="tree-title">
-                <div class="subsection-header">
-                  <h4 id="tree-title">Árbol VFS lógico</h4>
-                </div>
-                <div id="tree-root" class="tree-root"></div>
-                <p id="tree-empty" class="empty-state" hidden>
-                  El mundo todavía no tiene objetos para navegar.
-                </p>
-              </section>
-
-              <section class="subsection" aria-labelledby="results-title">
-                <div class="subsection-header">
-                  <h4 id="results-title">Resultados</h4>
-                </div>
-                <div id="results-list" class="results-list" role="listbox" aria-label="Resultados de búsqueda"></div>
-                <p id="results-empty" class="empty-state" hidden>
-                  No hay resultados con el filtro actual.
-                </p>
-              </section>
-            </div>
+          <section id="navigation-panel" class="panel" aria-labelledby="explorer-title">
+            <div id="explorer-react-root"></div>
           </section>
 
           <section id="editor-panel" class="panel" aria-labelledby="editor-title">
@@ -429,43 +348,32 @@
             </div>
             <div class="panel-body">
               <div id="editor-empty" class="empty-state">
-                El panel central muestra formularios mínimos para editar la selección o crear un draft manual nuevo.
+                El panel central permite editar la selección o preparar un cambio nuevo.
               </div>
               <div id="editor-content" hidden></div>
             </div>
           </section>
 
           <section id="context-panel" class="panel" aria-labelledby="context-title">
-            <div class="panel-header">
-              <div>
-                <p class="panel-eyebrow">Lectura situada</p>
-                <h3 id="context-title">Contexto y relaciones</h3>
-              </div>
-              <p id="context-summary" class="panel-summary"></p>
-            </div>
-            <div class="panel-body">
-              <div id="context-empty" class="empty-state">
-                Al seleccionar un objeto verás relaciones, advertencias, procedencia y navegación contextual.
-              </div>
-              <div id="context-content" hidden></div>
-            </div>
+            <div id="context-react-root"></div>
           </section>
 
-          <section id="pending-panel" class="panel" aria-labelledby="pending-title">
-            <div class="panel-header">
-              <div>
-                <p class="panel-eyebrow">Revisión manual</p>
-                <h3 id="pending-title">Cambios pendientes</h3>
-              </div>
-              <p id="pending-summary" class="panel-summary">Sin cambios pendientes.</p>
-            </div>
-            <div class="panel-body">
-              <div id="pending-empty" class="empty-state">
-                Cada ChangeSet manual y el historial local aparecerán aquí con diff, validaciones, waivers, auditoría before/after y undo visible.
-              </div>
-              <div id="pending-content" hidden></div>
-            </div>
-          </section>
+        </div>
+      </section>
+
+      <section id="pending-panel" class="panel" aria-labelledby="pending-title" hidden>
+        <div class="panel-header">
+          <div>
+            <p class="panel-eyebrow">Revisión manual</p>
+            <h3 id="pending-title">Cambios pendientes</h3>
+          </div>
+          <p id="pending-summary" class="panel-summary">Sin cambios pendientes.</p>
+        </div>
+        <div class="panel-body">
+          <div id="pending-empty" class="empty-state">
+            Las propuestas aparecen aquí para revisar qué cambia, resolver advertencias, aplicar o descartar.
+          </div>
+          <div id="pending-content" hidden></div>
         </div>
       </section>
 

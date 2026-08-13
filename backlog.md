@@ -1,592 +1,664 @@
-# Backlog funcional end-to-end de Nirmata
+# Backlog end-to-end de rediseño UX/UI de Nirmata
 
 ## Propósito
 
-Este documento es el plan ejecutable y autosuficiente para construir la
-solución funcional general de Nirmata. Consolida producto, dominio,
-arquitectura, persistencia, interacción, IA, validación y pruebas para que la
-implementación pueda continuar aunque se pierda el resto de la documentación.
+Este documento sucede al backlog funcional completado, archivado en
+[`docs/old-backlogs/backlog.md`](docs/old-backlogs/backlog.md). Es el plan
+ejecutable y autosuficiente para convertir la interfaz actual en una aplicación
+de escritorio comprensible, eficiente y visualmente coherente sin alterar las
+fronteras de dominio, autoridad o persistencia ya verificadas.
 
-El criterio rector es YAGNI: construir la solución más pequeña que permita a un
-autor mantener un mundo ficticio coherente, consultarlo y aceptar cambios
-asistidos por IA sin ceder al modelo autoridad de escritura. Las tareas
-NIR-001–NIR-052 forman el fundamento funcional; son un hito utilizable, no el
-límite del producto. Las fases posteriores añaden únicamente capacidades
-documentadas y acotadas, reutilizando el mismo canon, revisión y transacción.
+El objetivo no es aplicar una capa cosmética. El rediseño debe permitir que una
+persona que construye mundos entienda, sin conocer SQLite, UUID, FTS, VFS,
+ChangeSet, ReadScope o heads:
+
+1. Cómo crear un proyecto y construir una base de mundo manualmente o con IA.
+2. Dónde preguntar por el canon y dónde pedir modificaciones.
+3. Qué cambiará antes de aplicar una propuesta.
+4. En qué versión está trabajando y qué versión está observando.
+5. Cómo importar, simular, derivar narrativa, revisar, deshacer y configurar la
+   aplicación sin perder trabajo.
+
+La tesis UX es:
+
+> Nirmata debe sentirse como software editorial para mundos, no como una página
+> de diagnóstico que expone todos los subsistemas a la vez.
 
 ## Estado actual
 
-- NIR-001–NIR-089 están completadas (89 de 89; 100 % del backlog general y
-  100 % del fundamento funcional).
-- El workspace Rust incluye `nirmata-core`, `nirmata-store`, `nirmata-ai`,
-  `nirmata-app` y la aplicación Tauri.
-- El producto manual permite crear, editar, buscar, revisar, confirmar, auditar
-  y deshacer cambios del canon en un archivo `.nirmata`.
-- La recuperación determinista combina anclas, SQLite, relaciones, tiempo,
-  perspectivas, FTS5 y WordNet local con ranking y fuentes navegables.
-- La frontera de IA incluye credenciales seguras, streaming, contratos
-  estrictos, modo `Consultar` y generación validada de propuestas.
-- El backlog funcional general está completado. Cualquier evolución posterior
-  requiere un nuevo gate y no reabre estas tareas por defecto.
-- El esquema 9 protege por constraints ejecutables la pertenencia de cabezas,
-  revisiones, ChangeSets e import batches. Las consultas IA conservan el scope
-  observado y las propuestas no se ejecutan fuera de la cabeza activa.
-- El esquema 10 persiste un calendario fijo opcional dentro de `World`; timeline,
-  citas, variantes, historia y snapshots derivan etiquetas sin alterar ticks.
-- Los escenarios de simulación viven fuera del canon, fijan variante/revisión y
-  ejecutan producción, consumo y transferencias enteras sin IA ni azar.
-- La simulación se inspecciona y compara en GUI como estado fuera del canon; solo
-  selecciones Event/Claim explícitas entran al panel estándar de revisión.
-- Las derivaciones narrativas separan story time/discourse order, recorren
-  causalidad acotada y etiquetan cabos con heurísticas y evidencia navegable.
-- Documentos internos usan contrato AI estricto y contexto por perspectiva/tick;
-  continuidad conserva alternativas y entra al workflow estándar de propuesta.
-- La GUI narrativa muestra story/discourse, hilos y cabos con fuentes; documentos
-  y continuidad llegan únicamente a revisión estándar.
-- El gate de proveedor cerró sin segunda implementación: Azure Foundry cubre
-  query, streaming, propose, critic, especialistas, importación y documentos.
-- La regresión final ejecuta 256 pruebas offline: 256 pasaron y 1 smoke test de
-  red quedó omitido. Frontend build, 9 checks de seguridad y desktop build
-  también pasaron.
-- NIR-055 integró WordNet en la ruta activa después de las etapas autoritativas
-  y FTS5. Sobre `nir-053-v1` mantuvo 25 % de recall de paráfrasis (3/12), 100 %
-  de recall no-paráfrasis, 100 % de precisión citada, 2/2 contradicciones y
-  3,517 ms de p95 local, sin tabla ni cache semántico persistido.
-- NIR-058 revalidó esas métricas con 3,527 ms de p95 y unió recuperación,
-  borrado/rebuild derivado y snapshot export/import/review/commit/reject/undo;
-  solo la operación aprobada cambió canon y undo restauró el snapshot previo.
-- La aceptación de NIR-052 certifica el fundamento funcional. La solución
-  general queda completa únicamente al satisfacer la Definition of Done final.
+- El backlog funcional NIR-001–NIR-089 está completado y no se reabre.
+- Este backlog UX contiene UX-001–UX-078: 36 completadas de 78 (46,2 %).
+- El backend Rust, SQLite, Tauri y los contratos de IA siguen siendo la
+  autoridad. El rediseño consume casos de uso existentes y solo solicita nuevos
+  comandos cuando una interacción demostrada no pueda expresarse hoy.
+- La interfaz actual usa TypeScript, HTML y CSS nativos sobre Vite, todavía sin
+  framework; ya supera el tamaño razonable para rendering imperativo global.
+- No hay Settings, About, navegación primaria, command palette, onboarding ni
+  conversación persistente.
+- Crear un `.nirmata` no genera un mundo completo: crea el proyecto raíz. Para
+  generar una base con IA hoy hay que crear el proyecto, buscar el asistente,
+  cambiar a `Proponer`, escribir una petición y revisar el ChangeSet.
+- El panel llamado asistente no es un chat real: cada consulta reemplaza la
+  respuesta anterior y no se envía historial conversacional.
+- `head` significa internamente la última revisión de una variante. Esa palabra
+  no debe formar parte del flujo principal del usuario.
 
-## Bloqueos
+## Auditoría visual del 12 de agosto de 2026
 
-- No hay bloqueos activos.
-- El 5 de agosto de 2026 se verificaron solicitudes reales normal y streaming
-  con `gpt-5.6-sol` mediante
-  `POST /openai/v1/responses`, autenticación Bearer y `store: false`. Este
-  deployment rechaza `temperature`, por lo que el cliente no envía ese
-  parámetro.
+Se abrió el frontend compilado con un bridge Tauri simulado y se capturaron los
+estados de proyecto cerrado, mundo abierto, viewport Tauri predeterminado
+`960x680`, desktop `1440x1000` y mobile `390x844`.
 
-## Gates críticos cerrados de la fase 10
-
-Estos hallazgos forman parte del criterio de cierre de NIR-071–NIR-075 y no se
-resuelven rebajando tests o documentación:
-
-1. **Resuelto y probado.** `keep_destination` deselecciona las operaciones
-   conflictivas del merge y `take_source` las conserva; registrar solo el texto
-   de la alternativa no puede habilitar una operación contraria a la decisión
-   humana.
-2. **Resuelto y probado.** Deletes, delete/update, claims canónicos opuestos,
-   conflictos temporales cross-ID y dependencias dudosas reciben retcon y
-   `DecisionPoint` correctos. Un delete nunca se etiqueta como `additive`.
-3. **Resuelto y probado.** Una ejecución de IA conserva su `ReadScope` al recuperar
-   contexto, resolver citas y navegar fuentes. Propuestas y revisión profunda de
-   impacto quedan bloqueadas fuera de la cabeza activa; auditoría continúa en
-   solo lectura.
-4. **Resuelto y probado.** El historial visible recorre únicamente el linaje de
-   la variante observada. Undo sigue limitado a commits propios de la variante
-   activa.
-5. **Resuelto y probado.** El esquema 9 bloquea links nulos, inexistentes o
-   cross-world; creación de `main`, asignaciones y snapshots comparten la
-   transacción de migración y un fallo de backfill revierte DDL y datos.
-6. **Resuelto y probado.** La comparación expone retcon, revisión, ChangeSet,
-   operación, fuente auditada, scope y referencias afectadas sin URI sintética.
-7. **Resuelto y probado.** La GUI bloquea escrituras desde historia, conserva
-   navegación citada por scope, distingue variante observada de activa y conecta
-   rename, archive, comparación, merge y snapshots revisables.
-8. **Resuelto y probado.** `cargo nextest run --workspace --no-fail-fast` pasó
-   228/228 pruebas en Windows; la limpieza de snapshots y lore usa reintentos
-   acotados ante handles liberados de forma asíncrona.
-
-## Resumen autónomo del producto y la arquitectura
-
-Nirmata es una aplicación de escritorio local-first y de un solo usuario para
-construir storyworlds. El canon vive en un único archivo SQLite con extensión
-`.nirmata`. Markdown se usa únicamente para prosa almacenada en columnas
-`TEXT`; el árbol parecido a archivos es una proyección lógica de SQLite y no una
-segunda fuente de verdad.
-
-La arquitectura final es un monolito modular en un workspace Rust 2024:
-
-| Módulo | Responsabilidad y límites |
+| Evidencia | Hallazgo |
 |---|---|
-| `crates/nirmata-core` | Tipos de dominio, invariantes y validadores deterministas puros. No depende de GUI, SQLite, HTTP, proveedor de IA ni runtime asíncrono. |
-| `crates/nirmata-store` | Apertura del archivo, migraciones, SQLite, FTS5, consultas, transacciones, auditoría y undo. No expone SQL a la GUI. |
-| `crates/nirmata-ai` | Cliente HTTP concreto para un proveedor inicial, prompts, streaming y parsing estructurado. Solo lee contexto y devuelve respuestas o drafts; nunca recibe capacidad de commit. Una segunda implementación local o remota solo aparece tras una necesidad medida y reemplaza directamente el acoplamiento concreto. |
-| `crates/nirmata-app` | Casos de uso, construcción de contexto, estados del workflow, revisión, revalidación y coordinación entre core, store e IA. |
-| `apps/nirmata-desktop` | Tauri 2, comandos de transporte y frontend web pequeño. Presenta estado; no contiene SQL, prompts ni reglas del canon. |
+| Proyecto cerrado, captura completa | Se renderiza también todo `world-view` aunque tenga `hidden`. Una regla de layout gana a la semántica nativa y expone controles inválidos sin mundo. |
+| Mundo abierto, `960x680` | El primer viewport sigue mostrando el formulario de crear/abrir. El mundo activo y el workspace quedan fuera del fold; la app parece no haber abierto el proyecto. |
+| Mundo abierto, captura desktop completa | La pantalla apila variantes, layout, IA, narrativa, importación, simulación y finalmente el editor. El flujo diario aparece después de varios laboratorios avanzados. |
+| Mobile `390x844` | Todo se convierte en una columna extremadamente larga; los controles técnicos ocupan decenas de pantallas y no existe navegación contextual. |
+| Lighthouse snapshot | Accesibilidad 92/100. Fallan contraste en 17 botones, nombre accesible del selector de tipo y árbol de accesibilidad asociado. |
+| Consola | Hay campos sin `name`/autocomplete y un recurso 404; los errores de extensión del navegador no pertenecen a Nirmata. |
 
-La unidad de escritura es `ChangeSet`: contiene `world_id`, `base_revision`,
-operaciones tipadas, versiones esperadas, fuentes y decisiones. Un draft pasa
-por esquema, integridad estructural, tiempo/ciclo de vida, reglas codificadas,
-subgrafo afectado, crítico semántico independiente, revisión humana,
-revalidación contra la revisión vigente y una transacción SQLite atómica. Existe
-como máximo un intento de reparación. Una consulta nunca produce operaciones.
+### Autocrítica visual
 
-El dominio mínimo incluye `World`, `Entity`, `Relation`, `Event`, `Goal`,
-`Rule`, `Claim`, `Document`, `ChangeSet` y `DecisionPoint`. Los IDs son estables
-y no dependen de nombres o rutas. Cada fila editable tiene `version`; cada
-commit crea inicialmente una revisión lineal con un solo padre. Hay auditoría y
-undo. Después de estabilizar esta base se incorporan variantes con cabezas
-explícitas, lectura histórica y merge seguro limitado; no se usa event sourcing
-completo, CRDT ni colaboración concurrente.
+- La paleta oscura es consistente, pero todas las superficies tienen peso visual
+  similar; no hay jerarquía entre tarea primaria, configuración y laboratorio.
+- El diseño parece un formulario administrativo: cajas, bordes y textareas, no
+  un entorno editorial orientado a objetos, relaciones e historias.
+- Se usan colores distintos para IA, narrativa y simulación, pero el color no
+  resuelve la arquitectura de información ni explica qué es canónico.
+- La densidad es baja donde debería ser compacta (shell y navegación) y alta
+  donde debería guiar (formularios complejos, merge e importación).
+- Los paneles avanzados compiten por el ancho y la atención aunque el usuario no
+  los esté usando.
+- El producto mezcla español e inglés: drafts, scope, story time, loose ends,
+  Factions, Resources, Stocks, Rules, Kind, Request y Max steps.
+- Los IDs y mini-DSL con `|` convierten tareas de autor en edición de formatos de
+  transporte.
+- Los botones primarios actuales usan blanco `#fff` sobre azul `#0284c7`, con
+  contraste aproximado 4.09:1, inferior al mínimo AA 4.5:1 para ese texto.
 
-Los claims separan:
+### Revisión visual tras Fase 0
 
-- `authentication`: `canonical`, `attributed`, `disputed`;
-- `modality`: `assertion`, `belief`, `hypothesis`, `counterfactual`;
-- `holder`, `register`, `polarity`, fuente y periodo de validez;
-- forma normalizada opcional (`predicate_key` y objeto entidad o escalar);
-- procedencia mediante documento/claim/revisión.
+Se repitieron capturas del frontend compilado con bridge Tauri simulado en
+`960x680` y `390x844` después de UX-005–UX-008.
 
-La ausencia significa desconocido. `NULL` nunca significa falsedad. Claims
-opuestos pueden coexistir si pertenecen a holders, modalidades o registros
-distintos; dos claims canónicos normalizados, activos y opuestos en el mismo
-contexto y periodo bloquean el estado final.
+- Proyecto cerrado ya no filtra ninguna superficie del mundo y el árbol de
+  accesibilidad contiene solo crear/abrir.
+- En `960x680`, el botón final de creación todavía queda bajo el fold; la
+  decisión de abrir sí permanece visible. Esto confirma que el wizard y la
+  nueva pantalla Inicio de UX-029 no deben conservar el formulario largo.
+- En `390x844` no apareció scroll horizontal, pero `Abrir mundo` queda después
+  de todo el formulario manual. La futura landing debe presentar primero los
+  tres caminos de creación y abrir un proyecto como decisiones equivalentes.
+- La primera captura con busy descubrió un bucle del `MutationObserver`: la
+  franja reasignaba el mismo texto y se notificaba a sí misma. Se corrigió
+  evitando mutar el nodo cuando el mensaje no cambia y se añadió un safety
+  check específico.
+- El diagnóstico real contra Microsoft Foundry verificó `/openai/v1/responses`
+  con estado `completed` y el modelo configurado, sin enviar contexto de mundo
+  ni crear propuestas. No es necesario cambiar al contrato chat completions.
 
-El tiempo narrativo usa ticks `i64` relativos al epoch del mundo. `EventTime`
-tiene `kind` (`unknown`, `instant`, `interval`, `ongoing`), inicio/fin
-opcionales, precisión y certeza. Las relaciones de intervalos de Allen se
-calculan en Rust y no se persisten. El orden de discurso se deriva del
-`ordinal` de `content_reference`; un flashback no cambia el tiempo del evento.
+### Revisión visual de journeys y versiones
 
-La recuperación comienza por selección explícita, continúa con relaciones SQL y
-CTE, ventana temporal, goals y perspectivas, y termina con FTS5. Esa tubería ya
-es RAG determinista. El resultado conserva procedencia y distingue `hecho`,
-`perspectiva`, `inferencia`, `sin_evidencia` y `no_especificado`. Solo si el
-benchmark demuestra huecos de paráfrasis o vocabulario se añade recuperación
-semántica como índice derivado dentro del mismo proyecto SQLite y se combina con
-ranking híbrido citado. Una base vectorial o de grafos separada no es parte de
-la arquitectura predeterminada.
+Se capturaron la nueva landing, el paso `Crear una base del mundo con IA` y el
+mundo abierto en `960x680`, además de la landing en `390x844`.
 
-La GUI ofrece modos explícitos `Consultar` y `Proponer`, además de navegación,
-editor, contexto y cambios pendientes. La revisión permite aceptar, editar o
-rechazar cada operación. Los reemplazos y conflictos de alto riesgo exigen que
-el usuario registre su juicio antes de revelar la resolución sugerida por IA.
+- Los tres caminos y `Abrir mundo` aparecen como decisiones del primer viewport
+  desktop; ya no es necesario recorrer primero el formulario manual.
+- La primera versión narrow conservó tres columnas y volvió ilegible el copy.
+  La autocrítica produjo un breakpoint específico: a `390x844` las opciones son
+  tarjetas compactas de una columna, sin scroll horizontal.
+- El paso IA comunica correctamente que primero crea el proyecto y luego una
+  propuesta revisable, pero aún es un formulario largo. UX-031 deberá convertir
+  esos campos en pasos, no conservar la página vertical.
+- `Escribiendo en: Canon principal · Viendo: versión actual` se entiende sin
+  UUID; la revisión interna se movió a `Detalles técnicos`.
+- El encabezado de mundo y versiones todavía consume casi todo `960x680` y el
+  workspace sigue fuera del fold. La solución pertenece a la topbar/sidebar de
+  UX-035/036, no a seguir comprimiendo esta página imperativa.
+- El árbol de accesibilidad de la landing expone nombres completos para los tres
+  caminos y la consola quedó sin mensajes tras añadir autocomplete al nombre.
 
-Las capacidades posteriores conservan las mismas fronteras:
+### Revisión visual del primer corte React
 
-- `Revisión profunda` es un modo explícito, acotado y de solo lectura para
-  especialistas seleccionados por relevancia; un sintetizador produce
-  `DecisionPoint`s y un `ChangeSetDraft`, nunca un commit.
-- La importación de lore trata Markdown, texto y documentos como material no
-  confiable, conserva fragmentos y procedencia, y usa extracción graph-aware
-  únicamente para proponer entidades, relaciones, eventos, claims y reglas.
-- Las variantes mantienen cabezas nombradas y conflictos manuales; el merge
-  automático se limita a operaciones no solapadas o conmutativas.
-- El tick sigue siendo el tiempo canónico. Un calendario fijo por mundo es solo
-  una capa de conversión y visualización.
-- La simulación se limita a facciones y recursos, corre fuera del canon y solo
-  entra mediante un `ChangeSet` revisado.
-- La extracción narrativa deriva timelines, hilos causales, cabos sueltos y
-  documentos desde el canon; no promete generar novelas.
-- El VFS lógico se exporta e importa mediante snapshots explícitos para backup o
-  edición externa, nunca mediante sincronización bidireccional viva.
+La landing React se capturó en `960x680` después de un ciclo simulado completo
+crear → mundo abierto → cerrar.
+
+- La superficie conserva exactamente la composición aprobada y el foco vuelve a
+  `Empezar manualmente` al cerrar el mundo.
+- El primer smoke detectó que `busy` y el formulario sobrevivían ocultos porque
+  el componente retornaba `null` sin desmontarse. Se corrigió reseteando estado
+  al transicionar la sesión a `null` y se añadió un safety check.
+- El segundo smoke confirmó landing limpia, tres caminos, ningún botón
+  deshabilitado y status inicial correcto después de reabrir/cerrar.
+- La landing no genera mensajes de consola. Los avisos `name`/autocomplete
+  observados tras abrir pertenecen a formularios legacy del mundo y siguen
+  asignados a UX-043/072.
+- React aumentó el bundle inicial a 328,46 kB/95,12 kB gzip, todavía por debajo
+  del presupuesto de 250 kB gzip. Este coste refuerza migrar por superficies y
+  no agregar librerías hasta su primer uso real.
+- Playwright repitió la landing en `960x680` con IPC Tauri simulado sobre los
+  imports oficiales. El recorrido de teclado y axe no reportaron violaciones
+  serious/critical; el azul primario cambió de `#0284c7` a `#0369a1` para
+  corregir el contraste base documentado en la auditoría inicial.
+
+### Revisión visual de temas semánticos
+
+Playwright capturó landing light, dark y high contrast en `960x680`, recorrió
+los tres formularios en `390x844` y emuló reduced motion.
+
+- Light adopta papel cálido y tipografía oscura; se acerca a mesa editorial y
+  abandona la estética de dashboard azul.
+- Dark usa negro cálido y separadores neutrales. La jerarquía de las tres
+  tarjetas aún es deliberadamente plana; onboarding decidirá si una opción debe
+  recomendarse, no el color.
+- High contrast aplana superficies y eleva bordes a 2 px sin depender solo del
+  color; axe no reportó contraste, serious ni critical.
+- El primer test narrow detectó 8 px de overflow causados por extender el fondo
+  con margen negativo. Se eliminó la causa en vez de ocultar overflow; manual,
+  IA e importación pasan ahora a `390x844`.
+- El gutter exterior sigue oscuro porque el documento y `world-view` conservan
+  el sistema legacy. No se añadió un scope oscuro de compatibilidad: cada
+  superficie migrada debe adoptar tokens y retirar sus literales.
+- El selector de tema vive provisionalmente en la landing para hacer verificable
+  la preferencia; Settings será su owner final en UX-038.
+
+### Revisión visual app-wide de UX-021
+
+Se capturó el mismo mundo vacío en light, dark y high contrast a `1440x900` y se
+repitieron forced colors, read-only y error con axe.
+
+- Light transforma también versiones, layout, IA, narrativa, importación,
+  simulación y workspace; ya no es una isla clara rodeada por paneles oscuros.
+- Dark conserva la voz cálida sin gradientes por subsistema. IA, narrativa y
+  simulación se distinguen por texto/estado, no por fondos decorativos.
+- High contrast lleva superficies al canvas y bordes a 2 px. La jerarquía se
+  vuelve deliberadamente más austera, pero foco, acciones y solo lectura siguen
+  reconocibles.
+- Axe encontró inicialmente 13 fugas de selectores legacy más específicos:
+  metadata, sliders, empty states, credencial y ayuda de campos. Se corrigieron
+  en sus roles semánticos sin excluir reglas del análisis.
+- Se eliminaron todos los hex/rgb/color-mix de reglas de componentes y aliases
+  `--border/--surface/--accent/--mono/--danger`; los literales viven únicamente
+  en los bloques de tokens light/dark.
+- La captura confirma una deuda de arquitectura de información, no de tema: la
+  barra de versiones sigue densa y los laboratorios preceden al workspace. Se
+  mantiene asignada a UX-035/036/068 y no se ocultó dentro de UX-021.
+
+### Revisión visual de Inicio, Settings y shell editorial
+
+El 13 de agosto de 2026 se repitieron capturas Playwright en `960x680`,
+`1440x900` y `390x844` después de UX-029–UX-032, UX-035, UX-036 y UX-038.
+
+- Inicio contiene los tres caminos, abrir, recientes, estado IA, Settings y
+  Ayuda en el primer viewport `960x680`; ninguna superficie del mundo se monta
+  visualmente antes de abrir un proyecto.
+- El wizard narrow no tiene scroll horizontal y no invoca `create_world` antes
+  del resumen final. La primera captura reveló títulos demasiado grandes y se
+  redujo su escala solo bajo `560px`; el formulario sigue siendo vertical por la
+  limitación real de `390px`, pero ya no apila laboratorios ajenos al journey.
+- Settings usa Dialog/Tabs con foco atrapado y retorno explícito al disparador.
+  La prueba detectó que el efecto de foco de Inicio robaba inicialmente ese
+  retorno; se corrigió el ownership en vez de relajar la aserción.
+- La primera shell heredó el azul primario de las tarjetas de Inicio en todos
+  los botones laterales y enfocó el título inicial con un contorno excesivo. La
+  autocrítica produjo una sidebar neutral con énfasis solo en el área activa y
+  foco programático únicamente después de navegación iniciada por el usuario.
+- Mundo abierto presenta proyecto, variante, vista, búsqueda, cambios, Settings
+  y Ayuda en una línea a `1440x900`; Inicio del mundo ocupa el área principal y
+  narrativa, simulación, importaciones y versiones permanecen ocultas hasta
+  entrar en su área, sin desmontar ni perder valores de formularios.
+- Unit 5/5, E2E 23/23, safety 20/20 y axe sin serious/critical pasaron. El
+  gate Rust quedó en 261/261, 1 omitido, y desktop build pasó. Bundle actual:
+  JS 508,92 kB/151,45 kB gzip y CSS 50,29 kB/9,23 kB gzip, dentro de los
+  presupuestos iniciales.
+
+### Revisión visual del explorador React
+
+Se capturó Mundo con 200 resultados a `1440x900` después de UX-037, UX-040 y
+UX-041.
+
+- Explorador, editor y contexto permanecen visibles en tres columnas; 200
+  resultados usan tarjetas compactas con tipo, clasificación y autoridad, sin
+  URI, UUID ni `FTS` en el flujo principal.
+- La primera prueba axe encontró una estructura ARIA inválida: un `listbox`
+  contenía `article`s además de options para alojar detalles técnicos. Se cambió
+  a región navegable con botones y teclado explícito, en vez de ocultar la
+  violación.
+- La primera medición de cambio de filtro dio 56,2 ms porque vaciaba la lista y
+  esperaba dos frames. Se conservó el resultado anterior con `placeholderData`
+  durante la consulta y el primer paint efectivo quedó bajo 50 ms sin relajar el
+  gate.
+- La autocrítica visual confirma que el explorador ya sigue la dirección
+  editorial, pero el editor legacy aún duplica creación y muestra enums como
+  `Place`; se retiró la creación duplicada y el lenguaje/pickers quedan asignados
+  a UX-042/043, no parcheados dentro del explorador.
+- La segunda captura sustituyó la columna de contexto vacía por tabs Canon,
+  Perspectivas, Metas, Cronología y Avisos. La evidencia relacionada ocupa el
+  espacio solo cuando existe y muestra autoridad/clasificación sin IDs; el enum
+  inglés e identificador abreviado que aún aparecen en el editor central quedan
+  como deuda explícita de UX-043.
+
+## Respuestas de producto que la nueva UI debe hacer evidentes
+
+### ¿Dónde genero el mundo?
+
+La pantalla `Nuevo mundo` ofrecerá tres caminos explícitos:
+
+1. **Empezar manualmente:** nombre, premisa y estructura vacía.
+2. **Crear una base con IA:** wizard de género, premisa, temas, tono, escala,
+   restricciones y elementos iniciales. La IA produce un plan y un conjunto de
+   cambios revisable; nunca aplica un mundo completo directamente.
+3. **Estructurar material existente:** importar Markdown/texto, extraer
+   candidatos y revisar su ingreso al canon.
+
+La acción se llamará `Crear base del mundo con IA`, no `Generar todo el mundo`.
+El producto debe explicar que un mundo coherente se desarrolla iterativamente y
+que la primera generación crea una base editable, no una verdad completa.
+
+### ¿Cómo pido modificaciones?
+
+- Desde cualquier objeto: acción contextual `Pedir un cambio`.
+- Desde el asistente acoplable: modo `Proponer cambios`.
+- Desde la command palette: `Proponer cambio sobre la selección`.
+- La petición produce siempre una propuesta en la cola global de revisión.
+- La tarjeta de revisión reúne validación, crítica final, decisiones y acción
+  `Aplicar al mundo`; el usuario no debe recorrer paneles distantes.
+
+### ¿Hay chat?
+
+Hoy existe consulta puntual, no chat. El rediseño debe elegir y cumplir una
+promesa clara:
+
+- Implementar conversaciones locales con mensajes usuario/asistente, historial,
+  contexto visible, fuentes y borrado sin afectar canon; o
+- Si el backend multi-turn no está listo, llamar la superficie `Consulta` y no
+  mostrar lenguaje de chat/transcript.
+
+Este backlog adopta conversación local explícita. El historial conversacional
+no es canon y la acción `Convertir en propuesta` crea un nuevo workflow de
+edición con confirmación del usuario.
+
+### ¿Qué son las cabezas?
+
+Una head es la última revisión de una variante; es un detalle interno. La UI
+principal usará:
+
+| Interno | Texto de usuario |
+|---|---|
+| Active variant | `Escribiendo en: Canon principal` |
+| Observed scope | `Viendo: versión actual` o `Viendo: versión del 12 ago` |
+| Head | `Última versión` |
+| Return to head | `Volver a la versión actual` |
+| Stale | `Propuesta desactualizada` |
+| Merge source/destination | `Traer cambios de B hacia A` |
+
+IDs, parent revision y heads quedan en `Detalles técnicos` y Settings > Avanzado.
+
+### ¿Debe parecer software con Settings y About?
+
+Sí. La shell tendrá barra superior, navegación primaria, command palette, panel
+de asistente, cola de revisión, Settings y About. Settings incluirá apariencia,
+IA, proyecto, accesibilidad y opciones avanzadas. About mostrará versión,
+licencia, arquitectura local-first, privacidad y documentación.
+
+## Arquitectura de información objetivo
+
+### Shell de escritorio
+
+```text
++--------------------------------------------------------------------------+
+| Proyecto | Escribiendo en | Viendo | Buscar / Ctrl+K | Cambios | Ayuda   |
++-------------+------------------------------------------+-----------------+
+| Inicio      |                                          | Asistente       |
+| Mundo       | Editor / vista principal                 | Preguntar       |
+| Cronología  |                                          | Proponer        |
+| Narrativa   |                                          | Fuentes         |
+| Simulación  |                                          |                 |
+| Importar    |                                          |                 |
+| Versiones   |                                          |                 |
++-------------+------------------------------------------+-----------------+
+| Cola de revisión: resumen, bloqueos y siguiente acción                  |
++--------------------------------------------------------------------------+
+```
+
+### Navegación primaria
+
+1. `Inicio`
+2. `Mundo`
+3. `Cronología`
+4. `Estudio narrativo`
+5. `Laboratorio de simulación`
+6. `Importaciones`
+7. `Versiones e historial`
+8. `Settings`
+
+About vive en Ayuda. Las features avanzadas se cargan al entrar, no ocupan la
+pantalla principal permanentemente.
+
+### Lenguaje de producto
+
+- `Guardar draft` → `Preparar cambios`
+- `ChangeSet` → `Conjunto de cambios`
+- `Confirmar ChangeSet` → `Aplicar al mundo`
+- `Waiver` → `Aceptar advertencia con motivo`
+- `DecisionPoint` → `Decisión pendiente`
+- `Retcon` → `Tipo de cambio editorial` dentro de opciones avanzadas
+- `Story time` → `Orden cronológico`
+- `Discourse order` → `Orden en que se cuenta`
+- `Loose ends` → `Cabos abiertos`
+- `Scope` → `Vista analizada`
+- `FTS` → `Buscar`
+- `VFS lógico` → `Explorador del mundo`
+
+## Decisión de stack frontend
+
+### Stack recomendado
+
+| Área | Decisión | Motivo |
+|---|---|---|
+| Framework | React estable + TypeScript estricto | La GUI ya necesita componentes, ownership de estado, lifecycle, formularios y overlays. |
+| Build | Vite SPA estática | Tauri recomienda Vite para SPA; aporta HMR, bundling, minificación y code splitting. |
+| Estilos | Tailwind CSS v4, condicionado por gate de WebView | CSS estático, tokens y productividad; no soporta WebViews antiguos. |
+| Tokens | Variables CSS semánticas | Mantienen identidad propia y permiten light/dark/high contrast sin acoplarse a utilities. |
+| Primitivas | `radix-ui` tree-shakeable | Dialog, Select, Tooltip, Tabs, Popover y foco accesible. |
+| Componentes | shadcn/ui selectivo, código copiado y revisado | Acelera componentes sin adoptar un kit cerrado ni estética SaaS genérica. |
+| Datos Tauri | TanStack Query | Cache e invalidación explícita de estado asíncrono por mundo/variante/revisión. |
+| Estado UI | Estado local y `useReducer` por workspace | Evita otro store global; TanStack cubre datos backend. |
+| Formularios | React Hook Form | Dirty state, field arrays, foco de error y rerenders localizados. Rust sigue siendo autoridad. |
+| Paneles | `react-resizable-panels` | Splitters accesibles por teclado, collapse y persistencia de layout. |
+| Command palette | `cmdk`, solo al implementar UX-037 | Búsqueda de objetos y acciones con teclado. |
+| Iconos | `lucide-react`, tras inventario de iconos | Evita iconos inconsistentes; no se agrega antes de uso real. |
+| Tests | Vitest + Testing Library + user-event | Comportamiento por roles, teclado, foco y forms. |
+| Visual/E2E web | Playwright + IPC Tauri simulado + axe | Screenshots, responsive y accesibilidad en entorno estable. |
+| E2E binario | WebdriverIO Tauri, condicional | Solo para dialogs/plugin/WebView real no cubiertos por browser tests. |
+
+Fuentes oficiales:
+
+- Tauri frontend/Vite: <https://v2.tauri.app/start/frontend/>
+- Tailwind v4 con Vite: <https://tailwindcss.com/docs/installation/using-vite>
+- Compatibilidad Tailwind v4: <https://tailwindcss.com/docs/compatibility>
+- shadcn para Vite: <https://ui.shadcn.com/docs/installation/vite>
+- Radix y accesibilidad: <https://www.radix-ui.com/primitives/docs/overview/introduction>
+- TanStack Query: <https://tanstack.com/query/latest/docs/framework/react/overview>
+- React Hook Form: <https://react-hook-form.com/get-started>
+- Mocks Tauri: <https://v2.tauri.app/develop/tests/mocking/>
+- WCAG 2.2: <https://www.w3.org/TR/WCAG22/>
+
+### Gate obligatorio de Tailwind v4
+
+Tailwind v4 requiere Chrome 111, Safari 16.4 o Firefox 128. Antes de adoptarlo:
+
+- Windows: verificar WebView2 111 o superior.
+- macOS: fijar macOS 13.3 o superior como piso práctico.
+- Linux: fijar distribuciones/WebKitGTK soportados y probar CSS real.
+- Si la matriz necesita WebViews más antiguos, conservar React + Vite + Radix y
+  usar CSS convencional con variables semánticas; no introducir hacks dobles.
+
+### Dependencias que no se agregan por defecto
+
+- Next.js, SSR o metaframework.
+- Redux, Zustand, Jotai o MobX.
+- Zod como segunda autoridad del dominio.
+- Material UI, Ant Design, Chakra o Mantine junto a Radix.
+- CSS-in-JS, Sass o Less.
+- Framer Motion para transiciones simples.
+- Storybook antes de una necesidad demostrada.
+- Router framework; la navegación inicial es estado de shell local.
+- Virtualización, data grid o editor Markdown pesado sin medición.
+- Catálogo completo de shadcn o barrels de componentes.
+- Un cliente IPC genérico que esconda comandos Tauri específicos.
+
+## Gates medibles del rediseño
+
+| Gate | Objetivo |
+|---|---|
+| Funcionalidad | Paridad de los comandos y workflows actualmente aceptados antes de borrar la UI vieja. |
+| Bundle JS inicial | ≤ 250 KiB gzip. |
+| CSS inicial | ≤ 60 KiB gzip. |
+| Lazy chunk | ≤ 150 KiB gzip por feature sin justificación. |
+| Arranque | Shell interactivo P95 ≤ 1 s en hardware Windows de referencia. |
+| Paint tras abrir mundo | ≤ 150 ms P95 después de `open_world`. |
+| Búsqueda | Keystroke a paint con 200 resultados ≤ 50 ms P95. |
+| Command palette | Apertura y primera respuesta visual ≤ 100 ms. |
+| Resize | Sin long task > 50 ms; objetivo 55+ fps. |
+| Accesibilidad | Cero violaciones axe serious/critical y contraste WCAG 2.2 AA. |
+| Teclado | Crear, navegar, editar, revisar y aplicar sin mouse. |
+| Responsive | Flujos esenciales operables en `720x520`, `960x680` y `1440x900`. |
+| Mobile narrow | Sin scroll horizontal ni controles técnicos obligatorios a `390x844`. |
+| Seguridad | Cero `innerHTML`, `dangerouslySetInnerHTML` o scripts remotos en lore/IA. |
+| Foco | Dialogs/palette devuelven foco; error enfoca primer campo inválido. |
+| IPC | Cero listeners duplicados después de montar/desmontar. |
+| Stale safety | Nunca se habilita `Aplicar al mundo` tras cambiar revisión sin revalidar. |
+| Regresión visual | Cero diferencias no aprobadas en fixtures desktop/light/dark/read-only/error. |
 
 ## Alcance
 
-### Fundamento funcional — NIR-001–NIR-052
+Incluye:
 
-- Crear, guardar, cerrar y reabrir un mundo local.
-- Editar premisa, reglas, entidades, relaciones, goals, eventos, claims y
-  documentos.
-- Mantener referencias de contenido, causalidad, participantes, perspectivas,
-  tiempo incierto e intervalos.
-- Buscar mediante SQL y FTS5; navegar fuentes por URI lógico estable.
-- Aplicar ediciones manuales y asistidas como `ChangeSet`s atómicos.
-- Clasificar retcons como `additive`, `reinterpretive` o `replacement`.
-- Revisar operaciones individualmente, resolver decisiones y reconocer
-  warnings o excepciones intencionales.
-- Revisiones lineales, auditoría local y undo.
-- Modos explícitos de consulta y propuesta con contexto visible.
-- Pipeline estándar de IA: generador → validadores Rust → crítico semántico
-  independiente → humano → transacción, con un solo intento de reparación.
-- Pruebas automatizadas de comportamiento no trivial en dominio,
-  almacenamiento, recuperación y workflow.
+- Reparar pérdida de trabajo y bloqueos UX existentes.
+- Arquitectura de información y lenguaje de producto.
+- Onboarding y creación/generación inicial.
+- Shell, navegación, Settings, About y Help.
+- Workspace editorial, asistentes, revisión, versiones, importaciones,
+  simulación y narrativa.
+- Migración controlada a React/Vite y sistema visual accesible.
+- Responsive, teclado, contrastes, performance y visual regression.
 
-### Capacidades de la solución general — NIR-053–NIR-089
+No incluye:
 
-- Evolución de RAG mediante benchmark, embeddings condicionales en SQLite,
-  ranking híbrido citado, invalidación y reconstrucción de índices.
-- Revisión multiagente profunda bajo solicitud explícita, con especialistas de
-  solo lectura, presupuestos estrictos, informes tipados, desacuerdos visibles y
-  síntesis revisable.
-- Importación de lore existente como propuestas con fragmentos, procedencia y
-  extracción graph-aware limitada a la ingestión.
-- Variantes nombradas, cabezas explícitas, comparación, lectura histórica y
-  merge seguro limitado.
-- Calendario ficticio fijo y deliberadamente pequeño como capa de presentación.
-- Simulación determinista y acotada de facciones y recursos en escenarios fuera
-  del canon.
-- Extracción narrativa y generación de documentos internos dependientes de
-  perspectiva, siempre revisables.
-- Segundo proveedor o proveedor local solo ante una necesidad funcional medida,
-  mediante refactor directo y sin capa de compatibilidad.
-- Exportación e importación del VFS lógico como snapshots explícitos.
+- Cambiar invariantes de dominio o autoridad de ChangeSet.
+- Colaboración multiusuario, nube o sincronización.
+- Marketplace, plugins o segundo proveedor.
+- Generación automática de novelas.
+- Reescritura del backend para acomodar un framework frontend.
+- Telemetría remota o estudios enviados sin consentimiento.
+- Mantener dos implementaciones frontend después de migrar cada superficie.
 
-### No objetivos explícitos
+## Reglas de ejecución
 
-- CI/CD, automatización de empaquetado o release, gobierno, proyectos genéricos
-  de observabilidad o calidad de código sin comportamiento de producto.
-- Estudios con usuarios, telemetría remota o personalización automática.
-- Colaboración multiusuario, CRDT, servidor de sincronización o edición
-  concurrente.
-- Agentes autónomos o continuos, subagentes anidados, coordinadores libres o
-  frameworks generales de planificación.
-- Base de grafos o vectorial obligatoria. SQLite, FTS5, CTE y un índice
-  semántico in-process son la primera opción; cualquier servicio externo exige
-  superar un gate medido y justificar migración y operación.
-- GraphRAG sobre el canon estructurado nativo; solo se permite extracción
-  graph-aware durante importación de material no estructurado.
-- Solvers generales de teoremas, OWL, Datalog, AGM, BDI, Dung, redes temporales
-  completas o Event Calculus general.
-- Plugins, marketplace de proveedores, interfaces de extensión especulativas o
-  compatibility shims.
-- Mapas procedurales, generación procedural, binarios multimedia administrados,
-  simulador universal, economía matemática, combate o galaxias.
-- DSL astronómico o motor universal de calendarios.
-- Generación de novelas completas.
-- Sincronización Markdown bidireccional viva, Python embebido o servicios
-  locales obligatorios administrados por el usuario.
-
-## Reglas de ingeniería
-
-Estas reglas son obligatorias durante la ejecución:
-
-1. Leer el flujo afectado de extremo a extremo y buscar implementaciones
-   existentes antes de crear código.
-2. Preservar cambios ajenos y limitar cada cambio a la necesidad actual.
-3. YAGNI primero; DRY solo después de duplicación real.
-4. No crear capas `service` o `repository`, factories, barrels, wrappers,
-   aliases, re-exports, compatibility layers ni interfaces con una sola
-   implementación.
-5. Preferir Rust, SQLite, HTML y controles nativos antes de agregar
-   dependencias. Incorporar cada dependencia solo cuando una tarea ya la use.
-6. Mantener una única ruta evidente para persistir, validar, llamar IA,
-   manejar errores y aplicar estilos.
-7. Core permanece síncrono y libre de I/O. SQL vive en store; prompts y HTTP en
-   ai; workflow en app; transporte y presentación en desktop.
-8. La IA no recibe herramientas ni handles de escritura. Texto libre nunca se
-   interpreta como mutación.
-9. Todo `ChangeSet` se confirma completo o se revierte completo.
-10. Los errores duros provienen de esquema, invariantes implementadas o
-    constraints SQLite; un hallazgo LLM es evidencia revisable.
-11. No registrar chain-of-thought ni lore en logs por defecto; guardar solo
-    fuentes, operaciones, reportes, contadores y decisiones necesarias.
-12. La lógica no trivial debe dejar al menos un check ejecutable. Usar las
-    pruebas nativas de Cargo y constraints SQLite; no agregar frameworks sin
-    necesidad.
-13. Ejecutar la comprobación más pequeña que cubra el cambio y documentar
-    comandos oficiales únicamente después de verificarlos.
-14. No declarar una tarea completada con errores conocidos o comportamiento no
-    comprobado.
+1. Resolver primero pérdida de datos, revisiones huérfanas y estado busy.
+2. Probar journeys por tareas humanas, no por presencia de botones.
+3. Mantener Rust como validación autoritativa; el frontend solo anticipa errores
+   triviales y presenta los errores de dominio junto al campo correcto.
+4. Una superficie tiene un solo owner. Al migrarla a React se elimina el renderer
+   imperativo correspondiente.
+5. shadcn aporta código, no decisiones visuales: cada componente se revisa,
+   simplifica y adapta a tokens Nirmata.
+6. UUID, URI, JSON, ticks y DSL quedan ocultos por defecto bajo opciones
+   avanzadas o reemplazados por pickers.
+7. Todo flujo read-only debe verse read-only antes de interactuar.
+8. Ninguna salida IA se presenta como canon; toda propuesta termina en la cola
+   global de revisión.
+9. No declarar una fase completada sin build, comportamiento, teclado,
+   accesibilidad y screenshots verificados.
+10. Actualizar este backlog con métricas y resultados reales durante la ejecución.
 
 ## Leyenda de estados
 
 | Estado | Significado |
 |---|---|
-| `Pendiente` | No iniciada. Estado inicial de toda tarea de implementación. |
-| `En progreso` | Trabajo activo con alcance y dependencias satisfechas. |
-| `Bloqueado` | No puede continuar; debe registrarse la causa concreta. |
-| `Completado` | Entregable implementado y criterio de aceptación verificado. |
+| `Pendiente` | No iniciada. |
+| `En progreso` | Trabajo activo con dependencias satisfechas. |
+| `Bloqueado` | Existe un impedimento concreto registrado. |
+| `Completado` | Implementación y criterio de aceptación verificados. |
 
 ## Secuencia recomendada
 
-Las fases son secuenciales. Dentro de una fase solo pueden adelantarse tareas
-sin dependencias pendientes; no se asume paralelismo artificial. Cada fase deja
-un producto más utilizable que la anterior.
+Las fases son secuenciales. P0 estabiliza el producto actual; luego se valida el
+stack y se migra por superficies completas. Una fase posterior no justifica
+mantener dos UIs para la misma capacidad.
 
-## Fase 0 — Primer corte vertical local
+## Fase 0 — Seguridad UX y baseline
 
-**Resultado:** una aplicación Tauri mínima crea un mundo, lo guarda en un
-`.nirmata`, lo cierra y lo reabre sin IA.
+**Resultado:** la UI actual deja de perder trabajo, esconder estados o mantener
+revisiones huérfanas antes de comenzar la migración visual.
 
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
+| Código | Estado | Dependencias | Entregable | Detalle | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-001 | Completado | — | Crear el workspace Rust 2024 mínimo. | Añadir el `Cargo.toml` raíz y únicamente `crates/nirmata-core`, `crates/nirmata-store`, `crates/nirmata-app` y `apps/nirmata-desktop`. Configurar dependencias dirigidas: store y app dependen de core; desktop depende de app. No crear todavía `nirmata-ai`, crates auxiliares, barrels ni módulos vacíos “para después”. | El workspace compila con los cuatro miembros iniciales; `nirmata-core` no contiene dependencias de SQLite, HTTP, GUI ni runtime async. | [Workspace](docs/architecture/workspace.md), [AGENTS](AGENTS.md) |
-| NIR-002 | Completado | NIR-001 | Definir primitivas mínimas de core. | Crear newtypes serializables para `WorldId` y `RevisionId`, un `World` con `id`, `name`, `premise_md`, `epoch_label`, `current_revision`, `created_at_ms` y `updated_at_ms`, y errores de dominio explícitos. Usar UUID para identidad y `i64` UTC milisegundos para tiempo editorial; no mezclarlo con ticks narrativos. Validar nombre no vacío y límites razonables de texto. | Pruebas unitarias demuestran creación válida, rechazo de nombre vacío y round-trip de serialización; core sigue síncrono y sin I/O. | [Modelo](docs/domain/model.md), [Sistema](docs/architecture/system-overview.md) |
-| NIR-003 | Completado | NIR-001, NIR-002 | Abrir y crear el archivo SQLite canónico. | En store, abrir rutas con extensión `.nirmata`, habilitar `foreign_keys`, usar transacciones para migraciones y crear tablas mínimas `schema_migrations`, `worlds` y `revisions`. La revisión inicial no tiene padre y representa la creación del mundo. Rechazar archivos con versión de esquema más nueva y reportar errores de ruta, lock o corrupción sin sobrescribir. | Una prueba temporal crea un archivo, verifica esquema y revisión inicial, lo reabre y obtiene el mismo `World`; un fallo de apertura no crea un mundo parcial. | [Almacenamiento](docs/architecture/storage.md), [Versionado](docs/research/critical-fronts/canon-versioning.md) |
-| NIR-004 | Completado | NIR-002, NIR-003 | Implementar casos de uso `create_world`, `open_world` y `close_world`. | En app, aceptar DTOs simples, validar en core y delegar persistencia a store. Mantener una sesión con ruta, `world_id` y revisión vigente. Impedir que dos mundos estén activos en la misma sesión y devolver errores tipados para archivo inexistente, formato inválido y esquema incompatible. | Pruebas de app crean, cierran y reabren un mundo conservando nombre, premisa y revisión; ningún caso de uso expone una conexión o SQL. | [Sistema](docs/architecture/system-overview.md), [MVP](docs/product/mvp.md) |
-| NIR-005 | Completado | NIR-001, NIR-004 | Crear la carcasa Tauri 2 y transporte mínimo. | Añadir comandos Tauri específicos `create_world`, `open_world`, `get_current_world` y `close_world`. Usar un frontend web pequeño con TypeScript, HTML y CSS nativos, sin librería de componentes. Mostrar selector de archivo, formulario de nombre/premisa, estado de carga y errores accionables. No exponer acceso libre a archivos ni un comando genérico. | Desde la GUI se crea un `.nirmata`, se muestra el mundo activo, se cierra y se reabre; cancelar el selector o fallar la ruta no bloquea la interfaz. | [Runtime](docs/architecture/language-runtime.md), [Interacción](docs/architecture/interaction-model.md) |
-| NIR-006 | Completado | NIR-003, NIR-004, NIR-005 | Probar el primer corte vertical completo. | Añadir la prueba de integración más pequeña que atraviese core, store y app; complementar con una verificación manual de la frontera Tauri sin introducir un framework E2E. Comprobar persistencia real en disco, reapertura y mensajes de error. | El corte crea y reabre un mundo en un proceso nuevo, conserva la revisión y deja el archivo válido tras cerrar; todas las pruebas nativas existentes pasan. | [Corte vertical](docs/validation/vertical-slice.md), [AGENTS](AGENTS.md) |
+| UX-001 | Completado | — | Reparar visibilidad closed/world. | `[hidden]` vuelve a imponer `display:none`; safety verifica la regla y la captura closed `960x680` excluye por completo `world-view`. | `npm run build` y frontend safety 10/10 pasaron; captura cerrada muestra exclusivamente crear/abrir. | `frontend/index.html`, `styles.css` |
+| UX-002 | Completado | UX-001 | Proteger formularios sucios al navegar. | `selectUri` protege el editor; `selectUriInScope` confirma antes de cambiar backend; búsqueda, filtros, citas, diff, revisión y undo reutilizan el guard por alcance y restauran foco/selector al cancelar. | Frontend build y safety verifican helper único; navegación ordinaria ignora revisiones que no perderá y cambios de workspace conservan guard amplio. | `workspace.ts`, `variant-ui.ts`, `assistant.ts` |
+| UX-003 | Completado | — | Descartar revisiones realmente. | Revisiones IA invocan `discard_ai_run`; manual/merge/snapshot/simulación invocan `discard_manual_review`. La tarjeta se retira solo después del éxito backend. | Test app confirma que descartar libera la clave estable y permite recrear el mismo draft sin `ReviewSessionConflict`; fallo conserva tarjeta. | `render-pending.ts`, `manual_forms.rs` |
+| UX-004 | Completado | UX-003 | Unificar edición de revisión. | Se eliminó `Abrir formulario` y la restauración silenciosa de valores pendientes al navegar. `Editar cambio` usa `begin/apply_manual_review_edit`; `Ver objeto actual` muestra canon solo si existe before. | Test app conserva `reviewKey`, `operationId`, número de operaciones y revisión canónica; frontend safety rechaza rutas duplicadas. | `render-pending.ts`, `editor-model.ts`, manual review |
+| UX-005 | Completado | — | Estado global busy de IA. | Tauri expone `get_ai_activity` sin tomar el lock del mundo y la UI comparte una única actividad entre asistente, lore y narrativa. Una franja global cancelable bloquea controles que invocarían el backend, conserva el contenido visible y restaura el estado previo al terminar, fallar o cancelar; `app_busy` tiene recuperación en español. | Frontend build y safety 13/13 pasaron; desktop 15/15 verifica la bandera activa sin bloquear app. | `main.rs`, `state.ts`, `main.ts`, assistant, lore, narrativa |
+| UX-006 | Completado | UX-005 | Diagnóstico previo de IA. | `get_ai_provider_status` distingue credencial, secure store, endpoint HTTPS, modelo y conexión no comprobada. `Probar conexión` ejecuta un request mínimo cancelable sin contexto del mundo ni ChangeSet; asistente, lore y escritura narrativa permanecen deshabilitados hasta verificarlo, con acción directa a configuración. | Frontend build/safety 14/14, desktop 16/16 y app check pasaron; tests cubren estados locales y códigos estables de timeout/transporte/HTTP. | `main.rs`, `ai.rs`, `assistant.ts`, provider status |
+| UX-007 | Completado | UX-003 | Reparar importación bloqueada. | Los `DecisionPoint`s viven en estado y se renderizan como tarjetas accionables para identidad ambigua, autoridad de claims o rechazo. Lore escucha progreso de extracción/revisión, cada estado indica siguiente acción y borrar lote retira también su tarjeta pendiente local. | Frontend build/safety 14/14, lore import 8/8 y desktop 16/16 pasaron; los prompts sobreviven al `finally` y al rerender. | `lore-import.ts`, `lore_import.rs` |
+| UX-008 | Completado | UX-002 | Proteger trabajo efímero. | `ephemeralWork` registra lote activo, escenarios/formulario/mappings/resultados de simulación y derivaciones/formulario narrativo. Cierre y cambio de variante enumeran lo que se perderá; al aceptar se limpian owners locales y simulación se rotula como estado de sesión. | Frontend build/safety 15/15 y desktop 16/16 pasaron; `beforeunload`, cierre y switch comparten el guard y no descartan silenciosamente. | `state.ts`, `workspace.ts`, simulation/lore/narrative |
 
-## Fase 1 — Canon manual estructurado
+## Fase 1 — Modelo mental, journeys y sistema visual
 
-**Resultado:** el backend puede representar y persistir todo el dominio mínimo
-del canon sin depender de IA.
+**Resultado:** existe una especificación de producto comprensible y una identidad
+visual propia antes de elegir componentes.
 
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
+| Código | Estado | Dependencias | Entregable | Detalle | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-007 | Completado | NIR-002 | Completar `World` y definir `Rule`. | Mantener `World` con premisa y epoch. Definir `Rule` con `id`, `world_id`, `kind` (`constitutive`, `generative`, `institutional`, `authorial`), `statement_md`, `scope`, `severity`, fuente opcional, `validator_kind` opcional, parámetros JSON, versión y timestamps. Solo reglas con un `validator_kind` implementado podrán producir error duro. Prioridades, reglas derrotables y excepciones estructuradas se agregan únicamente cuando un caso real las consuma. | Core rechaza kind/severidad desconocidos y parámetros incompatibles con un validador conocido; reglas puramente semánticas siguen permitidas y llegan a revisión sin fingir validación Rust. | [Modelo](docs/domain/model.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-008 | Completado | NIR-002 | Definir `Entity` y sus invariantes. | Campos: `id`, `world_id`, `kind`, `name`, `slug`, `summary`, `body_md`, `attributes_json`, aliases, versión y timestamps. El slug es único por mundo pero no es identidad; aliases no pueden ser vacíos ni duplicarse por entidad. Mantener `attributes_json` como escape local, sin tabla por tipo ni esquema genérico. | Pruebas cubren nombre/slug, aliases normalizados, JSON válido y renombrado sin cambiar el ID. | [Almacenamiento](docs/architecture/storage.md), [Modelo](docs/domain/model.md) |
-| NIR-009 | Completado | NIR-008 | Definir `Relation`. | Campos: `id`, `world_id`, `source_entity_id`, `target_entity_id`, `kind`, `direction`, `valid_from_tick`, `valid_to_tick`, `certainty`, `source_reference`, `metadata_json`, versión. Prohibir extremos inexistentes, intervalo invertido y duplicado exacto; permitir auto-relación solo para kinds declarados explícitamente. No crear una ontología extensible ni base de grafos. | Validadores identifican duplicados, extremos inválidos e intervalo invertido, y aceptan relaciones dirigidas y no dirigidas válidas. | [Modelo](docs/domain/model.md), [Recuperación](docs/architecture/retrieval.md) |
-| NIR-010 | Completado | NIR-008 | Definir `Goal`. | Campos: `id`, `world_id`, `holder_entity_id`, `desired_state_md`, `priority`, `status` (`active`, `achieved`, `abandoned`, `frustrated`), periodo opcional, `visibility` (`public`, `secret`), fuente, versión. Un deseo persistente es Goal, no Claim; no inferir motivación cuando falte. | Core exige holder existente, estado deseado no vacío y periodo ordenado; una acción sin Goal puede quedar como motivación desconocida sin error duro. | [Modelo](docs/domain/model.md), [Fundamentos](docs/research/academic-foundations/design-consequences.md) |
-| NIR-011 | Completado | NIR-002 | Implementar `EventTime` y comparaciones temporales necesarias. | Definir `kind` (`unknown`, `instant`, `interval`, `ongoing`), `start_tick`, `end_tick`, `precision` (`exact`, `day`, `month`, `year`, `era`, `unknown`) y `certainty` (`certain`, `approximate`, `uncertain`, `approximate_uncertain`). Validar combinaciones por kind. Implementar como funciones puras únicamente `before`, `after`, `overlaps`, `during`, `contains` y `equals`, que cubren causalidad, solapamiento de claims y lifecycle del MVP; no persistir resultados derivados. | Pruebas de tabla cubren las seis comparaciones, límites iguales, intervalos inválidos, `ongoing` sin fin y `unknown` sin posición inventada. Las demás relaciones de Allen no existen hasta que una regla concreta las necesite. | [Tiempo](docs/research/critical-fronts/narrative-time.md), [Modelo](docs/domain/model.md) |
-| NIR-012 | Completado | NIR-008, NIR-010, NIR-011 | Definir `Event`, participantes y causalidad. | `Event` incluye `id`, `world_id`, `kind`, `summary`, `body_md`, `EventTime`, ubicación opcional, versión y timestamps. Participantes guardan entidad, rol y ordinal. Enlaces entre eventos usan `enables`, `causes`, `motivates`, `prevents`, `terminates` o `reveals`; goals afectados se enlazan explícitamente. No almacenar relaciones temporales derivables. | Core rechaza participante/evento inexistente, ordinal duplicado y causalidad hacia el mismo evento; una causa posterior conocida se reporta como conflicto temporal. | [Modelo](docs/domain/model.md), [Narrativa computacional](docs/research/academic-foundations/computational-narrative.md) |
-| NIR-013 | Completado | NIR-008, NIR-011 | Definir `Claim` con contexto epistemológico. | Campos: `id`, `world_id`, sujeto, `content_md`, `predicate_key` opcional, objeto entidad o escalar opcional, `polarity`, `authentication`, holder opcional, modalidad opcional, register opcional, base epistemológica, fuente, documento/claim de procedencia opcionales, confianza declarada opcional, periodo, revisión de alta/sustitución y versión. `canonical` no lleva holder ni modalidad; `attributed` exige ambos. La confianza pertenece al holder, no al modelo. | Pruebas cubren canon, rumor, creencia, negación explícita, dato desconocido y procedencia inválida; contextos distintos pueden contener claims opuestos. | [Conocimiento incierto](docs/research/critical-fronts/uncertain-knowledge.md), [Modelo](docs/domain/model.md) |
-| NIR-014 | Completado | NIR-008, NIR-012, NIR-013 | Definir `Document` y `ContentReference`. | `Document` contiene `id`, `world_id`, `title`, `kind`, autor/perspectiva opcional, estado canónico, `body_md`, versión y timestamps. `ContentReference` enlaza un source tipado con un target tipado por ID y `ordinal`; el ordinal es único por contenido y define orden de discurso. Proveer parser de URI `nirmata://<kind>/<uuid>` sin acceso físico a archivos. | Pruebas demuestran orden estable de menciones, resolución de URI, rechazo de targets inexistentes y que un flashback solo cambia ordinal, no `EventTime`. | [Almacenamiento](docs/architecture/storage.md), [Tiempo](docs/research/critical-fronts/narrative-time.md) |
-| NIR-015 | Completado | NIR-007–NIR-014 | Consolidar validadores deterministas de core. | Crear funciones explícitas, no un framework de reglas, para validar referencias, cardinalidad, unicidad, versiones, claims, periodos, causalidad y estados de ciclo de vida mínimos (`alive/dead`, rol, posesión, relación activa cuando estén codificados). Devolver `ValidationIssue` con código estable, severidad, objetos y mensaje; ausencia de datos produce `unspecified`, no `false`. | Una suite unitaria cubre referencias rotas, muerte antes de nacimiento, actor después de muerte, causalidad posterior, claims canónicos opuestos y casos válidos con vacíos. | [Validación](docs/architecture/validation-pipeline.md), [AGENTS](AGENTS.md) |
-| NIR-016 | Completado | NIR-003, NIR-007–NIR-014 | Migrar el esquema completo del canon manual. | Añadir tablas para rules, entities, entity_aliases, relations, events, event_participants, event_links, event_goals, goals, claims, documents y content_references. Usar foreign keys, `CHECK`, índices por `world_id`, IDs y tiempo, y unicidad donde sea cerrada. Markdown permanece `TEXT`; JSON permanece texto validado en el borde. | Migraciones nuevas y desde el esquema inicial se ejecutan atómicamente; constraints rechazan FK rota, slug duplicado e intervalo imposible sin dejar filas parciales. | [Almacenamiento](docs/architecture/storage.md), [Sistema](docs/architecture/system-overview.md) |
-| NIR-017 | Completado | NIR-015, NIR-016 | Implementar operaciones de lectura y escritura manual en store. | Añadir funciones orientadas al dominio para insertar, obtener, listar y actualizar cada agregado; usar SQL parametrizado y conversiones de fila locales al módulo correspondiente. Toda actualización comprueba `version` y la incrementa. Las escrituras relacionadas, como evento con participantes o documento con referencias, ocurren en una transacción. | Pruebas de store hacen round-trip de cada tipo, detectan versión obsoleta, prueban rollback de agregado incompleto y no exponen SQL o `rusqlite::Connection` fuera de store. | [Almacenamiento](docs/architecture/storage.md), [AGENTS](AGENTS.md) |
+| UX-009 | En progreso | UX-001–UX-008 | Baseline de usabilidad. | Protocolo B1–B5, registro crudo y métricas honestas definidos; auditoría visual cubre bloqueos cualitativos sin imputar tiempos desde tests. | Pendiente ejecutar sesiones moderadas y publicar tasas/tiempos reales. | `docs/validation/ux-baseline.md` |
+| UX-010 | En progreso | UX-009 | Arquitectura de información. | Árbol congelado, cinco tareas críticas y cinco diagnósticas definidos; gate exige 4/5 por tarea sin agregación engañosa. | Pendiente ejecutar cinco tree tests internos independientes. | `docs/validation/information-architecture-tree-test.md` |
+| UX-011 | En progreso | UX-009 | Glosario y content design. | Mapa de etiquetas de producto y copy principal migrados: propuestas, cambios, versiones, advertencias, narrativa y simulación. Los formatos técnicos restantes continúan visibles porque la UI antigua apila laboratorios y formularios avanzados. | Pendiente ocultar UUID/URI/JSON/ticks/DSL con la nueva shell y pickers para lograr cero términos internos en flujo básico. | `docs/product/content-design.md`, `helpers.ts`, renderers |
+| UX-012 | En progreso | UX-010–UX-011 | Modelo mental de versiones. | Barra implementada con `Escribiendo en`, `Viendo`, `Versión actual` y `Solo lectura`; selectores y rótulo ya no muestran IDs, y revisión interna vive en detalles técnicos. | Safety verifica ausencia de IDs visibles; pendientes cinco explicaciones independientes correctas sobre destino de cambio. | `docs/product/content-design.md`, `variant-ui.ts` |
+| UX-013 | Completado | UX-010 | Journey de creación/generación. | Landing navegable presenta manual, base con IA y material existente sobre un único formulario y un solo `create_world`. IA construye un resumen acotado y abre Proponer cambios; importación abre el owner existente, sin duplicar generación ni revisión. | Frontend build y safety 17/17 pasaron; teclado/a11y y capturas `960x680`/`390x844` verifican caminos, atrás sin crear archivo y copy de revisión previa. | `main.ts`, `index.html`, `docs/product/creation-and-ai-journeys.md` |
+| UX-014 | Completado | UX-010 | Journey preguntar/modificar. | `AiQueryResponse.proposalAction` produce `Convertir en propuesta` con confirmación y stale scope guard; `Pedir un cambio sobre la selección` y creación IA reutilizan el mismo evento/modo y único `execute_ai_proposal`. | Safety verifica una sola ejecución; recorrido en browser confirmó modo `Proponer cambios`, solicitud heredada y foco, sin escritura ni revisión paralela. | `assistant.ts`, `render-editor.ts`, AI interaction model |
+| UX-015 | Completado | UX-010 | Especificación Settings/About. | Inventario limitado a capacidades reales: proveedor fijo, secure store, proyecto, detalles técnicos, metadata Tauri, licencia y privacidad local-first. Se explicitan secciones sin preferencias y datos que no deben inventarse. | Revisión de contratos confirma que secretos nunca regresan a JS y que no se agregaron parámetros hipotéticos. | `docs/product/settings-and-about.md` |
+| UX-016 | Completado | UX-011 | Sistema visual Nirmata. | Tokens light/dark, autoridad, severidad, tipografía editorial/UI, densidad, grid desktop/narrow, iconografía, forced colors y reduced motion definidos con gates. | Ratios documentados superan AA; dirección elimina dashboard/cajas por defecto y no prescribe dependencias. | `docs/product/visual-system.md` |
 
-## Fase 2 — Cambios seguros, revisiones y undo
+## Fase 2 — Plataforma frontend y gates tecnológicos
 
-**Resultado:** toda edición manual pasa por revisión estructurada, validación y
-commit atómico con historial reversible.
+**Resultado:** Vite/React y las primitivas elegidas funcionan dentro de Tauri con
+tests y presupuestos antes de migrar workflows.
 
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
+| Código | Estado | Dependencias | Entregable | Detalle | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-018 | Completado | NIR-007–NIR-015 | Definir `ChangeSetDraft`, `ChangeSet` y operaciones tipadas. | Incluir `id`, `world_id`, `base_revision`, objetivo, fuentes, supuestos, operaciones y decisiones. Cada operación tiene `operation_id`, tipo concreto, payload antes/después, IDs afectados, `expected_version` y retcon (`additive`, `reinterpretive`, `replacement`). Cubrir crear/actualizar/eliminar los agregados del MVP y actualizar listas relacionadas sin una operación genérica de SQL/JSON Patch. | Serialización round-trip conserva todos los tipos; payload desconocido o campo requerido ausente falla de forma explícita; ninguna operación puede referir otro mundo. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Modelo](docs/domain/model.md) |
-| NIR-019 | Completado | NIR-015, NIR-018 | Validar esquema lógico e integridad estructural del ChangeSet. | Validar tamaño, IDs, operaciones duplicadas, referencias existentes o creadas en el mismo set, orden de dependencias, cardinalidad, expected versions y eliminaciones huérfanas. Generar un `ValidationReport` determinista con errores, conflictos, warnings e info. No interpretar texto libre como operación. | Tests bloquean ID inexistente, doble escritura del mismo campo, delete huérfano y dependencia ausente; aceptan crear una entidad y referirla después dentro del mismo set. | [Validación](docs/architecture/validation-pipeline.md), [Flujo IA](docs/architecture/ai-flow.md) |
-| NIR-020 | Completado | NIR-007, NIR-011, NIR-012, NIR-019 | Validar tiempo, ciclo de vida y reglas codificadas. | Evaluar el estado resultante, no solo cada operación aislada. Comprobar forma temporal, vida/muerte, estados mutuamente exclusivos, causalidad, participantes y los `validator_kind` realmente implementados. Empezar solo con validadores necesarios por fixtures del MVP, incluido `no_resurrection`; reglas semánticas generan material para crítica, no error Rust fingido. | Tests prueban que una resurrección prohibida y una causa posterior bloquean; una regla institucional violable o una dimensión no especificada no se convierte automáticamente en error duro. | [Validación](docs/architecture/validation-pipeline.md), [Tiempo](docs/research/critical-fronts/narrative-time.md) |
-| NIR-021 | Completado | NIR-013, NIR-014, NIR-019, NIR-020 | Calcular subgrafo afectado, conflictos y `DecisionPoint`. | Desde store obtener objetos escritos, referencias entrantes, eventos dependientes, reglas, documents y content references. Detectar claims canónicos normalizados opuestos con periodos solapados y efectos codificados omitidos. `replacement` exige target sustituido, razón y un `DecisionPoint` resuelto; `reinterpretive` conserva lo anterior. | Un reemplazo sin decisión bloquea; un retcon aditivo no borra datos; claims opuestos de holders distintos coexisten; claims canónicos opuestos activos bloquean el resultado final. | [Validación](docs/architecture/validation-pipeline.md), [Conocimiento incierto](docs/research/critical-fronts/uncertain-knowledge.md) |
-| NIR-022 | Completado | NIR-016, NIR-018 | Persistir revisiones, drafts, operaciones y auditoría. | Añadir `change_sets`, `change_operations`, `decision_points`, `change_set_waivers`, `revisions` completas y registros de auditoría con valores antes/después, decisión por operación, fuente, timestamp, base/result revision y resumen. Guardar reportes deterministas; no guardar chain-of-thought. La cadena de revisiones tiene una sola cabeza. | Foreign keys unen commit, operaciones y revisión; no puede existir una segunda cabeza ni una operación auditada sin ChangeSet; los reportes se recuperan tras reabrir. | [Almacenamiento](docs/architecture/storage.md), [Versionado](docs/research/critical-fronts/canon-versioning.md) |
-| NIR-023 | Completado | NIR-018–NIR-022 | Implementar workflow manual de propuesta y revisión en app. | Convertir ediciones de formularios en draft, validar, permitir `accept`, `edit` o `reject` por operación y reconstruir un nuevo conjunto solo con operaciones elegidas. Registrar excepciones intencionales con razón; una excepción no puede ocultar constraints ni errores duros. Revalidar después de cada edición o cambio de selección. | Pruebas demuestran que rechazar una operación dependida muestra la dependencia rota, editar cambia el reporte y solo un conjunto válido queda listo para confirmar. | [Interacción](docs/architecture/interaction-model.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-024 | Completado | NIR-017, NIR-021–NIR-023 | Confirmar ChangeSets con revalidación y transacción atómica. | Comparar `base_revision` con la cabeza actual, recargar versiones, ejecutar nuevamente validadores y abrir una única transacción. Aplicar operaciones, guardar antes/después, actualizar content references e índices derivados, crear revisión hija e incrementar la cabeza. Ante lock, disco lleno o constraint, hacer rollback y conservar el draft revisable. | Tests fuerzan constraint y versión obsoleta: no cambia ninguna tabla de canon ni revisión. Un commit válido aplica todas las operaciones y produce exactamente una nueva revisión. | [Sistema](docs/architecture/system-overview.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-025 | Completado | NIR-022, NIR-024 | Implementar undo lineal como ChangeSet inverso. | Generar desde auditoría las operaciones inversas del último commit no deshecho, validar contra la cabeza vigente y confirmarlas como una nueva revisión; no mover silenciosamente el puntero ni reconstruir por event sourcing. Bloquear undo si no puede restaurar constraints y mostrar el conflicto. | Crear, modificar y eliminar objetos puede deshacerse conservando auditoría; cerrar y reabrir mantiene el estado; no se puede deshacer una revisión que no sea ancestro inmediato lógico del estado actual. | [Almacenamiento](docs/architecture/storage.md), [Versionado](docs/research/critical-fronts/canon-versioning.md) |
-| NIR-026 | Completado | NIR-018–NIR-025 | Probar el workflow manual completo. | Añadir pruebas integradas para draft, selección parcial, edición, decisión, stale revision, commit, rollback, auditoría y undo. Usar fixtures pequeñas que incluyan entidad, evento, claim y documento; no crear un framework de fixtures genérico. | Las pruebas reproducen al menos un cambio válido, uno estructuralmente inválido, uno obsoleto, un replacement y un undo; todos verifican estado y auditoría en SQLite. | [Suite IA](docs/validation/ai-regression-suite.md), [AGENTS](AGENTS.md) |
+| UX-017 | Bloqueado | UX-016 | Gate de WebViews. | Decisión fechada: CSS convencional sin Tailwind/fallback; matriz inicial Windows 11 WebView2 ≥111, macOS Sonoma 14+ y Ubuntu 24.04 WebKitGTK ≥2.44. Windows 11 build 26200 y runtime 151 fueron detectados. | Pendiente ejecutar fixture/binario real en WKWebView y WebKitGTK; Playwright WebKit no sustituye ese gate. | `docs/architecture/frontend-platform.md` |
+| UX-018 | Completado | UX-017 | Migrar build a Vite. | `build.mjs` eliminado; Vite es el único dev/build, TypeScript estricto usa `--noEmit`, puerto dev 1420 estricto y Tauri define `devUrl`/`frontendDist`. Producción no genera source maps. | `npm ci`, typecheck, build y dev HTTP 200 pasaron; bundle actual: JS 133,24 kB/34,09 gzip y CSS 15,15 kB/3,93 gzip; desktop build pasó. | `package.json`, `vite.config.ts`, `tauri.conf.json` |
+| UX-019 | Completado | UX-018 | Crear root React. | React posee el root de proyecto cerrado con `RootErrorBoundary` y `SessionProvider`; `ClosedView` reemplazó atómicamente markup/listeners imperativos. `world-view` permanece como superficie hermana con owner único y módulos cargados una vez. | Typecheck/build y safety 19/19 pasaron; smoke browser crear→abrir→cerrar verifica mount/remount, cleanup, foco y reset sin listeners ni renderer duplicado. Bundle 95,12 kB gzip. | `main.tsx`, `closed-view.tsx`, `session-provider.tsx` |
+| UX-020 | En progreso | UX-017–UX-019 | Integrar Tailwind v4 o fallback aprobado. | Fallback aprobado significa CSS convencional único con variables semánticas; Vite y la primera superficie React lo consumen sin Tailwind, PostCSS, CDN ni hoja paralela. | Bundle y WebView2 pasan; pendiente cerrar UX-017 con WKWebView/WebKitGTK reales para afirmar matriz completa. | `frontend-platform.md`, `styles.css` |
+| UX-021 | Completado | UX-016, UX-020 | Implementar tokens y temas. | Tokens `--n-*` gobiernan landing y mundo abierto; system/light/dark/high contrast persiste localmente, responde al OS, define color-scheme, forced colors, foco, severidad/autoridad y reduced motion. Componentes no contienen colores literales ni aliases legacy. | Unit 3/3, E2E 7/7 y safety 20/20 pasan; axe cubre landing, workspace, read-only y error en temas; screenshots app-wide light/dark/high contrast y forced-colors verificados. | `appearance.ts`, `styles.css`, `visual-system.md`, E2E themes |
+| UX-022 | En progreso | UX-019 | Adoptar Radix mínimo. | Dialog y Tabs se usan en Settings/About con imports directos, trap y retorno de foco verificados. Las demás primitivas no se agregan hasta sustituir un uso real de confirmación, menú, tooltip o picker. | E2E verifica Escape y retorno de foco; pendiente retirar confirm/prompt legacy para cerrar la adopción accesible. | `software-dialogs.tsx`, Radix accessibility |
+| UX-023 | Pendiente | UX-021–UX-022 | Adoptar shadcn selectivo. | Copiar y revisar Button, Field, Dialog, Sheet, Tabs, Tooltip, Badge, ScrollArea, Skeleton y Toast; eliminar variantes no usadas. | Cada componente tiene owner, tokens y test; no se agrega catálogo completo. | shadcn Vite |
+| UX-024 | Completado | UX-018–UX-019 | Migrar API Tauri a imports. | `invoke`/`listen` usan módulos oficiales y dialog usa `@tauri-apps/plugin-dialog`; se eliminaron `TauriApi` y el global manual, y Tauri desactiva `withGlobalTauri`. Los comandos específicos permanecen explícitos. | Frontend build/safety 18/18 y desktop build pasaron; safety rechaza `window.__TAURI__` y verifica imports tree-shakeables. | `state.ts`, `types.ts`, `tauri.conf.json` |
+| UX-025 | En progreso | UX-024 | Introducir TanStack Query. | QueryClient posee recientes, diagnóstico IA, metadata, palette y explorador; claves world incluyen mundo/variante/revisión observada o cabeza actual, invalidan tras scope y se eliminan al cerrar mundo, retry false y sin optimistic canon. | Search/VFS ya no cruzan scopes; pendiente migrar contexto, editor, revisiones y demás lecturas legacy antes de cerrar la plataforma. | `main.tsx`, `world-shell.tsx`, `world-explorer.tsx` |
+| UX-026 | En progreso | UX-019 | Introducir React Hook Form. | El wizard usa RHF para valores, validación y foco del primer error sin duplicar reglas de dominio ni Zod. | Pendiente migrar editores estructurados y field arrays para medir rerenders del workspace. | `closed-view.tsx`, RHF |
+| UX-027 | Pendiente | UX-019, UX-022 | Paneles redimensionables. | Integrar splitters horizontal/vertical, teclado, collapse y persistencia local. | Separadores tienen rol/nombre/valor; 55+ fps y alternativa al drag. | react-resizable-panels, WAI-ARIA splitter |
+| UX-028 | Completado | UX-018–UX-024 | Harness de tests frontend. | Vitest/jsdom + Testing Library/user-event cubren comportamiento React; Playwright usa IPC Tauri simulado sobre imports oficiales, axe y screenshot. Safety source permanece como gate de seguridad secundario. | Unit 2/2, E2E 1/1 y safety 19/19 pasaron; landing verifica roles, foco/teclado, cero axe serious/critical y screenshot `960x680`. | `tests/closed-view.test.tsx`, `e2e/landing.spec.ts`, Playwright |
 
-## Fase 3 — Recuperación, búsqueda y proyección lógica
+## Fase 3 — Shell, onboarding y software de escritorio
 
-**Resultado:** el usuario puede encontrar, abrir y contextualizar el canon con
-fuentes navegables, todavía sin IA.
+**Resultado:** abrir Nirmata muestra un producto navegable con generación inicial,
+Settings y About, no una página larga.
 
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
+| Código | Estado | Dependencias | Entregable | Detalle | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-027 | Completado | NIR-016, NIR-024 | Añadir FTS5 como índice derivado. | Crear una tabla virtual FTS5 para nombre/título, summary y Markdown de rules, entities, events, claims y documents. Mantenerla explícitamente dentro de la misma transacción que cambia contenido y ofrecer reconstrucción completa desde tablas canónicas. FTS nunca es autoridad ni bloquea recuperar el canon. | Búsquedas encuentran texto actualizado, eliminaciones desaparecen del índice y una reconstrucción produce los mismos resultados; fallo del índice no corrompe tablas canónicas. | [Recuperación](docs/architecture/retrieval.md), [Almacenamiento](docs/architecture/storage.md) |
-| NIR-028 | Completado | NIR-009–NIR-014, NIR-017 | Implementar recuperación estructurada por anclas. | Dado un conjunto explícito de IDs, cargar objetos, relaciones directas con límite, eventos asociados, participantes, claims, goals y reglas aplicables. Usar consultas parametrizadas y límites codificados; no recuperar todo el componente conectado ni introducir un planificador LLM. | Tests verifican prioridad de anclas, límite de vecinos, procedencia y aislamiento por mundo; objetos no relacionados no aparecen por coincidencia accidental. | [Recuperación](docs/architecture/retrieval.md), [Sistema](docs/architecture/system-overview.md) |
-| NIR-029 | Completado | NIR-027, NIR-028 | Construir `ContextBundle` determinista. | Combinar selección, relaciones, ventana temporal, goals/intenciones, perspectiva epistemológica y finalmente FTS5. Deduplicar por ID, separar canon/perspectivas/deseos/obligaciones, conservar citas y aplicar presupuesto por cantidad de objetos/caracteres. Una dimensión ausente permanece vacía. | Para consultas de entidad, impacto, contradicción y documento, pruebas verifican fuentes esperadas, ausencia de duplicados, límites y que canon tenga prioridad salvo petición de perspectivas. | [Recuperación](docs/architecture/retrieval.md), [Narratología](docs/research/academic-foundations/cognitive-narratology.md) |
-| NIR-030 | Completado | NIR-014, NIR-017 | Implementar URI estable y VFS lógico de lectura. | Resolver `nirmata://entity/<uuid>`, `event`, `claim`, `rule`, `goal` y `document`; producir un árbol lógico agrupado por tipo desde consultas SQLite. Los nombres visibles pueden cambiar sin alterar URI. No implementar filesystem virtual real, exportación física ni sincronización Markdown. | Renombrar un objeto conserva enlaces; URI inválida o de otro mundo devuelve error tipado; el árbol se regenera únicamente desde SQLite. | [Almacenamiento](docs/architecture/storage.md), [MVP](docs/product/mvp.md) |
-| NIR-031 | Completado | NIR-027–NIR-030 | Exponer casos de uso de búsqueda, navegación y contexto. | En app implementar `search_world`, `open_uri`, `get_related_context`, filtros por tipo y ventana temporal. Definir resultados con snippet, tipo, ID, autoridad y fuente. Preparar el contrato de clasificación `fact`, `perspective`, `inference`, `no_evidence`, `unspecified`, aunque las inferencias de IA aún no existan. | Una búsqueda permite abrir la fuente exacta; filtros y ventanas son estables; “sin coincidencias” no se presenta como negación del canon. | [Recuperación](docs/architecture/retrieval.md), [Interacción](docs/architecture/interaction-model.md) |
-| NIR-032 | Completado | NIR-027–NIR-031 | Evaluar recuperación con preguntas conocidas. | Crear un conjunto pequeño de fixtures y preguntas que midan fuentes necesarias, irrelevantes, contradicciones omitidas y presupuesto. Incluir vocabulario exacto para FTS, perspectiva, evento causal y dato no especificado. No agregar embeddings, rerankers ni servicios. | Todas las fuentes marcadas como necesarias aparecen dentro del límite; no se mezclan holders incompatibles; el resultado documenta cualquier fallo real antes de considerar otra tecnología. | [Recuperación](docs/architecture/retrieval.md), [Corte vertical](docs/validation/vertical-slice.md) |
+| UX-029 | Completado | UX-019–UX-028 | Pantalla Inicio. | Inicio React reúne crear, abrir, recientes, recuperación de movidos, diagnóstico IA, Settings y Ayuda; con mundo cerrado no muestra features del workspace. | Captura `960x680`, teclado y axe verifican todas las decisiones en el primer viewport y cero contenido del mundo. | `closed-view.tsx`, `landing.spec.ts` |
+| UX-030 | Completado | UX-029 | Proyectos recientes. | Tauri persiste hasta 12 rutas/nombre/world ID/última apertura en settings locales; create/open actualizan, un click reabre, quitar no toca canon y `file_not_found` ofrece localizar o retirar. | Unit Rust verifica round-trip sin abrir mundos; Testing Library verifica reapertura en una acción y el fallo de settings nunca bloquea un mundo ya abierto. | `main.rs`, `closed-view.tsx`, desktop tests |
+| UX-031 | Completado | UX-013, UX-029 | Wizard Nuevo mundo. | Manual, IA e importación comparten pasos Proyecto, intención/handoff y resumen; Back/Cancelar conservan cero escrituras y un único submit final llama `create_world`. | Unit y E2E verifican foco de error, progreso, ausencia de Crear antes del resumen, cancelación inerte y narrow sin overflow. | `closed-view.tsx`, landing tests |
+| UX-032 | Completado | UX-031 | Crear base del mundo con IA. | Brief recoge género, premisa, temas, tono, escala pequeña/mediana y restricciones; el resumen explica alcance y después abre el owner único Proponer cambios. | Una sola creación de proyecto; la IA solo produce la propuesta estándar y no existe escritura anterior a `Aplicar al mundo`. | `closed-view.tsx`, `assistant.ts`, closed-view tests |
+| UX-033 | Completado | UX-031 | Inicio desde material existente. | Wizard explica copia inerte y abre el owner existente después de crear el proyecto; selector acepta varios Markdown/textos, Tauri calcula su raíz común y app conserva preview/hash/chunks inertes por fuente antes de extracción y revisión. | Unit Rust verifica selección vacía/raíz compartida; fixtures hostiles existentes conservan originales y ningún candidato escribe canon directamente. | `closed-view.tsx`, `lore-import.ts`, `main.rs` |
+| UX-034 | Completado | UX-029–UX-033 | Checklist de onboarding. | Inicio del mundo ofrece checklist no canónico de premisa, reglas, lugares/facciones, personaje/meta, eventos y primera consulta; progreso y descarte se guardan localmente por mundo y Ayuda permite reabrirlo. | E2E verifica marcar, persistir, ocultar y reabrir sin comandos de canon; el experto puede ocultarlo y conserva accesos directos. | `world-shell.tsx`, `software-dialogs.tsx`, workspace E2E |
+| UX-035 | Completado | UX-012, UX-019 | Barra superior editorial. | Topbar React muestra proyecto, `Escribiendo en`, `Viendo`, solo lectura, búsqueda, contador de cambios, Settings, Ayuda y cerrar. | E2E light/dark/high contrast verifica una línea desktop, axe y ausencia de UUID en la barra. | `world-shell.tsx`, workspace E2E |
+| UX-036 | Completado | UX-010, UX-035 | Sidebar de áreas. | Inicio, Mundo, Cronología, Asistente, Narrativa, Simulación, Importaciones, Versiones y Settings comparten navegación colapsable; solo el owner activo se muestra y los demás permanecen montados. | E2E cambia Simulación→Importaciones→Simulación y conserva el formulario; `aria-current`, anuncio/foco de área y cero overflow pasan. | `world-shell.tsx`, workspace E2E |
+| UX-037 | Completado | UX-024–UX-036 | Command palette. | `cmdk` abre con `Ctrl/Cmd+K` y agrupa áreas, objetos de la versión observada, crear por tipo, cambiar variante/versión, preguntar, proponer, cambios, Settings, Ayuda y cerrar. Resultados usan query key mundo/variante/revisión y abren por `selectUri`; read-only deshabilita escritura. | E2E mide apertura <100 ms, filtro/Enter, objeto exacto sin FTS/UUID, creación, variante protegida y Escape con retorno de foco; cambiar mundo limpia su caché. | `command-palette.tsx`, `world-shell.tsx`, workspace E2E |
+| UX-038 | Completado | UX-015, UX-021, UX-035 | Settings. | Dialog disponible con/sin mundo reúne General, apariencia, IA, proyecto, accesibilidad y avanzado; usa diagnóstico/conexión y credencial segura sin selector de proveedor inventado. | E2E axe/Escape/foco y unit pasan; versión narrow no desborda y ningún comando devuelve la clave a JS. | `software-dialogs.tsx`, `settings-and-about.md` |
+| UX-039 | Completado | UX-015, UX-035 | About y Help. | About muestra versión Tauri, identificador, licencia declarada, local-first y privacidad; Centro de ayuda separado cubre creación, preguntar/proponer, versiones, importación, atajos y glosario, con acceso antes o después de abrir mundo. | E2E verifica ambos dialogs, axe, Escape y retorno de foco; no inventa build ID, URL empaquetada ni texto de licencia inexistente. | `software-dialogs.tsx`, `settings-and-about.md` |
 
-## Fase 4 — Producto de escritorio manual
+## Fase 4 — Workspace editorial, asistente y revisión
 
-**Resultado:** una persona puede construir y revisar un mundo completo desde la
-GUI sin usar IA.
+**Resultado:** el trabajo diario ocurre en un IDE claro con referencias por nombre,
+asistente acoplable y una sola cola de revisión.
 
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
+| Código | Estado | Dependencias | Entregable | Detalle | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-033 | Completado | NIR-005, NIR-023, NIR-031 | Construir la disposición principal de la GUI. | Implementar panel izquierdo de navegación/búsqueda, panel central de editor, panel derecho de contexto/advertencias y panel inferior de cambios pendientes. Usar estado explícito del frontend y comandos Tauri específicos; evitar store global genérico, framework visual y abstracciones de componentes sin reutilización real. | Los paneles se pueden redimensionar o colapsar, el foco y teclado son utilizables y seleccionar un objeto actualiza editor y contexto sin recargar el mundo. | [Interacción](docs/architecture/interaction-model.md), [Workspace](docs/architecture/workspace.md) |
-| NIR-034 | Completado | NIR-030, NIR-031, NIR-033 | Completar apertura, navegación, filtros y búsqueda. | Mostrar árbol VFS lógico, recientes de la sesión, filtros por tipo y resultados FTS con snippet. Abrir por URI y conservar selección al renombrar. Manejar archivo movido, mundo cerrado y objeto eliminado con estados vacíos claros, no panics. | El usuario crea/reabre un mundo, busca una frase, abre la fuente y navega a relaciones; errores no dejan selección fantasma ni comandos activos sobre un mundo cerrado. | [Interacción](docs/architecture/interaction-model.md), [Almacenamiento](docs/architecture/storage.md) |
-| NIR-035 | Completado | NIR-007–NIR-014, NIR-023, NIR-033 | Implementar formularios de edición manual como drafts. | Proveer formularios concretos para World/Rule/Entity/Relation/Goal/Event/Claim/Document, incluyendo enums, periodos, aliases, participantes, causalidad y procedencia. Guardar genera un `ChangeSetDraft`; nunca escribe directamente. Usar textarea para Markdown y controles HTML nativos. | Cada tipo puede crearse y editarse; validaciones aparecen junto al campo y en cambios pendientes; cerrar con cambios no revisados solicita descartar o continuar. | [Modelo](docs/domain/model.md), [Interacción](docs/architecture/interaction-model.md) |
-| NIR-036 | Completado | NIR-011, NIR-012, NIR-014, NIR-035 | Añadir timeline y edición de documentos/referencias. | Mostrar eventos ordenados por ticks conocidos y agrupar unknown aparte; distinguir instant, interval y ongoing, precisión y certeza. En documentos permitir añadir/reordenar `ContentReference` y abrir targets; el ordinal expresa discurso sin alterar story time. No crear calendario, Scene ni mapa. | Un intervalo, evento ongoing, fecha aproximada y flashback se muestran correctamente; reordenar referencias solo cambia ordinal. | [Tiempo](docs/research/critical-fronts/narrative-time.md), [Interacción](docs/architecture/interaction-model.md) |
-| NIR-037 | Completado | NIR-023, NIR-024, NIR-033 | Implementar revisión por operación. | En el panel inferior mostrar objetivo, fuentes, before/after, severidad, dependencias y decisiones. Permitir aceptar, editar o rechazar cada operación, reconocer warnings y registrar waiver con razón. Deshabilitar confirmación mientras haya error, conflicto no resuelto o dependencia rota. | Seleccionar un subconjunto dispara revalidación y actualiza el diff; confirmar aplica una sola transacción; el estado visual coincide con el ChangeSet persistido. | [Interacción](docs/architecture/interaction-model.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-038 | Completado | NIR-021, NIR-024, NIR-037 | Aplicar fricción de alto riesgo y manejar obsolescencia. | Para `replacement`, conflicto duro o cambio de impacto amplio, pedir primero un juicio breve del usuario y solo después mostrar resolución sugerida disponible. Si cambia la revisión, marcar el draft obsoleto, deshabilitar commit y ofrecer una revalidación; un segundo cambio durante el refresco obliga a reiniciar. | Una propuesta obsoleta nunca se confirma; la sugerencia de resolución permanece oculta hasta registrar juicio; la evidencia de un error duro nunca se oculta. | [Cocreación](docs/research/critical-fronts/human-ai-cocreation.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-039 | Completado | NIR-025, NIR-030, NIR-033–NIR-038 | Completar seguridad, auditoría y recuperación de errores en GUI. | Renderizar Markdown como texto seguro o con HTML deshabilitado; validar IDs/rutas en Tauri. Añadir vistas locales de revisión, operaciones, waivers y undo. Mostrar fallos de lock, constraint, archivo y validación sin perder el draft. No registrar lore en consola por defecto. | Contenido HTML/script no se ejecuta; undo se realiza desde una revisión visible; un fallo de commit conserva canon y propuesta; auditoría permite seguir antes/después y decisión humana. | [Runtime](docs/architecture/language-runtime.md), [AGENTS](AGENTS.md) |
+| UX-040 | Completado | UX-025–UX-036 | Explorador del mundo. | React posee búsqueda/lista, árbol plegable, recientes de sesión, filtros y creación por tipo en un único host; renderer/listeners imperativos se eliminaron. URI y UUID viven solo en detalles avanzados. | E2E carga 200 resultados, mide primer paint <50 ms, abre por `selectUri`, conserva selección/nombre tras renombre y no muestra IDs; axe pasa. | `world-explorer.tsx`, search/VFS, workspace E2E |
+| UX-041 | Completado | UX-037, UX-040 | Búsqueda global. | Palette y explorador consultan el mismo `search_world` por nombre/contenido y scope exacto; muestran snippet limpio, tipo, autoridad, clasificación, vacío/error y score solo en detalles técnicos. | Teclado abre fuentes exactas mediante URI estable sin mostrar `FTS`; palette y explorador comparten query keys y resultados no sobreviven al mundo/scope. | `command-palette.tsx`, `world-explorer.tsx`, Retrieval |
+| UX-042 | En progreso | UX-040–UX-041 | Pickers de objetos. | Un Dialog React reutilizable consulta por scope y completa por nombre campos escalares de relación, evento, afirmación, meta y documento; UUID/URI queda editable bajo disclosure y metas afectadas admiten selección múltiple. | E2E completa entidad destino sin copiar ID y verifica foco/valor técnico; pendientes campos compuestos de participantes/causalidad y simulación para cerrar el criterio completo. | `object-picker.tsx`, `render-editor.ts`, workspace E2E |
+| UX-043 | En progreso | UX-026, UX-042 | Editores estructurados. | Los siete agregados conservan paridad backend, dirty guard y errores inline; enums/objetivos están en español, IDs salen del encabezado, pickers cubren referencias escalares y JSON/ticks/DSL viven en opciones avanzadas. | Captura valida lenguaje y disclosure; pendientes tablas de participantes/causalidad, condicionales completos y migración RHF antes de cerrar todos los tipos. | manual forms, `render-editor.ts` |
+| UX-044 | Completado | UX-043 | Experiencia Markdown segura. | Todos los campos `*_md`/`body_md` ofrecen preview opcional construido con nodos DOM, sin parser HTML; referencias internas llaman `selectUri` y HTTPS se rotula como enlace externo. | E2E mantiene `<img onerror>` como texto, no crea img/script, navega referencia interna, explicita enlace externo y conserva byte por byte el textarea. | `render-editor.ts`, workspace E2E, Security policy |
+| UX-045 | Completado | UX-025, UX-040 | Contexto situado. | React posee tabs Canon, Perspectivas, Metas, Cronología y Avisos; reúne links del agregado, reglas, claims, goals, obligaciones y evidencia con acciones de navegación protegidas. | E2E cambia tabs con evidencia canónica/situada, oculta IDs, axe pasa y el evento de selección actualiza contexto sin recargar editor/explorador. | `world-context.tsx`, ContextBundle, workspace E2E |
+| UX-046 | Completado | UX-043, UX-045 | Cronología operable. | Vista React propia muestra tiempo conocido por fecha/tick y no especificado por separado, filtro por resumen/tipo, densidad cómoda/compacta y apertura protegida del evento; discurso permanece en Estudio narrativo. | E2E verifica orden backend, fecha convertida, ongoing/aproximado sin extremo inventado, unknown separado y navegación exacta. | `world-timeline.tsx`, EventTime/calendar, workspace E2E |
+| UX-047 | Completado | UX-014, UX-022, UX-035 | Asistente acoplable. | El owner existente se presenta como sheet derecho desktop y pantalla superpuesta narrow; conserva Consultar/Proponer/avanzados, contexto y fuentes sin ocupar Inicio o Mundo permanentemente. | E2E escribe una solicitud, cierra, verifica foco en el disparador y reabre con el texto intacto; creación IA y palette abren el mismo owner. | `world-shell.tsx`, `assistant.ts`, workspace E2E |
+| UX-048 | Pendiente | UX-047 | Conversaciones locales reales. | Mensajes usuario/asistente, nueva conversación, borrar, historial local, contexto explícito y sin canonización. | Multi-turn probado; borrar conversación no cambia mundo; no se llama transcript a un solo resultado. | Interaction history |
+| UX-049 | Pendiente | UX-047–UX-048 | Convertir respuesta en propuesta. | CTA sobre consulta, muestra request/contexto heredado y exige confirmación antes de cambiar modo. | Nunca cambia silenciosamente a escritura; propuesta llega a revisión global. | Query proposal action |
+| UX-050 | Pendiente | UX-047 | Perfiles avanzados de IA. | Revisión profunda y auditoría en menú avanzado con explicación, roles y costes; auditoría claramente read-only. | Usuario distingue autoridad y salida; deep review nunca parece commit automático. | Deep review |
+| UX-051 | En progreso | UX-035, UX-043, UX-047 | Cola global de revisión. | Badge y drawer global funcionan sobre cualquier área, conservan foco y reúnen el mapa único de revisiones con origen manual/IA/import/simulación/versiones/snapshot; historial queda dentro de la cola, no en Inicio. | E2E verifica drawer global; pendiente persistir/listar revisiones backend para recuperarlas después de reiniciar el proceso. | `world-shell.tsx`, `render-pending.ts`, ManualReview |
+| UX-052 | Completado | UX-051 | Tarjeta de revisión orientada a acción. | Cada tarjeta reúne origen, objeto/tipo, vigencia, objetivo, fuentes navegables, operaciones before/after, issues/waivers/decisiones, crítica final, revalidación y acciones `Aplicar al mundo`/descartar. | Ningún bloqueo exige otra superficie; tests app existentes verifican stale/final critic/commit y descarte libera la revisión backend antes de retirar la tarjeta. | `render-pending.ts`, manual review tests, ChangeSet workflow |
 
-## Fase 5 — IA controlada estándar
+## Fase 5 — Versiones, importaciones y administración del proyecto
 
-**Resultado:** la aplicación consulta el canon y propone cambios mediante un
-único proveedor, siempre con contexto, validación, crítica y revisión humana.
+**Resultado:** versionado e importación se entienden como herramientas del
+proyecto, no como controles técnicos permanentes.
 
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
+| Código | Estado | Dependencias | Entregable | Detalle | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-040 | Completado | NIR-032, NIR-039 | Crear `nirmata-ai`, el cliente del proveedor inicial y el flujo de credenciales. | Añadir el crate al workspace solo ahora. Incorporar únicamente dependencias usadas para HTTP, async, streaming, serialización y almacén seguro. Implementar un cliente concreto, sin trait de proveedor ni factory. App expone casos de uso para guardar, consultar solo el estado (`configured`/`missing`) y borrar la clave; el valor nunca regresa al frontend. Guardarla en el almacén seguro del sistema o, si falla, mantenerla solo en memoria durante la sesión y explicar esa limitación. Nunca escribirla en `.nirmata`, prompts persistidos o logs. Incluir timeout y cancelación. | Pruebas con transporte y credenciales simulados cubren missing key, set/status/clear, éxito, timeout, cancelación, HTTP inválido y stream interrumpido; ningún tipo de store/commit es accesible desde ai y la clave no aparece en errores o trazas. | [Runtime](docs/architecture/language-runtime.md), [Fuentes técnicas](docs/research/technical-sources.md) |
-| NIR-041 | Completado | NIR-018, NIR-040 | Definir contratos estructurados y parsing estricto. | Crear DTOs de IA para respuesta consultiva, `ChangeSetDraft` y `CritiqueReport` con límites de tamaño, enums cerrados, IDs, fuentes y operaciones conocidas. Rechazar JSON parcial, texto libre disfrazado de mutación, URI inválida y referencias de contenido faltantes en prosa generada. El error conserva respuesta diagnóstica mínima sin guardar razonamiento privado. | Fixtures válidas parsean; campos/operaciones desconocidos y salida truncada fallan; ninguna salida fallida llega al workflow de commit. | [Validación](docs/architecture/validation-pipeline.md), [Flujo IA](docs/architecture/ai-flow.md) |
-| NIR-042 | Completado | NIR-029, NIR-040, NIR-041 | Implementar frontera de capacidades y prompts mínimos. | App decide antes de llamar: `query` solo acepta respuesta con citas; `propose` acepta draft; `critic` solo devuelve reporte. Pasar snapshots y `ContextBundle`, no conexión, SQL, rutas físicas ni función de commit. Usar prompts distintos para generador y crítico, aunque compartan modelo, y registrar modelo/prompt version, IDs de contexto y uso técnico sin lore por defecto. | Tests demuestran que un modo query no puede deserializar operaciones y que ai no recibe capacidades de escritura; todas las fuentes enviadas pertenecen a la revisión base. | [Grafo estándar](docs/architecture/agent-graph.md), [Reasoning](docs/architecture/reasoning-policy.md) |
-| NIR-043 | Completado | NIR-031, NIR-040–NIR-042 | Implementar modo `Consultar` con streaming y citas. | Recuperar contexto determinista, transmitir progreso/respuesta y producir items clasificados como hecho, perspectiva, inferencia, sin evidencia o no especificado. Cada afirmación factual/perspectival incluye URI navegable; inferencias no se persisten. Si el usuario pide una escritura, responder con impacto y acción explícita para iniciar propuesta, sin cambiar de modo. | La consulta abre sus fuentes, separa rumor de canon y no inventa respuesta para un vacío; cancelar detiene red y deja la GUI utilizable; no se crea ChangeSet. | [Interacción](docs/architecture/interaction-model.md), [Recuperación](docs/architecture/retrieval.md) |
-| NIR-044 | Completado | NIR-019–NIR-021, NIR-040–NIR-042 | Implementar generador de propuestas. | Para solicitudes pequeñas generar directamente un draft; para solicitudes amplias o ambiguas presentar un `IntentBrief` editable con objetivo, alcance, entidades y restricciones. El draft declara objetos afectados, before/after, consecuencias, supuestos, fuentes, content references y retcon. Parsear y ejecutar todos los validadores Rust antes de cualquier crítica. | Una propuesta válida llega a revisión; una salida estructuralmente inválida no se presenta como aplicable; el usuario puede corregir IntentBrief sin que cambie el canon. | [Cocreación](docs/research/critical-fronts/human-ai-cocreation.md), [Flujo IA](docs/architecture/ai-flow.md) |
-| NIR-045 | Completado | NIR-021, NIR-041, NIR-044 | Implementar crítico semántico independiente. | Enviar draft, reporte determinista, reglas semánticas y snapshot del subgrafo afectado a una segunda invocación con prompt/contexto separado. `CritiqueReport` incluye issue, operaciones afectadas, evidencia, severidad, categoría, `rebuts`/`undercuts`, confidence y resolución sugerida. El crítico no edita el draft ni puede producir error duro no anulable por sí solo. | Fixtures detectan regla semántica ignorada, conocimiento secreto imposible y consecuencia omitida; el reporte cita IDs y no altera operaciones. | [Reasoning](docs/architecture/reasoning-policy.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-046 | Completado | NIR-041, NIR-044, NIR-045 | Orquestar un único intento de reparación acotado. | Si parsing, validación o crítica produce un problema reparable, app entrega al generador solo el reporte estructurado y solicita un draft completo nuevo. Repetir parsing, validadores y crítica una vez. Contadores viven en Rust; el segundo fallo termina con conflicto visible. No mezclar parches parciales ni abrir un loop ReAct. | Pruebas verifican cero o una reparación, nunca dos; una reparación válida reemplaza íntegramente el draft y una fallida queda revisable pero no confirmable. | [Grafo estándar](docs/architecture/agent-graph.md), [Reasoning](docs/architecture/reasoning-policy.md) |
-| NIR-047 | Completado | NIR-023, NIR-024, NIR-042–NIR-046 | Integrar el run de IA con revisión, stale check y commit. | Definir estado tipado de ejecución con id, world, base revision, mode, request, context, draft, reportes, repair count, status y error. Después de revisión humana, revalidar revisión y crítica antes de commit. Persistir traza resumida, decisiones y versión de modelo/prompt; no persistir chain-of-thought. | Transiciones inválidas son imposibles o devuelven error; cancelar/fallar red no cambia canon; un draft criticado contra revisión antigua nunca autoriza commit. | [Grafo estándar](docs/architecture/agent-graph.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-048 | Completado | NIR-033, NIR-037–NIR-040, NIR-043–NIR-047 | Añadir el asistente `Consultar` / `Proponer` a la GUI. | Un solo panel con modo explícito, `Consultar` predeterminado, selección/contexto visibles, streaming para consulta y progreso para propuesta. Incluir una configuración mínima para ingresar, reemplazar y borrar la clave, mostrar únicamente si está configurada y deshabilitar acciones IA con explicación cuando falte. Mantener transcript separado del panel de cambios. Mostrar reportes por severidad, fuentes expandibles y dos o tres DecisionPoints como máximo; aplicar juicio previo en alto riesgo. | Cambiar de modo requiere acción explícita; una respuesta de chat no se confunde con canon; ninguna llamada sale sin credencial configurada y solo un draft completamente recibido, validado y criticado habilita revisión. | [Interacción](docs/architecture/interaction-model.md), [Cocreación](docs/research/critical-fronts/human-ai-cocreation.md) |
-| NIR-049 | Completado | NIR-041–NIR-048 | Implementar la suite automatizada de regresión de IA del MVP. | Crear snapshots, solicitudes, contexto esperado, drafts e issues esperados para los casos críticos: referencia inexistente, actor muerto, causa posterior, regla codificada/semántica, rumor válido, vacío, negación, claims canónicos opuestos, replacement sin decisión, intervalo inválido, ongoing, fecha aproximada, flashback, procedencia rota, stale revision y excepción trazable. Separar tests deterministas de tests de contrato con respuestas grabadas; no depender de red para la suite normal. | 100% de errores estructurales conocidos bloquean, ningún stale commit pasa, rumores válidos no bloquean y cada conflicto cita la fuente necesaria. Los tests fallan ante regresión de parser, prompt fixture o recuperación. | [Suite IA](docs/validation/ai-regression-suite.md), [Reasoning](docs/architecture/reasoning-policy.md) |
+| UX-053 | Pendiente | UX-012, UX-035–UX-036 | Workspace Versiones. | Lista/árbol de variantes, origen, última versión, activa/observada/archivada y acciones nombradas. | No aparece `head`; cambiar y crear desde historia es comprensible en test. | Variants |
+| UX-054 | Pendiente | UX-053 | Comparación visual. | Nombres de ambos lados, before/after inline, campos cambiados, retcon, referencias y procedencia. | No usa `izquierda/derecha`; diferencias backend se muestran sin cambiar scope repetidamente. | VariantComparison |
+| UX-055 | Pendiente | UX-052–UX-054 | Merge guiado. | `Traer cambios de B hacia A`, operaciones automáticas/manuales y copy humano para keep/take. | Destino y fuente visibles antes de preparar; toda colisión termina en revisión global. | MergeReview |
+| UX-056 | Pendiente | UX-053 | Historial y undo. | Timeline de revisiones, filtro por objeto, diff, autor/fecha/fuente y explicación del único undo disponible. | `Revisión` histórica no se confunde con `Revisar cambios`; undo crea nueva versión visible. | RevisionHistory |
+| UX-057 | Completado | UX-010, UX-036 | Centro de importaciones. | Área Importaciones reúne tabs `Lore` y `Snapshot`: lore conserva lote/progreso/candidatos y snapshot explica backup estructurado, diff/revisión y diferencia con prosa o `.nirmata`; las acciones snapshot se retiraron de Versiones. | E2E verifica exclusividad de tabs, explicación y acciones correctas; ambos owners mantienen escritura exclusivamente mediante revisión. | `import-center.tsx`, lore/snapshot |
+| UX-058 | Pendiente | UX-007, UX-042, UX-057 | Wizard de lore. | Multiarchivo, lotes reanudables, reemplazar fuente, progreso, hashes avanzados, candidatos completos y resolución de identidad. | Cerrar/reabrir permite reanudar; todas las decisiones tienen siguiente acción. | Lore import backend |
+| UX-059 | Pendiente | UX-052, UX-057 | Snapshot y backup. | Export/import con resumen de mundo/variante/revisión/hash y diff antes de revisión; nombres sin `window.prompt`. | Snapshot cross-variant/stale se explica; importar nunca escribe directo. | VFS snapshots |
+| UX-060 | Pendiente | UX-038, UX-053 | Settings de proyecto. | Ruta, schema, integridad, variante activa, backup y detalles técnicos copiables. | Diagnóstico visible sin exponer SQL; acciones peligrosas confirman objeto exacto. | Store metadata |
+| UX-061 | Pendiente | UX-005, UX-023 | Estado y errores globales. | Toast para éxito breve, banners para bloqueo, error boundary, códigos traducidos y acción retry/recover. | Cero errores crudos en inglés en journeys principales; errores no destruyen draft. | CommandError |
 
-## Fase 6 — Hito del fundamento funcional
+## Fase 6 — Experiencias avanzadas y responsive
 
-**Resultado:** el fundamento funciona de extremo a extremo y resiste los fallos
-que podrían corromper o confundir el canon; las fases generales pueden apoyarse
-en él sin redefinir persistencia, revisión ni autoridad.
+**Resultado:** simulación, narrativa y calendario usan controles de dominio y
+funcionan en ventanas pequeñas sin contaminar el workspace diario.
 
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
+| Código | Estado | Dependencias | Entregable | Detalle | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-050 | Completado | NIR-026, NIR-032, NIR-049 | Automatizar el escenario vertical de la mina. | Crear un fixture con imperio, ciudad minera, religión, mineral de recuerdos, relaciones, goals, reglas, eventos y claims. Ejecutar la caída de la mina como propuesta con consecuencias económicas, políticas y religiosas, fuentes, causalidad y perspectivas. Seleccionar, editar y rechazar operaciones antes del commit. | El test conserva hecho e interpretaciones internas, no completa vacíos, enlaza cada consecuencia a evidencia/goal o marca motivación desconocida, aplica atomically y permite undo. | [Corte vertical](docs/validation/vertical-slice.md), [Visión](docs/product/vision.md) |
-| NIR-051 | Completado | NIR-024–NIR-025, NIR-039, NIR-047 | Verificar durabilidad y fallos de frontera. | Probar rollback ante constraint, lock y fallo simulado de índice; reapertura tras commit/undo; rechazo de esquema futuro; stale revision; stream cancelado; salida IA truncada; URI/ruta inválida y Markdown hostil. Verificar que logs no contienen cuerpos de lore ni claves. | En todos los fallos el archivo sigue abriendo, la cabeza y auditoría son coherentes, no hay aplicación parcial y la GUI ofrece recuperación o reintento explícito. | [Validación](docs/architecture/validation-pipeline.md), [Runtime](docs/architecture/language-runtime.md) |
-| NIR-052 | Completado | NIR-050, NIR-051 | Ejecutar aceptación completa del fundamento funcional. | Recorrer desde GUI: crear/reabrir mundo; editar todos los tipos; buscar y navegar; configurar credencial; consultar con citas; proponer; validar; criticar; aceptar/editar/rechazar por operación; resolver replacement; revalidar stale; confirmar; auditar y deshacer. Ejecutar todas las pruebas Cargo existentes y registrar comandos oficiales solo después de éxito. | Se cumple la Definition of Done del fundamento y pasan NIR-049, NIR-050 y NIR-051; ninguno de los fallos enumerados allí reproduce corrupción, escritura parcial o commit autorizado por IA. El hito funciona sin embeddings, multiagentes ni servicios auxiliares, que pertenecen a capacidades posteriores y medidas. | [MVP](docs/product/mvp.md), [AGENTS](AGENTS.md), [Aceptación](docs/validation/foundation-acceptance.md) |
+| UX-062 | Pendiente | UX-036, UX-042, UX-052 | Laboratorio de simulación. | Nombre, pickers de facción/recurso, tabla de stocks, builder de reglas y DSL solo avanzado; pasos/resultados y promoción humana. | Cero UUID obligatorio; rotula persistencia de sesión y claim no es canónico por defecto. | Simulation |
+| UX-063 | Pendiente | UX-036, UX-042, UX-045 | Estudio narrativo. | Tabs Cronología, Causalidad, Cabos abiertos y Documentos; vista analizada visible y resultados limpiables. | Story/discourse y fuentes comprensibles; derivar en histórico, escribir solo en actual. | Narrative derivations |
+| UX-064 | Pendiente | UX-052, UX-063 | Documento interno con preview. | Pickers de perspectiva/fecha, tipo/título/request, preview seguro y CTA a revisión. | Secreto inaccesible no aparece; fallo/cancelación no crea tarjeta. | Internal document |
+| UX-065 | Pendiente | UX-043, UX-046 | Calendario amigable. | Builder de weekdays/meses, date picker ficticio por números y vista tick avanzada; no DSL obligatorio. | Cambiar nombres solo cambia display; round-trip Rust conserva tick. | WorldCalendar |
+| UX-066 | Pendiente | UX-032, UX-047 | Plantillas de expansión con IA. | Facción, ciudad, personaje, conflicto, cronología y consecuencias; brief editable y escala visible. | Cada plantilla produce ChangeSet acotado y fuentes; no existe `generar novela`. | Propose/IntentBrief |
+| UX-067 | Pendiente | UX-034, UX-040–UX-066 | Estados vacíos contextuales. | Siguiente acción por área, ejemplos y sample prompts; sin bloquear al experto. | Mundo vacío guía hasta primer conjunto aplicado; ayudas se pueden ocultar. | Onboarding |
+| UX-068 | En progreso | UX-027, UX-035–UX-067 | Responsive desktop/mobile narrow. | Shell cambia sidebar por navegación horizontal; asistente/dialogs son sheets y cada área muestra un solo owner en `720x520`/`390x844`. | E2E y capturas prueban cero overflow y exclusividad visual; pendientes paneles redimensionables y completar todos los pickers/editores narrow. | workspace E2E, capturas baseline |
+| UX-069 | En progreso | UX-022–UX-068 | Teclado y accesibilidad manual. | Dialogs, Help, palette, sidebar y assistant sheet tienen foco/restauración, live labels, reduced motion, forced colors y navegación por teclado. | Axe 14 recorridos sin serious/critical; pendientes recorrido completo de editores legacy, roving focus y smoke NVDA/WebView2 real. | WCAG 2.2, frontend E2E |
 
-## Definition of Done del fundamento funcional
+## Fase 7 — Calidad visual, performance y aceptación
 
-El fundamento funcional está terminado únicamente cuando:
+**Resultado:** la UI React sustituye completamente la implementación imperativa,
+cumple presupuestos y se distribuye como software de escritorio coherente.
 
-1. La aplicación Tauri crea y reabre un `.nirmata` portable; SQLite es la única
-   fuente canónica y las migraciones son atómicas.
-2. Se pueden crear, editar y navegar World, Rule, Entity, Relation, Goal,
-   Event, Claim y Document con sus campos, referencias e invariantes descritos.
-3. Story time, incertidumbre, intervalos, causalidad, goals, perspectivas,
-   negación explícita y datos desconocidos se conservan sin confundirse.
-4. Toda escritura manual o de IA se representa como operaciones tipadas,
-   revisadas y confirmadas en una única transacción.
-5. Existen revisiones lineales, auditoría antes/después, waivers trazables y
-   undo verificado después de reabrir.
-6. Búsqueda SQL/FTS5, contexto determinista, URI estable y VFS lógico permiten
-   llegar desde una respuesta a sus fuentes.
-7. `Consultar` nunca prepara escritura; `Proponer` ejecuta generador,
-   validadores Rust, crítico independiente, revisión humana y stale
-   revalidation antes del commit.
-8. La revisión acepta, edita o rechaza cada operación y bloquea dependencias,
-   errores, decisiones pendientes y revisiones obsoletas.
-9. Los replacements aplican juicio humano previo; los retcons aditivos y
-   reinterpretativos no borran canon incorrectamente.
-10. Existe como máximo un intento de reparación y ningún componente de IA
-    recibe capacidad de commit.
-11. Constraints y pruebas automatizadas demuestran rollback, conflictos
-    críticos, recuperación, auditoría y el escenario de la mina.
-12. Claves, lore y chain-of-thought no se filtran en almacenamiento o logs no
-    destinados a ello.
-
-## Decisiones y gates obligatorios
-
-Estas decisiones evitan convertir evoluciones útiles en infraestructura
-predeterminada. Un gate se registra con corpus, métricas, fecha y conclusión;
-no deja interfaces, servicios o tablas preventivas cuando la conclusión es
-“todavía no”.
-
-| Registro | Decisión vigente | Gate para cambiarla |
-|---|---|---|
-| DR-001 — RAG determinista | RAG es obligatorio desde NIR-029: anclas, SQL, relaciones, tiempo, goals, perspectivas y FTS5 producen contexto citado. Embeddings no definen si existe RAG. | Solo cambia el ranking o los índices derivados; la autoridad, procedencia y contrato de respuesta permanecen iguales. |
-| DR-002 — Semántica condicional | NIR-055 activa WordNet offline después de anclas y etapas SQL/estructuradas y de FTS5. NIR-058 revalidó 25 % de recall de paráfrasis, 100 % de precisión citada, 2/2 contradicciones y p95 de 3,527 ms. El modelo `wordnet-en-offline` v1 recalcula canon vigente en cada consulta y no persiste tabla ni cache semántico. | Embeddings, SQLite vectorial, cache persistido o un servicio externo exigen superar de nuevo el corpus con beneficio adicional medido y justificar hashes, invalidación por contenido, rebuild por modelo, memoria y operación. |
-| DR-003 — Grafo en SQLite | Relaciones, CTE recursivos y límites de saltos en SQLite son la implementación primaria. No hay tarea obligatoria de base de grafos. | Reevaluar solo con mundos reales de tamaño objetivo cuando consultas necesarias de hasta tres saltos no puedan expresarse o mantengan p95 superior a 250 ms después de índices y optimización, y cuando el beneficio supere el coste de migración, transacciones y distribución. |
-| DR-004 — Multiagente explícito | El perfil estándar sigue siendo el predeterminado. Multiagente solo sirve para `Revisión profunda` solicitada por el usuario, con especialistas de lectura, máximo cuatro, presupuestos estrictos y cero delegaciones anidadas. | Ampliar roles o presupuestos únicamente si la regresión demuestra cobertura adicional y no aumenta conflictos, coste o latencia fuera de los límites visibles al usuario. |
-| DR-005 — Graph-aware solo al importar | El canon nativo ya tiene grafo estructurado y no se reprocesa con GraphRAG. La extracción graph-aware se limita a conectar fragmentos y candidatos durante la ingestión de lore no estructurado. | Extenderla exige un caso de importación medido; nunca autoriza canonización automática ni exige una base de grafos. |
-| DR-006 — Proveedores por necesidad | Se mantiene un proveedor concreto mientras cubra consultas, salida estructurada, crítica y streaming. No existe marketplace ni abstracción anticipada. | Añadir un proveedor local o segundo proveedor solo ante una necesidad comprobada, como privacidad/offline o una capacidad estructurada ausente; entonces se reemplaza el acoplamiento concreto directamente y se actualizan todos los callers, sin shim. |
-
-## Fase 7 — Recuperación evolutiva y snapshots del VFS
-
-**Resultado:** la recuperación puede cerrar huecos semánticos medidos sin perder
-determinismo ni citas, y el mundo puede salir y volver como snapshot explícito.
-
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
+| Código | Estado | Dependencias | Entregable | Detalle | Criterio de aceptación | Referencias |
 |---|---|---|---|---|---|---|
-| NIR-053 | Completado | NIR-032, NIR-052 | Ampliar el benchmark de recuperación y ejecutar el gate semántico. | Corpus `nir-053-v1`: dos mundos, 90 objetos y 34 consultas para anclas, SQL, relaciones, tiempo, goals, perspectivas, FTS5 y 12 pares exacto/paráfrasis. Registra por consulta fuentes, irrelevantes, contradicción, etapa/procedencia, recall, precisión, caracteres/tokens proxy y p50/p95; no añade embeddings. | Verificado el 7 de agosto de 2026: recall sin paráfrasis 100 % (28/28), paráfrasis 0 % (0/12) frente al objetivo de 90 %, precisión citada 100 %, contradicciones 2/2, p50/p95 local 0,464/1,838 ms bajo 250 ms. Las 12 consultas afectadas abren NIR-054 para prototipo; la activación queda condicionada por el segundo paso de DR-002. | [Recuperación](docs/architecture/retrieval.md), [Benchmark](docs/validation/retrieval-benchmark.md) |
-| NIR-054 | Completado | NIR-053 | Implementar recuperación semántica local solo si el gate la exige. | Prototipo explícito con vocabulario WordNet offline general, lematización acotada, chunks en memoria de hasta 800 caracteres y score entero determinista. Lee canon por mundo y conserva `ObjectRef`, fragmento y procedencia; no usa proveedor, servicio, trait/factory, modelo descargable, tabla semántica ni cambio de esquema. | Verificado sobre `nir-053-v1`: recall de paráfrasis 25 % (3/12), mejora de 25 puntos; recall no paráfrasis 100 %, precisión citada 100 %, contradicciones 2/2 y p95 local 2,340 ms. Tests prueban determinismo, aislamiento de mundo, canon intacto sin índice derivado y búsqueda exacta tras rebuild. `cargo nextest run --workspace`: 174 pasaron, 1 omitido. | [Recuperación](docs/architecture/retrieval.md), [Benchmark](docs/validation/retrieval-benchmark.md), [Almacenamiento](docs/architecture/storage.md) |
-| NIR-055 | Completado | NIR-054 | Integrar ranking híbrido citado e invalidación reconstruible. | Fusión activa y determinista en store/app: anclas y etapas estructuradas conservan prioridad, FTS5 precede a un máximo de ocho resultados WordNet y la deduplicación nunca reemplaza evidencia autoritativa. Cada resultado conserva URI/ObjectRef, fragmento, etapa, procedencia, score, rank y explicación. El modelo estable es `wordnet-en-offline` v1. No existe índice/cache semántico ni `content_hash` ficticio: cada consulta relee canon vigente; update/delete son inmediatos, rebuild reconstruye FTS5 y un fallo semántico degrada a SQL/FTS sin tocar canon. | Verificado sobre `nir-053-v1`: paráfrasis 25 % (3/12), no-paráfrasis 100 % (28/28), precisión citada 100 % (31/31), 0 irrelevantes, contradicciones 2/2 y p95 3,517 ms. Tests cubren update/delete, ranking idéntico tras rebuild, aislamiento, fallback, citas/procedencia y contexto activo de app. `cargo nextest run --workspace`: 176 pasaron, 1 omitido. | [Recuperación](docs/architecture/retrieval.md), [Benchmark](docs/validation/retrieval-benchmark.md), [Almacenamiento](docs/architecture/storage.md) |
-| NIR-056 | Completado | NIR-030, NIR-052 | Exportar el VFS lógico como snapshot portable. | Caso de uso app y comando Tauri específico materializan `manifest.json` v1 y Markdown UTF-8 en directorios fijos por tipo con filenames UUID. El manifest conserva mundo, variante `main`, revisión base, esquema, metadata sin prosa duplicada, referencias URI, hashes SHA-256 por contenido/metadata y hash lógico independiente de destino/tiempo. Una lectura transaccional de SQLite alimenta staging oculto dentro del padre validado; `create_new`, sync y rename hermano publican todo o nada, sin watcher ni sync. | Verificado con todos los tipos y referencias, equivalencia byte/logical de dos exports, identidad URI/path tras renombre, destino inseguro/ocupado, fallo inducido con limpieza total y reapertura con canon idéntico. `cargo nextest run --workspace`: 179 pasaron, 1 omitido; tests de store/app/desktop y `cargo build -p nirmata-desktop` también pasaron. | [Almacenamiento](docs/architecture/storage.md), [Runtime](docs/architecture/language-runtime.md) |
-| NIR-057 | Completado | NIR-024, NIR-056 | Importar un snapshot editado como ChangeSet revisable. | `import_vfs_snapshot` valida de forma estricta manifest v1, esquema, mundo, variante `main`, revisión existente, hashes deterministas, IDs/URI, metadata tipada, referencias y árbol confinado sin symlinks, traversal, binarios ni entradas extra/faltantes. Compara por ID con canon, normaliza versiones editoriales y almacena una `ManualReviewSession` con operaciones tipadas create/update/delete, fuentes y hash; nunca escribe canon. Una base stale queda visible, no confirmable ni rebasable automáticamente. | Verificado con edición externa de Entity y Document, diff before/after de prosa y `ContentReference`, altas/bajas, hash/ruta/ID/referencia/tipo manipulados, archivo extra/binario, Markdown hostil inerte, rechazo/descarte sin escritura, commit atómico, auditoría y undo/reapertura. `cargo nextest run --workspace`: 183 pasaron, 1 omitido. | [Almacenamiento](docs/architecture/storage.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-058 | Completado | NIR-053–NIR-057 | Validar recuperación evolutiva y snapshots de extremo a extremo. | Un escenario unido ejecuta FTS5 y WordNet citados, contradicciones, borrado/rebuild de FTS, exportación, edición externa hostil, manifest alterado, importación, rechazo selectivo, commit, exportación equivalente y undo. Reutiliza la matriz NIR-057 para stale, referencias y tampering restante. | Verificado sobre `nir-053-v1`: paráfrasis 25 % (3/12) frente a 0 %, no-paráfrasis 100 % (28/28), precisión citada 100 % (31/31), contradicciones 2/2 y p95 3,527 ms. Solo 1 de 2 operaciones importadas fue aprobada, auditada y aplicada; reexportar produjo `SnapshotHasNoChanges` y undo restauró el canon lógico previo. `cargo nextest run --workspace`: 184 pasaron, 1 omitido; frontend, seguridad y desktop también pasaron. | [Recuperación](docs/architecture/retrieval.md), [Almacenamiento](docs/architecture/storage.md), [Validación E2E](docs/validation/retrieval-snapshot-e2e.md) |
+| UX-070 | En progreso | UX-028–UX-069 | Suite de comportamiento. | Testing Library cubre Inicio/wizard/recientes/Settings/About y Playwright cubre shell, áreas, responsive, onboarding, palette, asistente, temas y estados. Safety sigue secundario. | 5 unit y 14 E2E pasan; pendientes paridad React de editar/revisar/aplicar/undo y recorridos completos de features avanzadas. | frontend tests |
+| UX-071 | Pendiente | UX-028, UX-070 | Regresión visual Playwright. | Baselines light/dark, 720/960/1440, empty/loaded/read-only/error/review/IA; entorno fijo. | Cero cambios no aprobados; screenshots adjuntos a reporte. | Playwright snapshots |
+| UX-072 | Pendiente | UX-021–UX-071 | Gate WCAG automatizado. | axe, contraste, nombre accesible del selector, forms id/name/autocomplete y árbol a11y. | Cero serious/critical; contraste de botones ≥ 4.5:1. | Auditoría Lighthouse actual |
+| UX-073 | En progreso | UX-018–UX-071 | Gate de performance y bundle. | Build mide 151,45 KiB JS gzip y 9,23 KiB CSS gzip; palette abre <100 ms y explorer con 200 resultados pinta un filtro <50 ms en Playwright. | Presupuestos medidos pasan; Vite advierte chunk único >500 kB sin comprimir, por lo que quedan code splitting real, P95 startup/open/forms/resize y memory/listeners en hardware de referencia. | Vite build, workspace E2E |
+| UX-074 | Pendiente | UX-035, UX-038–UX-039 | Integración nativa de software. | Menú de aplicación para proyecto, edit, view, Settings, Help/About; shortcuts coherentes; dialogs Tauri. | Settings/About accesibles desde menú y shell; versión coincide con Tauri config. | Tauri menus/windows |
+| UX-075 | Pendiente | UX-074 | Empaquetado y smoke productivo. | Activar bundle cuando assets/iconos/versionado estén listos; Windows installer inicial y firma como gate posterior si aplica. | Build release e instalador abren, crean/reabren `.nirmata` y desinstalan limpiamente. | Tauri distribute |
+| UX-076 | Pendiente | UX-009–UX-075 | Evaluación de usabilidad final. | Repetir tareas baseline y SUS/cualitativo; incluir usuario nuevo y experto. | 90 % completa crear/generar/modificar/revisar sin ayuda; mejora medible frente a baseline. | UX-009 |
+| UX-077 | Pendiente | UX-011, UX-039, UX-076 | Documentación y ayuda final. | Manual in-app, glosario, atajos, privacidad, generación, versiones e importaciones; actualizar screenshots. | Ayuda responde las preguntas de este backlog sin requerir conocimiento técnico. | docs/product, docs/architecture |
+| UX-078 | Pendiente | UX-070–UX-077 | Retirar frontend antiguo y aceptar rediseño. | Eliminar `querySelector` globals, renderers imperativos, build.mjs, CSS sustituido, tipos Tauri globales y bridges temporales. | Un solo frontend React; build/test/release verdes; Definition of Done UX completa. | AGENTS.md |
 
-## Fase 8 — Revisión profunda multiagente acotada
+## Definition of Done UX/UI
 
-**Resultado:** el usuario puede solicitar una revisión interdisciplinaria de
-solo lectura; los desacuerdos llegan a una única propuesta humana, nunca a
-escrituras competidoras.
+El rediseño está completo únicamente cuando:
 
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
-|---|---|---|---|---|---|---|
-| NIR-059 | Completado | NIR-041, NIR-047, NIR-052 | Definir contratos del perfil profundo. | `SpecialistRole`, `SpecialistReport`, posiciones de decisión y `DeepSynthesis` son contratos cerrados con `deny_unknown_fields`, fuentes/evidencia obligatorias y trazabilidad finding→operación/decisión. `DeepReviewRun` conserva snapshot, informes y resultado de auditoría sin operaciones de especialista, handles ni razonamiento privado; `AiMode` incluye `deep_impact` y `audit`. | Verificado con round-trip, campos desconocidos, evidencia ausente, `operations` directo y aislamiento del contrato estándar. `cargo test -p nirmata-ai contracts`: 5 pasaron. | [Grafo de agentes](docs/architecture/agent-graph.md), [Reasoning](docs/architecture/reasoning-policy.md) |
-| NIR-060 | Completado | NIR-029, NIR-059 | Seleccionar especialistas y aplicar capacidades/presupuestos. | Selección explícita o por reglas cerradas de dominio, plan no ejecutable hasta confirmación y máximo cuatro roles sin duplicados. Presupuesto fijo en Rust: cuatro llamadas, dos expansiones, seis tools de lectura permitidas, cero delegaciones, 2.048 tokens por informe, 4.096 para síntesis y timeout de 30 s; no se entrega ninguna tool al proveedor. | Tests verifican selección relevante, confirmación, quinto rol, rol de modo incorrecto, rechazo de commit/delegación y que el modo estándar no llama capacidades profundas. `cargo test -p nirmata-app deep_review`: 6 pasaron junto con selección/orquestación. | [Grafo de agentes](docs/architecture/agent-graph.md), [Interacción](docs/architecture/interaction-model.md) |
-| NIR-061 | Completado | NIR-040, NIR-055, NIR-059, NIR-060 | Orquestar especialistas aislados y fallos parciales. | `FuturesUnordered` ejecuta roles concurrentes con payloads separados sobre una única copia inmutable de mundo/revisión/contexto. Cada resultado conserva estado, timeout/error, duración, tokens, fuentes e informe; no comparte respuestas ni recibe store/commit. Cancelación previa evita llamadas y cancelación antes de síntesis impide continuar. | Test offline prueba concurrencia real de dos roles, timeout parcial preservado, grounding al snapshot, fallo total sin síntesis/propuesta y cancelación sin llamadas nuevas. `cargo test -p nirmata-app deep_review`: 6 pasaron. | [Grafo de agentes](docs/architecture/agent-graph.md), [Reasoning](docs/architecture/reasoning-policy.md) |
-| NIR-062 | Completado | NIR-021, NIR-044–NIR-047, NIR-061 | Sintetizar informes sin borrar desacuerdos. | Un único sintetizador devuelve un draft normal con origins únicos. App revalida mundo/revisión, fuentes, IDs y cobertura finding→operación/decisión; posiciones incompatibles exigen un `DecisionPoint` pendiente. Auditoría consolida `ValidationReport`. Impacto válido se entrega al run NIR-047 existente para validación determinista, crítico, revisión humana, crítica final y stale check. | Fixtures rechazan desacuerdo resuelto en silencio y aceptan ambas alternativas/evidencias como decisión; síntesis válida queda `AwaitingReview` en un run estándar y no abre ruta de commit propia. `cargo test -p nirmata-app deep_review`: 6 pasaron. | [Grafo de agentes](docs/architecture/agent-graph.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-063 | Completado | NIR-048, NIR-060–NIR-062 | Añadir `Revisión profunda` a la GUI. | El panel conserva `Consultar`/`Proponer` y añade modos explícitos `Revisión profunda`/`Auditoría`. Primero muestra motivo, roles editables y presupuestos; una segunda acción confirma. Progreso, estado/fallo por rol, informes, evidencia y desacuerdos se renderizan aparte. Cancelar usa el token existente y solo `AwaitingReview` con `standardRunId` se adjunta al panel NIR-047. | Frontend build, safety y 10 tests desktop verifican modo cerrado, comandos específicos, texto hostil inerte y que revisión pendiente solo aparece tras síntesis completa. | [Interacción](docs/architecture/interaction-model.md), [Cocreación](docs/research/critical-fronts/human-ai-cocreation.md) |
-| NIR-064 | Completado | NIR-059–NIR-063 | Crear regresión del perfil profundo. | Suite offline cubre crisis de recursos, sucesión, cambio geográfico, los cuatro auditores, límites serializados, allowlist sin commit/delegación, evidencia/snapshot, timeout parcial, fallo total, cancelación previa y posiciones incompatibles. Verifica además prompts/tokens reales del cliente concreto, UI segura y entrega exclusiva al run estándar. | Cero llamadas superan roles/tokens/tools/delegación; fallo total no sintetiza, desacuerdo sin `DecisionPoint` falla y `confirm_stored_manual_review` rechaza commit profundo antes de acción humana/crítica final NIR-047. Gate de fase: `cargo nextest run --workspace` 197/197 pasaron, 1 omitido; frontend build/safety y desktop build pasaron. | [Grafo de agentes](docs/architecture/agent-graph.md), [Regresión profunda](docs/validation/deep-review-regression.md) |
-
-## Fase 9 — Importación revisada de lore existente
-
-**Resultado:** material previo se convierte en candidatos trazables y
-ChangeSets revisables sin asumir que el texto importado es canon.
-
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
-|---|---|---|---|---|---|---|
-| NIR-065 | Completado | NIR-052, NIR-056 | Ingerir fuentes locales no confiables en un lote de importación. | `ImportBatch` e `ImportSource` viven en staging SQLite no canónico y conservan revisión objetivo, ruta confinada, formato, tamaño, estado, contenido UTF-8 copiado y SHA-256. La selección exige raíz/archivos absolutos sin traversal ni symlinks, acepta solo `.md`, `.markdown` y `.txt`, limita cada fuente a 1 MiB y presenta 4.000 caracteres inertes sin ejecutar HTML, enlaces o scripts. La validación de todas las fuentes precede la transacción del lote. | Verificado con Markdown/HTML hostil y texto válidos, hash/preview/lectura/borrado, y rechazo atómico de binario, formato no soportado, tamaño excedido y escape de raíz; el snapshot canónico permanece idéntico. `cargo test -p nirmata-app lore_import`: 2 pasaron. | [Runtime](docs/architecture/language-runtime.md), [Almacenamiento](docs/architecture/storage.md) |
-| NIR-066 | Completado | NIR-065 | Segmentar fuentes con procedencia estable. | La segmentación determinista corta por encabezados Markdown y límite de 2.048 bytes sin romper UTF-8, y conserva `source_id`, SHA-256 de generación, ordinal, rango exacto de bytes/líneas, encabezado y texto original. `open_import_chunk` devuelve la ruta/rango y verifica si el archivo actual todavía coincide con el hash; la cita siempre usa la copia inerte de staging. Reemplazar la misma fuente borra en una transacción sus chunks y candidatos anteriores antes de insertar la nueva generación. | Verificado con concatenación exacta, IDs/orden estables, apertura del span original y reemplazo: cambian hash/IDs y ningún chunk viejo puede abrirse o mezclarse. `cargo test -p nirmata-app lore_import`: 3 pasaron. | [Recuperación](docs/architecture/retrieval.md), [Almacenamiento](docs/architecture/storage.md) |
-| NIR-067 | Completado | NIR-041, NIR-055, NIR-066 | Extraer candidatos con contexto graph-aware limitado a importación. | `import_extraction_v1` es un contrato estricto del cliente concreto estándar, separado de especialistas y de `ChangeSetDraft`: solo admite Entity/Relation/Event/Claim/Rule, confianza técnica y citas literales con chunk/source/hash. El prompt declara el contenido inerte. Por cada foco, un CTE recursivo SQLite carga ordinal anterior/foco/siguiente de la misma generación; app valida excerpt y hash vigentes, resuelve endpoints por nombre/alias entre chunks y guarda candidatos en staging. Contradicciones comparten clave pero permanecen filas distintas. | Fixture offline multipágina resolvió Keeper→Mara y Archive en una relación, conservó dos claims opuestos con sus citas y dejó canon idéntico, sin runs profundos. El parser rechaza candidatos sin cita y campos de operaciones. `cargo test -p nirmata-ai contracts`: 6 pasaron; `cargo test -p nirmata-app lore_import`: 4 pasaron. | [Recuperación](docs/architecture/retrieval.md), [Conocimiento incierto](docs/research/critical-fronts/uncertain-knowledge.md) |
-| NIR-068 | Completado | NIR-018–NIR-024, NIR-067 | Resolver identidad y convertir candidatos en ChangeSets. | Cada candidato registra selección/rechazo y decisión explícita `exact`, `ambiguous` o `new`; Entity compara nombre/aliases con canon y exact exige elegir un URI ofrecido. Ambigüedad queda como `ImportDecisionPoint`. Solo seleccionados se convierten determinísticamente en operaciones tipadas Entity/Relation/Event/Claim/Rule, con referencias `import://` y traza candidato→operación→chunks. El draft se entrega al run estándar NIR-047 para validación, crítico independiente, revisión, crítica final y stale check; no existe commit alternativo. | Verificado: dos seleccionados y un rechazado produjeron exactamente CreateEntity/CreateRule en revisión estándar sin escribir canon; alias ambiguo entre dos entidades detuvo el draft como DecisionPoint; claim canónico opuesto quedó como conflicto no confirmable. `cargo test -p nirmata-app lore_import`: 7 pasaron. | [Validación](docs/architecture/validation-pipeline.md), [Versionado](docs/research/critical-fronts/canon-versioning.md) |
-| NIR-069 | Completado | NIR-039, NIR-065–NIR-068 | Construir la experiencia de importación y revisión. | Panel dedicado permite elegir fuente, ver metadata/hash/preview inerte, abrir rangos exactos, extraer/cancelar/reintentar, editar prosa candidata sin alterar identidad/kind/citas, separar confianza técnica, decidir identidad, seleccionar/rechazar y eliminar el lote. Comandos Tauri específicos vuelven a validar en app; no existe acceso libre a archivos. El paso final ejecuta crítico estándar y adjunta el `reviewKey`/`aiRunId` al panel NIR-047. Borrar el lote descarta su revisión pendiente; original y canon no cambian. | `npm run build --prefix apps\nirmata-desktop\frontend` pasó; safety 5/5 verifica texto hostil, comandos específicos, ausencia de logs/deep-review y handoff estándar; `cargo test -p nirmata-desktop` pasó 10/10 y `cargo test -p nirmata-app lore_import` pasó 7/7. | [Interacción](docs/architecture/interaction-model.md), [Cocreación](docs/research/critical-fronts/human-ai-cocreation.md) |
-| NIR-070 | Completado | NIR-065–NIR-069 | Validar importación de extremo a extremo. | Fixture offline multipágina cubre crónica Markdown, aliases en texto, claims opuestos, reemplazo/hash, binario, cancelación, prompt injection, script, macro/enlace, stale y reapertura. Fake usa exclusivamente `import_extraction_v1` y crítico estándar. Tras seleccionar Entity+Claim y rechazar claim opuesto/regla/relación hostiles, un commit intermedio fuerza revalidación stale; commit normal conserva `import://`, trazas y audit `lore_import`. Borrar staging, reopen, undo y segundo reopen prueban limpieza y reversibilidad; originales quedan byte-idénticos. | Verificado: solo 2 operaciones revisadas llegaron a canon, 1 Claim retuvo procedencia y ataques quedaron inertes; no hay graph DB/servicio/dependencia profunda. `cargo nextest run --workspace`: 206/206 pasaron, 1 omitido; frontend build y safety 5/5, desktop build y 10 tests pasaron. | [Runtime](docs/architecture/language-runtime.md), [Recuperación](docs/architecture/retrieval.md), [Validación E2E](docs/validation/lore-import-e2e.md) |
-
-## Fase 10 — Variantes, comparación e historia
-
-**Resultado:** un mundo puede mantener líneas canónicas nombradas y consultar su
-historia sin introducir colaboración concurrente ni merge semántico automático.
-
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
-|---|---|---|---|---|---|---|
-| NIR-071 | Completado | NIR-022–NIR-025, NIR-052, NIR-057, NIR-070 | Extender persistencia, lecturas y workflows externos a variantes. | Migrar la cadena existente a variante `main`; añadir `variants`, cabezas explícitas y pertenencia de revisión. Mantener estado actual materializado por variante y versiones inmutables/tombstones suficientes para leer una revisión sin mover la cabeza. Introducir `ReadScope { variant_id, revision_id? }` en búsqueda, URI, contexto y consultas derivadas: sin revisión lee la cabeza; con revisión siempre es read-only. Añadir `variant_id` y cabeza base a manifests de snapshot, `ImportBatch`, drafts y sesiones; artefactos anteriores migran explícitamente a `main`. Reimportar o confirmar se permite solo sobre la misma variante/cabeza, salvo que el usuario desvíe el cambio al merge de NIR-074. Una revisión normal conserva un padre; un merge registra además la revisión fuente como procedencia. | Migración conserva IDs e historial, cada variante tiene exactamente una cabeza, todas las lecturas respetan `ReadScope`, abrir una revisión histórica no altera estado actual y ningún snapshot/import batch puede aplicarse silenciosamente sobre otra variante. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Almacenamiento](docs/architecture/storage.md) |
-| NIR-072 | Completado | NIR-071 | Implementar ciclo de vida y commits por variante. | Crear variante desde cualquier revisión, nombrar, renombrar, cambiar variante activa y archivar; commits, stale checks y undo operan contra su cabeza. Prohibir borrar una variante con descendientes o referencias sin una decisión explícita; no permitir dos escritores concurrentes ni sincronización remota. | Dos variantes divergen sin contaminarse, reabrir conserva sus cabezas y un draft basado en otra cabeza queda obsoleto; undo en una variante no cambia la otra. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-073 | Completado | NIR-030, NIR-071, NIR-072 | Comparar variantes y revisiones por identidad estable. | Calcular altas, bajas y cambios de campos/relaciones por ID entre dos cabezas o revisiones, con before/after, retcon, procedencia y referencias afectadas. Distinguir mismo objeto modificado de objetos diferentes con igual nombre; permitir abrir ambos lados en modo lectura. | Comparaciones detectan renombre, edición, eliminación y relaciones divergentes sin falsos matches por slug; cada diferencia navega a su revisión y fuente. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Almacenamiento](docs/architecture/storage.md) |
-| NIR-074 | Completado | NIR-019–NIR-024, NIR-073 | Implementar merge seguro limitado y resolución manual. | Traducir diferencias de la fuente a un ChangeSet sobre la cabeza destino. Auto-seleccionar solo operaciones sobre objetos/campos no solapados o conmutativas demostradas, como altas con IDs distintos o miembros independientes de un conjunto. Cualquier doble escritura, delete/update, conflicto temporal, claim opuesto o dependencia dudosa crea DecisionPoint manual; no usar CRDT ni “merge semántico” LLM automático. | Fixtures aplican automáticamente cambios independientes, bloquean conflictos solapados y registran fuente/decisiones; confirmar produce una revisión destino normal y nunca mueve ni reescribe la variante fuente. | [Versionado](docs/research/critical-fronts/canon-versioning.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-075 | Completado | NIR-071–NIR-074 | Añadir UI y regresión de variantes/historia. | Incorporar selector y cabeza visible, crear desde revisión, timeline editorial, vista histórica read-only, comparación y resolución de merge en el panel de cambios. Toda búsqueda, URI, contexto, timeline, snapshot e importación muestran el `ReadScope` activo; intentar editar o importar desde otra variante exige cambiar scope o abrir merge. Probar reapertura, branching, divergencia, stale, undo, merge parcial, conflicto manual y navegación histórica. | La GUI nunca confunde variante activa con revisión observada, no edita una vista histórica, no aplica artefactos a otra variante y todos los escenarios conservan cabezas, auditoría y aislamiento después de reabrir. | [Interacción](docs/architecture/interaction-model.md), [Versionado](docs/research/critical-fronts/canon-versioning.md) |
-
-## Fase 11 — Calendario ficticio fijo de presentación
-
-**Resultado:** cada mundo puede mostrar sus ticks con un calendario simple sin
-cambiar el orden temporal canónico ni crear un lenguaje calendárico universal.
-
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
-|---|---|---|---|---|---|---|
-| NIR-076 | Completado | NIR-011, NIR-052 | Definir un modelo de calendario fijo por mundo. | Añadir opcionalmente nombre, tick de epoch, ticks por día, días por semana, nombres de weekdays y una secuencia anual de meses con longitudes fijas. Implementar conversión pura tick a fecha/fecha a tick para valores exactos, incluidos ticks negativos. No incluir leap rules, astronomía, zonas horarias, calendarios múltiples ni DSL. | Pruebas de frontera cubren cambio de día/mes/año, epoch, ticks negativos, configuración inválida y round-trip exacto; quitar el calendario no modifica eventos ni ticks. | [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md), [Modelo](docs/domain/model.md) |
-| NIR-077 | Completado | NIR-036, NIR-076 | Integrar fechas ficticias en edición, timeline y citas. | Permitir configurar el calendario como ChangeSet, mostrar tick y etiqueta convertida, ingresar una fecha exacta convertida a tick y conservar precisión/certidumbre. Eventos `unknown`, aproximados u ongoing muestran la etiqueta posible sin inventar extremos. Exportar snapshots incluye configuración y ticks canónicos. | Cambiar nombres de meses solo cambia presentación, ordenar timeline sigue usando ticks y una fecha ambigua o inválida no persiste un tick inventado. | [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md), [Interacción](docs/architecture/interaction-model.md) |
-| NIR-078 | Completado | NIR-076, NIR-077 | Validar calendario y compatibilidad histórica. | Probar mundos sin calendario, configuración posterior, variantes con calendarios distintos, revisiones históricas, export/import snapshot y fechas en respuestas citadas. | El mismo evento conserva tick e identidad en todos los casos, cada vista usa la configuración de su variante/revisión y ningún cambio de display altera validación causal. | [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md), [Versionado](docs/research/critical-fronts/canon-versioning.md) |
-
-## Fase 12 — Simulación limitada de facciones y recursos
-
-**Resultado:** escenarios deterministas exploran consecuencias acotadas fuera
-del canon y solo los resultados elegidos se convierten en propuestas.
-
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
-|---|---|---|---|---|---|---|
-| NIR-079 | Completado | NIR-010, NIR-012, NIR-052, NIR-072 | Definir escenarios y estado simulado de facciones/recursos. | Crear tipos para escenario, revisión/variante base, facciones participantes, recursos discretos, existencias, capacidad, transferencias, producción/consumo fijos, pasos y supuestos. El estado es una copia externa al canon; cantidades y reglas usan enteros/unidades declaradas. No modelar precios, mercados, combate, población o economía universal. | Un escenario serializa y valida referencias, unidades, cantidades no negativas y base; crearlo, editarlo o borrarlo no genera revisión canónica. | [Visión](docs/product/vision.md), [Modelo](docs/domain/model.md) |
-| NIR-080 | Completado | NIR-015, NIR-079 | Implementar transiciones deterministas y ejecución inspeccionable. | Aplicar por paso reglas explícitas en orden estable para producción, consumo, transferencia y escasez; registrar before/after, regla, fuente y eventos disparados. Sin aleatoriedad, LLM en el motor, agentes continuos ni ejecución en background después de cerrar el escenario. Detener en límite de pasos o condición declarada. | La misma entrada produce byte-for-byte el mismo resultado lógico, una regla inválida detiene sin resultado parcial presentado como completo y cada delta explica la transición que lo causó. | [Validación](docs/architecture/validation-pipeline.md), [Fases](docs/roadmap/phases.md) |
-| NIR-081 | Completado | NIR-018–NIR-024, NIR-080 | Inspeccionar resultados y promover selecciones a ChangeSet. | Mostrar serie por paso, recursos agotados, transferencias, supuestos y consecuencias candidatas. Permitir seleccionar resultados y mapearlos a eventos, relaciones, goals o claims mediante operaciones tipadas; exigir fuente al escenario y decisión humana para cualquier interpretación no mecánica. Revalidar contra cabeza vigente. | Ejecutar no cambia canon; seleccionar dos deltas produce solo sus operaciones revisables, un escenario stale exige rebase/re-ejecución y rechazar el draft conserva únicamente el escenario. | [Interacción](docs/architecture/interaction-model.md), [Validación](docs/architecture/validation-pipeline.md) |
-| NIR-082 | Completado | NIR-079–NIR-081 | Añadir UI y regresión de simulación acotada. | Incorporar editor de escenario, ejecución paso a paso, comparación de escenarios y promoción al panel de cambios. Probar escasez, transferencia, límite de capacidad, orden estable, stale base, variante, cancelación y round-trip de resultados. | La GUI etiqueta siempre “fuera del canon”, no ofrece modo continuo y todos los casos verifican determinismo, trazabilidad y ausencia de escritura antes de confirmación estándar. | [Interacción](docs/architecture/interaction-model.md), [Fases](docs/roadmap/phases.md) |
-
-## Fase 13 — Extracción narrativa y documentos derivados
-
-**Resultado:** Nirmata descubre estructuras narrativas del canon y genera
-artefactos acotados por perspectiva, sin confundir prosa con verdad ni prometer
-una novela completa.
-
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
-|---|---|---|---|---|---|---|
-| NIR-083 | Completado | NIR-012–NIR-014, NIR-055, NIR-075 | Derivar timelines, hilos causales y cabos sueltos. | Construir consultas de solo lectura que agrupen eventos por tiempo, sigan enlaces causales con profundidad/límite y detecten heurísticas explícitas: goals activos sin resolución, eventos ongoing, claims disputados sin cierre, causas sin consecuencia registrada y referencias narrativas pendientes. Conservar variante, revisión y citas; no persistir inferencias como canon. | Fixtures producen hilos reproducibles, separan orden de discurso/story time y etiquetan cada cabo con regla heurística y evidencia, sin afirmar que la ausencia sea falsedad. | [Visión](docs/product/vision.md), [Tiempo narrativo](docs/research/critical-fronts/narrative-time.md) |
-| NIR-084 | Completado | NIR-043, NIR-055, NIR-083 | Generar documentos internos dependientes de perspectiva. | Permitir crear crónica, carta, informe, mito o historia corta desde objetos/hilos seleccionados. Recuperar solo conocimiento accesible al autor/perspectiva y tick elegido; distinguir hechos, rumores e inferencias en las fuentes. La salida es un `Document` draft con `ContentReference`s, nunca una novela ni canon automático. | Un narrador sin acceso a un secreto no lo presenta como conocido, todas las menciones importantes tienen referencias y cancelar o fallar parsing no crea documento. | [Interacción](docs/architecture/interaction-model.md), [Conocimiento incierto](docs/research/critical-fronts/uncertain-knowledge.md) |
-| NIR-085 | Completado | NIR-044–NIR-048, NIR-083, NIR-084 | Proponer continuidad narrativa como cambios revisables. | Desde un hilo o cabo suelto ofrecer preguntas, alternativas y consecuencias candidatas; si el usuario elige desarrollar una, producir `IntentBrief` y `ChangeSetDraft` para eventos, goals, claims o documentos. Mantener alternativas como DecisionPoints y usar revisión profunda solo por petición explícita. | Ninguna sugerencia modifica canon, las alternativas incompatibles permanecen visibles y una propuesta aceptada atraviesa validadores, crítico, revisión y commit normal con fuentes al hilo original. | [Cocreación](docs/research/critical-fronts/human-ai-cocreation.md), [Grafo de agentes](docs/architecture/agent-graph.md) |
-| NIR-086 | Completado | NIR-083–NIR-085 | Añadir UI y regresión narrativa. | Crear vistas de timeline derivada, hilo causal y cabos sueltos con filtros por perspectiva/variante, acciones de generar documento o proponer continuidad y panel de fuentes. Probar flashback, rumor, secreto, causalidad parcial, goal resuelto, revisión histórica y salida hostil. | La UI distingue derivación, inferencia, documento y ChangeSet; todas las salidas abren fuentes, respetan perspectiva y no ofrecen una acción de “generar novela”. | [Interacción](docs/architecture/interaction-model.md), [Visión](docs/product/vision.md) |
-
-## Fase 14 — Evolución opcional de proveedor y aceptación general
-
-**Resultado:** una necesidad real puede habilitar otro proveedor sin convertir
-la integración en plataforma, y toda la solución queda validada de extremo a
-extremo.
-
-| Código | Estado | Dependencias | Entregable / Descripción | Detalle técnico | Criterio de aceptación | Referencias |
-|---|---|---|---|---|---|---|
-| NIR-087 | Completado | NIR-064, NIR-070, NIR-086 | Ejecutar el gate de proveedor y refactorizar solo si se abre. | Medir el proveedor inicial contra consultas, JSON tipado, crítica, contexto, streaming, privacidad/offline y capacidades requeridas por importación/narrativa. Si existe una carencia funcional aprobada, elegir un proveedor local o segundo proveedor concreto y reemplazar el acoplamiento directo por la mínima selección usada por producto, actualizando callers y eliminando la ruta anterior que quede obsoleta. No crear marketplace, plugins, factory genérica, compatibility shim ni proveedor ficticio. | El registro demuestra la necesidad o cierra el gate sin código nuevo. Si se abre, cada modo selecciona únicamente implementaciones reales, credenciales/configuración permanecen aisladas y no existen dos APIs internas equivalentes para la misma llamada. | [Runtime](docs/architecture/language-runtime.md), [AGENTS](AGENTS.md) |
-| NIR-088 | Completado | NIR-087 | Verificar contratos y seguridad de los proveedores activos. | Ejecutar fixtures grabadas equivalentes para query, propose, critic, specialist y documento; probar timeout, cancelación, salida truncada, capability missing, selección, almacenamiento de credenciales y ausencia de lore/secrets en logs. Si solo queda un proveedor, verificar que el cliente concreto siga sin abstracción vacía. | Todos los proveedores activos respetan los mismos DTOs y fronteras de capacidad, ninguno puede escribir canon y una capacidad ausente produce error accionable sin fallback silencioso. | [Flujo IA](docs/architecture/ai-flow.md), [Suite IA](docs/validation/ai-regression-suite.md) |
-| NIR-089 | Completado | NIR-058, NIR-064, NIR-070, NIR-075, NIR-078, NIR-082, NIR-086, NIR-088 | Ejecutar aceptación funcional end-to-end de la solución general. | En un mundo representativo recorrer fundamento, recuperación activa, snapshots, importación de lore, revisión profunda, variantes/merge, vista histórica, calendario, escenario de facciones/recursos, extracción narrativa, documento por perspectiva y propuesta final. Reabrir el archivo entre hitos y verificar auditoría, fuentes, decisiones, rollback y ausencia de escrituras automáticas. | Se cumple la Definition of Done general; las 89 tareas tienen estado verificable, cada capacidad mantiene SQLite como canon y ningún no-objetivo se introdujo como dependencia oculta. | [Visión](docs/product/vision.md), [Fases](docs/roadmap/phases.md), [AGENTS](AGENTS.md) |
-
-## Definition of Done de la solución general
-
-Nirmata está funcionalmente completo para este backlog únicamente cuando:
-
-1. Se cumple íntegramente la Definition of Done del fundamento funcional.
-2. La recuperación SQL/relaciones/tiempo/FTS5 se reconoce y mide como RAG
-   determinista; cualquier etapa semántica existe solo por DR-002, conserva
-   citas, se invalida/reconstruye y permanece derivada dentro del proyecto.
-3. No se necesita una base de grafos ni vectorial separada para los tamaños y
-   consultas aceptados; cualquier reevaluación futura conserva los gates
-   medibles y no forma parte de estas tareas.
-4. `Revisión profunda` solo se ejecuta por acción explícita, usa especialistas
-   relevantes de solo lectura con límites codificados, preserva fallos y
-   desacuerdos, y entrega DecisionPoints/ChangeSetDraft sin capacidad de commit.
-5. Markdown, texto y documentos existentes se importan como fuentes no
-   confiables con chunks y procedencia; la extracción graph-aware produce
-   candidatos y todo ingreso al canon pasa por ChangeSet y revisión humana.
-6. Existen variantes nombradas con cabezas explícitas, comparación, vistas
-   históricas de solo lectura y merge automático únicamente para operaciones
-   no solapadas o conmutativas; los demás conflictos se resuelven manualmente.
-7. El tick continúa siendo la autoridad temporal y el calendario fijo por mundo
-   funciona solo como conversión/presentación, incluso en variantes e historia.
-8. La simulación de facciones/recursos es determinista, limitada, inspeccionable
-   y externa al canon; solo resultados seleccionados generan propuestas.
-9. Timelines, hilos causales, cabos sueltos y documentos por perspectiva se
-   derivan con fuentes; documentos y continuidades siguen siendo artefactos o
-   ChangeSets revisables y no se ofrece generación de novelas.
-10. El VFS lógico se exporta e importa como snapshot explícito y seguro; no
-    existe sincronización bidireccional viva.
-11. Un segundo proveedor/local solo existe si el gate funcional lo justificó y
-    la integración directa no dejó marketplace, shims ni abstracciones vacías.
-12. Reapertura, stale checks, cancelación, fallos parciales, rollback,
-    auditoría, procedencia y seguridad se verifican de extremo a extremo en
-    NIR-089, sin CI/CD, estudios, release automation u otros trabajos higiénicos
-    usados para declarar funcionalidad.
+1. Proyecto cerrado y mundo abierto son estados mutuamente exclusivos visual y
+   semánticamente.
+2. Una persona nueva puede crear manualmente, crear una base con IA o importar
+   material desde la pantalla inicial.
+3. Preguntar y proponer cambios son acciones distintas y evidentes; convertir
+   una respuesta en propuesta requiere confirmación.
+4. Toda escritura termina en una cola global que explica qué cambia, por qué,
+   fuentes, bloqueos y siguiente acción.
+5. `Aplicar al mundo` es la única acción de commit y nunca está disponible para
+   propuestas desactualizadas o read-only.
+6. Variante activa, vista observada e historia se entienden sin usar `head`.
+7. Ningún flujo básico exige UUID, URI, JSON, tick o DSL; siguen disponibles en
+   detalles avanzados.
+8. Navegar nunca pierde formularios, escenarios, lotes o revisiones sin aviso.
+9. Settings y About existen como superficies de software y funcionan sin mundo.
+10. El workspace diario aparece en el primer viewport; features avanzadas se
+    abren por navegación o lazy load.
+11. La app funciona por teclado, tiene foco visible/restaurado y pasa WCAG 2.2 AA
+    en light/dark/read-only/error.
+12. Los viewports `720x520`, `960x680`, `1440x900` y `390x844` no apilan toda la
+    aplicación ni requieren scroll horizontal.
+13. El stack final es React/Vite con una sola estrategia de estilos aprobada;
+    cada dependencia nueva tiene uso, owner y presupuesto.
+14. Los tests de comportamiento, screenshots, axe, performance, frontend build,
+    Cargo y desktop release pasan sin errores conocidos.
+15. La implementación antigua se elimina; no quedan dos UIs ni compatibility
+    shims permanentes.

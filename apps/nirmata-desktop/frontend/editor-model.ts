@@ -23,7 +23,6 @@ import type {
   JumpLink,
   ObjectKind,
   OpenUriResponse,
-  PendingDraftRecord,
   WarningItem,
 } from "./types.js";
 
@@ -45,7 +44,6 @@ export {
   createField,
   currentWorldUri,
   enumOptions,
-  restorePendingValues,
 };
 
 function enumOptions(values: string[]): Array<{ value: string; label: string }> {
@@ -96,21 +94,6 @@ function cloneEditorMode(mode: EditorMode): EditorMode {
   };
 }
 
-function restorePendingValues(editor: EditorMode, existing: PendingDraftRecord | undefined): EditorMode {
-  if (!existing) {
-    return editor;
-  }
-  const restored = cloneEditorMode(existing.editor);
-  restored.metadata = editor.metadata;
-  restored.warnings = editor.warnings;
-  restored.links = editor.links;
-  restored.logicalPath = existing.preview.logicalPath || editor.logicalPath;
-  restored.title = editor.title;
-  restored.subtitle = editor.subtitle;
-  restored.description = editor.description;
-  return restored;
-}
-
 function currentWorldUri(): string | null {
   return state.session ? `nirmata://world/${state.session.world.id}` : null;
 }
@@ -127,10 +110,10 @@ function buildWorldEditor(): EditorMode | null {
     existingUri: worldUri,
     targetUri: worldUri,
     title: world.name,
-    subtitle: `Mundo · ${shortId(world.id)}`,
+    subtitle: "Mundo",
     description: previewText(world.premise_md, "Edita metadatos del mundo activo como draft."),
     logicalPath: "/world",
-    objective: `Update world ${world.name}`,
+    objective: `Actualizar mundo ${world.name}`,
     sourceUrisText: worldUri,
     assumptionsText: "",
     fields: worldFields(world),
@@ -142,7 +125,7 @@ function buildWorldEditor(): EditorMode | null {
     warnings: [],
     links: [],
   });
-  return restorePendingValues(editor, state.pendingDrafts.get(worldUri));
+  return editor;
 }
 
 function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
@@ -157,10 +140,10 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       existingUri: result.uri,
       targetUri: result.uri,
       title: object.world.name,
-      subtitle: `Mundo · ${shortId(object.world.id)}`,
+      subtitle: "Mundo",
       description: previewText(object.world.premise_md, "Mundo activo"),
       logicalPath: "/world",
-      objective: `Update world ${object.world.name}`,
+      objective: `Actualizar mundo ${object.world.name}`,
       sourceUrisText,
       assumptionsText: "",
       fields: worldFields(object.world),
@@ -178,10 +161,10 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       existingUri: result.uri,
       targetUri: result.uri,
       title: entity.name,
-      subtitle: `${humanize(entity.kind)} · ${shortId(entity.id)}`,
+      subtitle: humanize(entity.kind),
       description: result.snippet,
       logicalPath: pathForUri(state.logicalTree, result.uri),
-      objective: `Update entity ${entity.name}`,
+      objective: `Actualizar entidad ${entity.name}`,
       sourceUrisText,
       assumptionsText: "",
       fields: [
@@ -191,7 +174,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
         }),
         createField("name", "Nombre", "text", entity.name, { required: true }),
         createField("slug", "Slug", "text", entity.slug, { required: true }),
-        createField("aliases", "Aliases (uno por línea)", "textarea", linesToText(entity.aliases), {
+        createField("aliases", "Nombres alternativos (uno por línea)", "textarea", linesToText(entity.aliases), {
           rows: 4,
         }),
         createField("summary", "Resumen", "textarea", entity.summary, { rows: 4 }),
@@ -209,7 +192,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       warnings,
       links: [],
     });
-    return restorePendingValues(editor, state.pendingDrafts.get(result.uri));
+    return editor;
   }
 
   if ("relation" in object) {
@@ -230,10 +213,10 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       existingUri: result.uri,
       targetUri: result.uri,
       title: relation.kind,
-      subtitle: `${humanize(relation.direction)} · ${shortId(relation.id)}`,
+      subtitle: humanize(relation.direction),
       description: result.snippet,
       logicalPath: pathForUri(state.logicalTree, result.uri),
-      objective: `Update relation ${relation.kind}`,
+      objective: `Actualizar relación ${relation.kind}`,
       sourceUrisText,
       assumptionsText: "",
       fields: [
@@ -287,7 +270,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
           : warnings,
       links: dedupeLinks(links),
     });
-    return restorePendingValues(editor, state.pendingDrafts.get(result.uri));
+    return editor;
   }
 
   if ("event" in object) {
@@ -334,10 +317,10 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       existingUri: result.uri,
       targetUri: result.uri,
       title: normalizeText(event.summary, event.kind),
-      subtitle: `${humanize(event.kind)} · ${shortId(event.id)}`,
+      subtitle: humanize(event.kind),
       description: result.snippet,
       logicalPath: pathForUri(state.logicalTree, result.uri),
-      objective: `Update event ${normalizeText(event.summary, event.kind)}`,
+      objective: `Actualizar evento ${normalizeText(event.summary, event.kind)}`,
       sourceUrisText,
       assumptionsText: "",
       fields: [
@@ -400,7 +383,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       warnings: eventWarnings,
       links: dedupeLinks(links),
     });
-    return restorePendingValues(editor, state.pendingDrafts.get(result.uri));
+    return editor;
   }
 
   if ("claim" in object) {
@@ -454,10 +437,10 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       existingUri: result.uri,
       targetUri: result.uri,
       title: normalizeText(claim.predicate_key, "Claim"),
-      subtitle: `${humanize(claim.authentication)} · ${shortId(claim.id)}`,
+      subtitle: humanize(claim.authentication),
       description: result.snippet,
       logicalPath: pathForUri(state.logicalTree, result.uri),
-      objective: `Update claim ${previewText(claim.content_md, "claim")}`,
+      objective: `Actualizar afirmación ${previewText(claim.content_md, "afirmación")}`,
       sourceUrisText,
       assumptionsText: "",
       fields: [
@@ -466,7 +449,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
           help: "UUID o nirmata://entity/...",
         }),
         createField("content_md", "Contenido Markdown", "textarea", claim.content_md, { rows: 5 }),
-        createField("predicate_key", "Predicate key", "text", claim.predicate_key ?? ""),
+        createField("predicate_key", "Tipo de afirmación", "text", claim.predicate_key ?? ""),
         createField(
           "object_kind",
           "Tipo de objeto",
@@ -474,9 +457,9 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
           claim.object === null ? "none" : "entity" in claim.object ? "entity" : "scalar",
           {
             options: [
-              { value: "none", label: "None" },
-              { value: "entity", label: "Entity" },
-              { value: "scalar", label: "Scalar" },
+            { value: "none", label: "Sin objeto" },
+            { value: "entity", label: "Otra entidad" },
+            { value: "scalar", label: "Valor textual" },
             ],
           },
         ),
@@ -495,7 +478,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
           required: true,
           options: enumOptions(["canonical", "attributed", "disputed"]),
         }),
-        createField("holder_entity", "Holder", "text", claim.holder_entity_id ?? "", {
+        createField("holder_entity", "Quien sostiene la afirmación", "text", claim.holder_entity_id ?? "", {
           help: "UUID o nirmata://entity/...",
         }),
         createField("modality", "Modalidad", "select", claim.modality ?? "", {
@@ -517,7 +500,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
         }),
         createField(
           "holder_confidence",
-          "Confianza holder",
+          "Confianza declarada",
           "number",
           claim.holder_confidence?.toString() ?? "",
         ),
@@ -533,7 +516,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       warnings: claimWarnings,
       links: dedupeLinks(links),
     });
-    return restorePendingValues(editor, state.pendingDrafts.get(result.uri));
+    return editor;
   }
 
   if ("rule" in object) {
@@ -551,10 +534,10 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       existingUri: result.uri,
       targetUri: result.uri,
       title: previewText(rule.statement_md, "Regla"),
-      subtitle: `${humanize(rule.kind)} · ${shortId(rule.id)}`,
+      subtitle: humanize(rule.kind),
       description: result.snippet,
       logicalPath: pathForUri(state.logicalTree, result.uri),
-      objective: `Update rule ${previewText(rule.statement_md, "rule")}`,
+      objective: `Actualizar regla ${previewText(rule.statement_md, "regla")}`,
       sourceUrisText,
       assumptionsText: "",
       fields: [
@@ -566,7 +549,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
           rows: 4,
           required: true,
         }),
-        createField("scope", "Scope", "text", rule.scope, { required: true }),
+        createField("scope", "Alcance", "text", rule.scope, { required: true }),
         createField("severity", "Severidad", "select", rule.severity, {
           required: true,
           options: enumOptions(["advisory", "hard"]),
@@ -591,7 +574,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       warnings: ruleWarnings,
       links: [],
     });
-    return restorePendingValues(editor, state.pendingDrafts.get(result.uri));
+    return editor;
   }
 
   if ("goal" in object) {
@@ -609,14 +592,14 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       existingUri: result.uri,
       targetUri: result.uri,
       title: previewText(goal.desired_state_md, "Meta"),
-      subtitle: `${humanize(goal.status)} · ${shortId(goal.id)}`,
+      subtitle: humanize(goal.status),
       description: result.snippet,
       logicalPath: pathForUri(state.logicalTree, result.uri),
-      objective: `Update goal ${previewText(goal.desired_state_md, "goal")}`,
+      objective: `Actualizar meta ${previewText(goal.desired_state_md, "meta")}`,
       sourceUrisText,
       assumptionsText: "",
       fields: [
-        createField("holder_entity", "Holder", "text", goal.holder_entity_id, {
+        createField("holder_entity", "Titular de la meta", "text", goal.holder_entity_id, {
           required: true,
           help: "UUID o nirmata://entity/...",
         }),
@@ -654,7 +637,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
         },
       ],
     });
-    return restorePendingValues(editor, state.pendingDrafts.get(result.uri));
+    return editor;
   }
 
   const aggregate = object.document;
@@ -688,10 +671,10 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
     existingUri: result.uri,
     targetUri: result.uri,
     title: documentObject.title,
-    subtitle: `${humanize(documentObject.kind)} · ${shortId(documentObject.id)}`,
+    subtitle: humanize(documentObject.kind),
     description: result.snippet,
     logicalPath: pathForUri(state.logicalTree, result.uri),
-    objective: `Update document ${documentObject.title}`,
+    objective: `Actualizar documento ${documentObject.title}`,
     sourceUrisText,
     assumptionsText: "",
     fields: [
@@ -724,7 +707,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
     warnings: documentWarnings,
     links: dedupeLinks(links),
   });
-  return restorePendingValues(editor, state.pendingDrafts.get(result.uri));
+  return editor;
 }
 
 function worldFields(world: import("./types.js").World): EditorField[] {

@@ -348,6 +348,7 @@ impl NirmataApp {
         self.active.take().ok_or(AppError::NoWorldOpen)?;
         self.manual_reviews.clear();
         self.ai_runs.clear();
+        self.deep_review_runs.clear();
         self.import_review_traces.clear();
         self.simulation_scenarios.clear();
         Ok(())
@@ -977,6 +978,7 @@ impl NirmataApp {
     ) -> Result<WorldSession, AppError> {
         self.manual_reviews.clear();
         self.ai_runs.clear();
+        self.deep_review_runs.clear();
         self.import_review_traces.clear();
         self.simulation_scenarios.clear();
         let active_variant = store.active_variant()?;

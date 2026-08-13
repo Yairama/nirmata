@@ -1,5 +1,5 @@
 import { buildWorldEditor } from "./editor-model.js";
-import { clearError, humanize, setStatus, shortId, showError } from "./helpers.js";
+import { clearError, formatTimestamp, humanize, setStatus, shortId, showError } from "./helpers.js";
 import { renderPending } from "./render-pending.js";
 import {
   compareVariantSelect,
@@ -15,6 +15,7 @@ import {
   renameVariantForm,
   renameVariantNameInput,
   revisionScopeSelect,
+  setSession,
   state,
   variantDiff,
   variantNameInput,
@@ -35,8 +36,7 @@ import type {
 import {
   confirmDiscardPending,
   refreshNavigation,
-  renderWorkspace,
-  selectUri,
+  selectUriInScope,
 } from "./workspace.js";
 
 let variants: Variant[] = [];
@@ -52,49 +52,43 @@ function currentScope(): ReadScope | null {
 }
 
 async function openDiffSide(diff: VariantDiff, scope: ReadScope): Promise<void> {
-  if (!confirmDiscardPending()) {
-    return;
-  }
-  const session = await invoke<WorldSession>("set_read_scope", { input: { scope } });
-  state.session = session;
-  state.editorMode = null;
-  await refreshNavigation();
-  window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
   const uri = objectUri(diff);
   if (uri) {
-    await selectUri(uri);
+    await selectUriInScope(uri, scope);
   }
 }
 
 function renderComparison(comparison: VariantComparison): void {
   if (comparison.differences.length === 0) {
-    variantDiff.textContent = "Sin diferencias por ID estable.";
+    variantDiff.textContent = "No hay diferencias entre las versiones seleccionadas.";
     return;
   }
   const list = document.createElement("ul");
   for (const difference of comparison.differences) {
     const item = document.createElement("li");
     const label = document.createElement("span");
-    label.textContent = `${humanize(difference.kind)} · ${objectUri(difference)}`;
+    label.textContent = humanize(difference.kind);
     const provenance = document.createElement("small");
     const source = difference.rightSource ?? difference.leftSource;
     provenance.textContent = source
-      ? `${humanize(source.retcon)} · revisión ${shortId(source.revisionId)} · ${source.auditSource}`
-      : "Sin operación auditada: objeto raíz o importación anterior al historial.";
+      ? `Tipo de cambio: ${humanize(source.retcon)}`
+      : "Objeto inicial o importado antes del historial disponible.";
     const references = document.createElement("small");
     references.textContent = difference.affectedReferences.length > 0
-      ? `Referencias afectadas: ${difference.affectedReferences.map((reference) => objectUri({ ...difference, objectRef: reference })).join(", ")}`
+      ? `${difference.affectedReferences.length} referencia(s) afectada(s).`
       : "Sin referencias estructuradas afectadas.";
     const left = document.createElement("button");
     left.type = "button";
     left.className = "ghost";
-    left.textContent = "Abrir izquierda";
+    const leftVariant = variants.find((variant) => variant.id === difference.leftScope.variantId);
+    const rightVariant = variants.find((variant) => variant.id === difference.rightScope.variantId);
+    left.textContent = `Abrir ${leftVariant?.name ?? "origen"}`;
     left.disabled = difference.before === null;
     left.addEventListener("click", () => void openDiffSide(difference, difference.leftScope));
     const right = document.createElement("button");
     right.type = "button";
     right.className = "ghost";
-    right.textContent = "Abrir derecha";
+    right.textContent = `Abrir ${rightVariant?.name ?? "destino"}`;
     right.disabled = difference.after === null;
     right.addEventListener("click", () => void openDiffSide(difference, difference.rightScope));
     item.append(label, provenance, references, left, right);
@@ -108,8 +102,8 @@ function mergeRecord(result: MergeReviewResult): PendingDraftRecord {
   if (!editor) {
     throw new Error("No hay mundo activo para presentar el merge.");
   }
-  editor.title = "Merge de variantes";
-  editor.description = "ChangeSet normal sobre la cabeza destino; la fuente permanece intacta.";
+  editor.title = "Traer cambios de otra variante";
+  editor.description = "La propuesta se aplicará en la variante activa; la variante de origen permanecerá intacta.";
   editor.fields = [];
   editor.values = {};
   editor.baselineValues = {};
@@ -119,7 +113,7 @@ function mergeRecord(result: MergeReviewResult): PendingDraftRecord {
       targetUri: result.review.reviewKey,
       objectType: "world",
       mode: "update",
-      title: "Merge de variantes",
+      title: "Traer cambios de otra variante",
       objective: result.review.objective,
       sourceUris: result.review.sources,
       assumptions: result.review.assumptions,
@@ -174,31 +168,34 @@ async function refreshVariantPanel(): Promise<void> {
     variantSelect.replaceChildren(...variants.filter((variant) => !variant.archived).map((variant) => {
       const option = document.createElement("option");
       option.value = variant.id;
-      option.textContent = `${variant.name} · ${shortId(variant.headRevisionId)}`;
+      option.textContent = variant.name;
       option.selected = variant.id === active.id;
       return option;
     }));
     compareVariantSelect.replaceChildren(...variants.filter((variant) => !variant.archived && variant.id !== observed.id).map((variant) => {
       const option = document.createElement("option");
       option.value = variant.id;
-      option.textContent = `${variant.name} · ${shortId(variant.headRevisionId)}`;
+      option.textContent = variant.name;
       return option;
     }));
     const head = document.createElement("option");
     head.value = "";
-    head.textContent = `Cabeza · ${shortId(observed.headRevisionId)}`;
+    head.textContent = "Versión actual";
     revisionScopeSelect.replaceChildren(head);
     for (const revision of state.revisionHistory?.revisions ?? []) {
       const option = document.createElement("option");
       option.value = revision.revisionId;
-      option.textContent = `${shortId(revision.revisionId)} · ${revision.summary}`;
+      option.textContent = `${formatTimestamp(revision.createdAtMs)} · ${revision.summary}`;
       option.selected = scope.revisionId === revision.revisionId;
       revisionScopeSelect.append(option);
     }
     const readOnly = state.session.read_only;
+    const viewedRevision = state.revisionHistory?.revisions.find((revision) =>
+      revision.revisionId === scope.revisionId
+    );
     readScopeLabel.textContent = readOnly
-      ? `Solo lectura: ${observed.name} / ${shortId(scope.revisionId ?? observed.headRevisionId)}`
-      : `Escritura activa: ${active.name} / ${shortId(active.headRevisionId)}`;
+      ? `Escribiendo en: ${active.name} · Viendo: ${observed.name}, ${viewedRevision?.summary ?? "versión anterior"} · Solo lectura`
+      : `Escribiendo en: ${active.name} · Viendo: versión actual`;
     readScopeLabel.classList.toggle("read-only", readOnly);
     viewActiveHeadButton.disabled = !readOnly;
     mergeVariantButton.disabled = readOnly || !compareVariantSelect.value;
@@ -213,54 +210,72 @@ async function refreshVariantPanel(): Promise<void> {
 }
 
 variantSelect.addEventListener("change", async () => {
-  if (!confirmDiscardPending()) {
-    variantSelect.value = state.session?.active_variant.id ?? "";
-    return;
+  const switched = await switchWritingVariant(variantSelect.value);
+  if (!switched) variantSelect.value = state.session?.active_variant.id ?? "";
+});
+
+export async function switchWritingVariant(variantId: string): Promise<boolean> {
+  if (!confirmDiscardPending("workspace")) {
+    return false;
   }
   try {
     clearError();
     const session = await invoke<WorldSession>("switch_variant", {
-      input: { variantId: variantSelect.value },
+      input: { variantId },
     });
-    state.session = session;
+    setSession(session);
     state.pendingDrafts.clear();
+    window.dispatchEvent(new CustomEvent("nirmata:discard-ephemeral-work"));
     state.editorMode = null;
     variantDiff.replaceChildren();
     await refreshNavigation();
-    window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
+    return true;
   } catch (value) {
     showError(value);
+    return false;
+  }
+}
+
+revisionScopeSelect.addEventListener("change", async () => {
+  const changed = await observeRevision(revisionScopeSelect.value || null);
+  if (!changed) {
+    revisionScopeSelect.value = state.session?.read_scope.revisionId ?? "";
   }
 });
 
-revisionScopeSelect.addEventListener("change", async () => {
-  if (!confirmDiscardPending()) {
-    return;
-  }
+export async function observeRevision(revisionId: string | null): Promise<boolean> {
+  if (!state.session || !confirmDiscardPending("editor")) return false;
   try {
-    const revisionId = revisionScopeSelect.value || null;
     const scope: ReadScope = {
       variantId: state.session!.read_scope.variantId,
       revisionId,
     };
-    state.session = await invoke<WorldSession>("set_read_scope", { input: { scope } });
+    setSession(await invoke<WorldSession>("set_read_scope", { input: { scope } }));
     state.editorMode = null;
     await refreshNavigation();
-    window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
+    return true;
   } catch (value) {
     showError(value);
+    return false;
   }
-});
+}
 
 viewActiveHeadButton.addEventListener("click", async () => {
+  await viewActiveVersion();
+});
+
+export async function viewActiveVersion(): Promise<boolean> {
+  if (!confirmDiscardPending("editor")) return false;
   try {
-    state.session = await invoke<WorldSession>("view_active_head");
+    setSession(await invoke<WorldSession>("view_active_head"));
+    state.editorMode = null;
     await refreshNavigation();
-    window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
+    return true;
   } catch (value) {
     showError(value);
+    return false;
   }
-});
+}
 
 createVariantForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -276,7 +291,7 @@ createVariantForm.addEventListener("submit", async (event) => {
     await invoke<Variant>("create_variant", { input: { name, fromRevisionId } });
     variantNameInput.value = "";
     await refreshVariantPanel();
-    setStatus("Variante creada sin cambiar la cabeza activa.");
+    setStatus("Variante creada sin cambiar la versión donde estás escribiendo.");
   } catch (value) {
     showError(value);
   }
@@ -293,7 +308,7 @@ renameVariantForm.addEventListener("submit", async (event) => {
     const variant = await invoke<Variant>("rename_variant", {
       input: { variantId: active.id, name },
     });
-    state.session!.active_variant = variant;
+    setSession({ ...state.session!, active_variant: variant });
     renameVariantNameInput.value = "";
     await refreshVariantPanel();
     setStatus(`Variante renombrada a ${variant.name}.`);
@@ -351,7 +366,7 @@ exportVfsSnapshotButton.addEventListener("click", async () => {
 
 importVfsSnapshotButton.addEventListener("click", async () => {
   if (!state.session || state.session.read_only) {
-    showError("Vuelve a la cabeza activa antes de importar un snapshot.");
+    showError("Vuelve a la versión actual antes de importar una copia estructurada.");
     return;
   }
   const snapshotDirectory = await dialog.open({ multiple: false, directory: true });

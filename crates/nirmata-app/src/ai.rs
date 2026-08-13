@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use nirmata_ai::{
-    AiError, CancellationToken, RequestOptions, StreamDelta,
+    AiError, AzureFoundryClient, CancellationToken, RequestOptions, ResponseRequest, StreamDelta,
     capabilities::{
         AzureFoundryCapabilityClient, CapabilityError, CapabilityInvocation, InvocationMetadata,
     },
@@ -2053,6 +2053,31 @@ impl crate::NirmataApp {
 }
 
 impl crate::NirmataApp {
+    pub async fn diagnose_ai_provider(
+        &self,
+        provider: &AiProviderConfig,
+        options: AiRequestOptions,
+    ) -> Result<(), AppError> {
+        let api_key = self
+            .provider_credentials
+            .clone_api_key()
+            .ok_or(AiError::MissingProviderApiKey)?;
+        let client = AzureFoundryClient::new(&provider.base_url)?;
+        client
+            .create_response(
+                &api_key,
+                ResponseRequest::new(
+                    &provider.model,
+                    "Connectivity diagnostic. Reply with OK only.",
+                    "OK",
+                )
+                .with_max_output_tokens(16),
+                options.into_request_options(),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub(crate) async fn hand_external_draft_to_standard_review<C, F>(
         &mut self,
         client: &C,

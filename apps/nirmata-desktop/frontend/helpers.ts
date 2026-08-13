@@ -61,6 +61,92 @@ function shortId(value: string): string {
 }
 
 function humanize(value: string): string {
+  const labels: Record<string, string> = {
+    fact: "Hecho",
+    perspective: "Perspectiva",
+    inference: "Inferencia",
+    no_evidence: "Sin evidencia",
+    unspecified: "No especificado",
+    entity: "Entidad",
+    relation: "Relación",
+    event: "Evento",
+    claim: "Afirmación",
+    rule: "Regla",
+    goal: "Meta",
+    document: "Documento",
+    world: "Mundo",
+    create: "Crear",
+    update: "Modificar",
+    created: "Creado",
+    deleted: "Eliminado",
+    renamed: "Renombrado",
+    edited: "Modificado",
+    relation_diverged: "Relación divergente",
+    additive: "Completa información",
+    reinterpretive: "Añade otra interpretación",
+    replacement: "Sustituye información",
+    warning: "Advertencia",
+    conflict: "Conflicto",
+    error: "Error",
+    info: "Información",
+    accept: "Aceptar",
+    reject: "Rechazar",
+    current: "Vigente",
+    completed: "Completado",
+    cancelled: "Cancelado",
+    failed: "Fallido",
+    person: "Personaje",
+    place: "Lugar",
+    faction: "Facción",
+    culture: "Cultura",
+    resource: "Recurso",
+    concept: "Concepto",
+    directed: "Dirigida",
+    undirected: "No dirigida",
+    certain: "Cierta",
+    approximate: "Aproximada",
+    uncertain: "Incierta",
+    approximate_uncertain: "Aproximada e incierta",
+    unknown: "Desconocido",
+    instant: "Instante",
+    interval: "Intervalo",
+    ongoing: "En curso",
+    exact: "Exacta",
+    day: "Día",
+    month: "Mes",
+    year: "Año",
+    era: "Era",
+    positive: "Positiva",
+    negative: "Negativa",
+    canonical: "Canónico",
+    attributed: "Atribuida",
+    disputed: "Disputada",
+    assertion: "Afirmación",
+    belief: "Creencia",
+    hypothesis: "Hipótesis",
+    counterfactual: "Contrafactual",
+    constitutive: "Constitutiva",
+    generative: "Generativa",
+    institutional: "Institucional",
+    authorial: "Autoral",
+    advisory: "Orientativa",
+    hard: "Obligatoria",
+    active: "Activa",
+    achieved: "Cumplida",
+    abandoned: "Abandonada",
+    frustrated: "Frustrada",
+    public: "Pública",
+    secret: "Secreta",
+    non_canonical: "No canónico",
+    chronicle: "Crónica",
+    letter: "Carta",
+    report: "Informe",
+    myth: "Mito",
+    short_story: "Historia corta",
+  };
+  if (labels[value]) {
+    return labels[value];
+  }
   return value
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -144,7 +230,7 @@ function formatTimestamp(value: number): string {
 }
 
 function retainedDraftHint(): string {
-  return state.pendingDrafts.size > 0 ? " El draft sigue visible en el panel inferior." : "";
+  return state.pendingDrafts.size > 0 ? " La propuesta sigue visible en el panel inferior." : "";
 }
 
 function formatClaimObject(object: ClaimObject | null): string {
@@ -290,10 +376,6 @@ function labelForUri(uri: string): string {
   }
   if (state.selectedObject?.result.uri === uri) {
     return state.selectedObject.result.snippet;
-  }
-  const hit = state.searchHits.find((item) => item.uri === uri);
-  if (hit) {
-    return hit.snippet;
   }
   const path = pathForUri(state.logicalTree, uri);
   if (path) {

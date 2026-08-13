@@ -4,12 +4,13 @@
   "version": "0.1.0",
   "identifier": "com.nirmata.desktop",
   "build": {
-    "beforeDevCommand": "npm --prefix ../frontend run build",
+    "beforeDevCommand": "npm --prefix ../frontend run dev",
     "beforeBuildCommand": "npm --prefix ../frontend run build",
+    "devUrl": "http://localhost:1420",
     "frontendDist": "../frontend/dist"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
       {
         "title": "Nirmata",

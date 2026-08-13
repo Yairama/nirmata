@@ -536,6 +536,7 @@ async fn specialists_run_concurrently_and_partial_failure_preserves_successes() 
         )
         .await
         .expect("deep review");
+    let deep_run_id = run.id;
 
     assert_eq!(run.status, DeepReviewStatus::AwaitingReview);
     assert_eq!(
@@ -557,6 +558,12 @@ async fn specialists_run_concurrently_and_partial_failure_preserves_successes() 
         .expect("standard run exists");
     assert_eq!(standard.status, crate::AiRunStatus::AwaitingReview);
     assert_eq!(standard.base_revision, world.current_revision());
+
+    app.close_world().expect("close world");
+    assert!(matches!(
+        app.read_deep_review_run(deep_run_id),
+        Err(crate::AppError::DeepReviewRunNotFound(_))
+    ));
 
     drop(app);
     fs::remove_file(path).expect("remove project");

@@ -1,18 +1,23 @@
 use super::{
-    CommandError, DeriveCausalThreadsCommand, DeriveNarrativeTimelineCommand,
+    AiCancellations, CommandError, DeriveCausalThreadsCommand, DeriveNarrativeTimelineCommand,
     GenerateInternalDocumentCommand, NarrativeContinuitySelectionCommand,
-    ProposeNarrativeContinuityCommand, SimulationScenarioCommand, apply_manual_review_action,
-    apply_manual_review_edit, begin_manual_review_edit, close_world, confirm_manual_review,
-    create_world, derive_causal_threads, derive_loose_ends, derive_narrative_timeline,
-    dotenv_value, explore_narrative_continuity, get_current_world, get_provider_credential_status,
+    ProposeNarrativeContinuityCommand, RecentProject, SimulationScenarioCommand,
+    apply_manual_review_action, apply_manual_review_edit, begin_manual_review_edit, close_world,
+    common_source_root, confirm_manual_review, create_world, current_ai_activity,
+    derive_causal_threads, derive_loose_ends, derive_narrative_timeline, dotenv_value,
+    explore_narrative_continuity, get_current_world, get_provider_credential_status,
     get_related_context, list_revision_history, list_simulation_scenarios, list_timeline_events,
     open_uri, open_world, parse_ai_run_id, parse_deep_review_mode, parse_entity_id, parse_event_id,
     parse_internal_document_kind, parse_narrative_scope, parse_object_uri, parse_project_path,
     parse_revision_id, parse_simulation_scenario_id, parse_snapshot_directory, parse_snapshot_name,
-    parse_snapshot_parent, preview_manual_draft, read_logical_vfs, read_manual_review,
-    revalidate_manual_review, run_simulation_scenario, search_world, undo_revision,
+    parse_snapshot_parent, preview_manual_draft, provider_diagnostic_status_from_config,
+    read_logical_vfs, read_manual_review, read_recent_projects, revalidate_manual_review,
+    run_simulation_scenario, same_project_path, search_world, undo_revision, write_recent_projects,
 };
-use nirmata_app::{AiError, AppError, NirmataApp, StoreError};
+use nirmata_app::{
+    AiError, AppError, CancellationToken, CredentialPersistence, CredentialSource, NirmataApp,
+    ProviderCredentialStatus, StoreError,
+};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,6 +34,50 @@ fn rejecting_invalid_project_paths_happens_before_opening_files() {
         .expect_err("only .nirmata files are accepted");
     assert_eq!(error.code, "invalid_project_path");
     assert!(error.message.contains(".nirmata"));
+}
+
+#[test]
+fn recent_projects_round_trip_without_opening_world_files() {
+    let path = std::env::temp_dir().join(format!(
+        "nirmata-recents-{}-{}.json",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    let projects = vec![RecentProject {
+        path: PathBuf::from("C:/Mundos/Aurora.nirmata"),
+        name: "Aurora".to_owned(),
+        world_id: "world-1".to_owned(),
+        last_opened_ms: 42,
+    }];
+
+    write_recent_projects(&path, &projects).expect("write recents");
+    let restored = read_recent_projects(&path).expect("read recents");
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].name, "Aurora");
+    assert!(same_project_path(
+        Path::new("C:/Mundos/AURORA.nirmata"),
+        &restored[0].path
+    ));
+    fs::remove_file(path).expect("remove recents fixture");
+}
+
+#[test]
+fn lore_sources_use_their_nearest_shared_root() {
+    let files = vec![
+        PathBuf::from("C:/Lore/chronicles/first.md"),
+        PathBuf::from("C:/Lore/notes/factions.txt"),
+    ];
+    assert_eq!(
+        common_source_root(&files).expect("shared root"),
+        PathBuf::from("C:/Lore")
+    );
+    assert_eq!(
+        common_source_root(&[]).expect_err("empty selection").code,
+        "invalid_lore_import"
+    );
 }
 
 #[test]
@@ -122,6 +171,66 @@ fn development_env_parser_reads_only_the_requested_value() {
         Some("https://example.test")
     );
     assert_eq!(dotenv_value(contents, "MISSING"), None);
+}
+
+#[test]
+fn ai_activity_reports_active_requests_without_locking_the_app() {
+    let cancellations = AiCancellations(Mutex::new(std::collections::HashMap::from([
+        ("request-b".to_owned(), CancellationToken::new()),
+        ("request-a".to_owned(), CancellationToken::new()),
+    ])));
+    let activity =
+        current_ai_activity(&cancellations).unwrap_or_else(|_| panic!("read AI activity"));
+    assert!(activity.busy);
+    assert_eq!(activity.request_ids, ["request-a", "request-b"]);
+}
+
+#[test]
+fn provider_diagnostic_distinguishes_missing_configuration() {
+    let missing_credential = provider_diagnostic_status_from_config(
+        ProviderCredentialStatus {
+            configured: false,
+            source: CredentialSource::Missing,
+            persistence: CredentialPersistence::None,
+            secure_store_available: true,
+            limitation: None,
+        },
+        false,
+        None,
+        None,
+    );
+    assert_eq!(missing_credential.state, "credential_missing");
+
+    let configured = ProviderCredentialStatus {
+        configured: true,
+        source: CredentialSource::SessionMemory,
+        persistence: CredentialPersistence::Session,
+        secure_store_available: true,
+        limitation: None,
+    };
+    let missing_endpoint = provider_diagnostic_status_from_config(
+        configured.clone(),
+        false,
+        None,
+        Some("model".to_owned()),
+    );
+    assert_eq!(missing_endpoint.state, "endpoint_missing");
+    let missing_model = provider_diagnostic_status_from_config(
+        configured.clone(),
+        false,
+        Some("https://example.test".to_owned()),
+        None,
+    );
+    assert_eq!(missing_model.state, "model_missing");
+    let unchecked = provider_diagnostic_status_from_config(
+        configured,
+        false,
+        Some("https://example.test".to_owned()),
+        Some("model".to_owned()),
+    );
+    assert_eq!(unchecked.state, "connection_unchecked");
+    assert!(unchecked.can_check_connection);
+    assert!(!unchecked.connected);
 }
 
 #[test]

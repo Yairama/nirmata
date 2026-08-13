@@ -9,6 +9,10 @@ Cada archivo cubre una sola responsabilidad y puede referenciarse por su ruta.
 
 - [`product/vision.md`](product/vision.md): tesis, usuario y flujo principal.
 - [`product/mvp.md`](product/mvp.md): alcance inicial y exclusiones.
+- [`product/content-design.md`](product/content-design.md): lenguaje de producto y modelo mental de versiones.
+- [`product/creation-and-ai-journeys.md`](product/creation-and-ai-journeys.md): creacion, preguntas y propuestas.
+- [`product/settings-and-about.md`](product/settings-and-about.md): inventario real de software de escritorio.
+- [`product/visual-system.md`](product/visual-system.md): tokens, densidad, estados y responsive.
 
 ### Dominio
 
@@ -27,6 +31,7 @@ Cada archivo cubre una sola responsabilidad y puede referenciarse por su ruta.
 - [`architecture/retrieval.md`](architecture/retrieval.md): SQL, FTS, RAG y grafos.
 - [`architecture/language-runtime.md`](architecture/language-runtime.md): Rust, Python y GUI.
 - [`architecture/ai-flow.md`](architecture/ai-flow.md): resumen del flujo controlado de IA.
+- [`architecture/frontend-platform.md`](architecture/frontend-platform.md): matriz WebView, estilos y build Vite.
 
 ### Investigacion
 
@@ -51,6 +56,8 @@ Cada archivo cubre una sola responsabilidad y puede referenciarse por su ruta.
 - [`validation/narrative-derivations.md`](validation/narrative-derivations.md): story time, discurso, causalidad y cabos heurísticos citados.
 - [`validation/provider-gate.md`](validation/provider-gate.md): auditoria del cliente Azure concreto y gate cerrado sin segundo proveedor.
 - [`validation/general-acceptance.md`](validation/general-acceptance.md): matriz final de owners ejecutables y recorrido transversal read-only.
+- [`validation/ux-baseline.md`](validation/ux-baseline.md): protocolo de tareas y metricas previo al rediseño.
+- [`validation/information-architecture-tree-test.md`](validation/information-architecture-tree-test.md): arbol, tareas y gate de primer intento.
 
 ## Convencion
 

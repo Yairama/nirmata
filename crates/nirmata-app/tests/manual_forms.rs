@@ -533,6 +533,11 @@ fn editing_a_stored_review_operation_reuses_the_manual_form_and_revalidates() {
     drop(store);
 
     let mut app = open_app(&path);
+    let revision_before = app
+        .get_current_world()
+        .expect("session")
+        .expect("world")
+        .current_revision;
     let review = app
         .preview_manual_draft(ManualDraftRequest {
             object_type: "entity".to_owned(),
@@ -573,6 +578,12 @@ fn editing_a_stored_review_operation_reuses_the_manual_form_and_revalidates() {
         .expect("apply review edit");
     assert!(response.field_issues.is_empty());
     let updated = response.review.expect("updated review");
+    assert_eq!(updated.review_key, review.review_key);
+    assert_eq!(updated.operations.len(), review.operations.len());
+    assert_eq!(
+        updated.operations[0].operation_id,
+        review.operations[0].operation_id
+    );
     assert!(updated.ready_to_confirm);
     assert_eq!(updated.operations[0].decision, "edit");
     assert!(
@@ -581,6 +592,84 @@ fn editing_a_stored_review_operation_reuses_the_manual_form_and_revalidates() {
             .errors
             .iter()
             .all(|issue| issue.code != "change_set.entity.duplicate_slug")
+    );
+    let stored = app
+        .read_stored_manual_review(&review.review_key)
+        .expect("stored edited review");
+    assert_eq!(
+        stored.operations[0].operation_id,
+        review.operations[0].operation_id
+    );
+    assert_eq!(
+        app.get_current_world()
+            .expect("session")
+            .expect("world")
+            .current_revision,
+        revision_before,
+        "editing a review cannot change canon"
+    );
+
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
+fn discarding_a_stored_manual_review_releases_its_key() {
+    let path = project_path("manual-form-discard-key");
+    let world = base_world(&path);
+    let mara = person(world.id(), "Mara", "mara", 2);
+    let mut store = WorldStore::open(&path).expect("open store");
+    store.insert_entity(&mara).expect("insert Mara");
+    drop(store);
+    let mut app = open_app(&path);
+    let request = ManualDraftRequest {
+        object_type: "entity".to_owned(),
+        objective: Some("Rename Mara".to_owned()),
+        source_uris: vec![],
+        assumptions: vec![],
+        existing_uri: Some(ObjectRef::Entity(mara.id()).to_string()),
+        values: BTreeMap::from([
+            ("kind".to_owned(), "person".to_owned()),
+            ("name".to_owned(), "Mara Vale".to_owned()),
+            ("slug".to_owned(), "mara-vale".to_owned()),
+            ("aliases".to_owned(), String::new()),
+            ("summary".to_owned(), String::new()),
+            ("body_md".to_owned(), String::new()),
+            ("attributes_json".to_owned(), "{}".to_owned()),
+        ]),
+    };
+    let revision_before = app
+        .get_current_world()
+        .expect("session")
+        .expect("world")
+        .current_revision;
+    let first = app
+        .preview_manual_draft(request.clone())
+        .expect("first preview")
+        .review
+        .expect("first review");
+    assert!(matches!(
+        app.preview_manual_draft(request.clone()),
+        Err(AppError::ReviewSessionConflict(_))
+    ));
+    app.discard_stored_manual_review(&first.review_key)
+        .expect("discard review");
+    assert!(matches!(
+        app.read_stored_manual_review(&first.review_key),
+        Err(AppError::ReviewSessionNotFound(_))
+    ));
+    let second = app
+        .preview_manual_draft(request)
+        .expect("second preview")
+        .review
+        .expect("second review");
+    assert_eq!(second.review_key, first.review_key);
+    assert_eq!(
+        app.get_current_world()
+            .expect("session")
+            .expect("world")
+            .current_revision,
+        revision_before
     );
 
     drop(app);

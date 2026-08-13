@@ -17,6 +17,7 @@ import {
   simulationScenarioSelect,
   simulationStatus,
   simulationStocks,
+  setEphemeralWork,
   state,
 } from "./state.js";
 import type {
@@ -37,6 +38,15 @@ let scenarios: SimulationScenario[] = [];
 let selectedScenarioId: string | null = null;
 let primaryRun: SimulationRunResult | null = null;
 let comparisonRun: SimulationRunResult | null = null;
+let formDirty = false;
+
+function syncEphemeralState(): void {
+  setEphemeralWork(
+    "simulation",
+    "escenarios, resultados o mappings de simulación",
+    formDirty || scenarios.length > 0 || primaryRun !== null || comparisonRun !== null,
+  );
+}
 
 function lines(value: string): string[] {
   return value.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
@@ -104,7 +114,7 @@ function scenarioFromForm(): SimulationScenarioInput {
   }
   const maxSteps = integer(simulationMaxSteps.value, "max steps");
   if (maxSteps < 1 || maxSteps > 1000) {
-    throw new Error("Max steps debe estar entre 1 y 1000.");
+    throw new Error("El máximo de pasos debe estar entre 1 y 1000.");
   }
   return {
     worldId: selected?.worldId ?? session!.world_id,
@@ -166,6 +176,8 @@ function writeForm(scenario: SimulationScenario | null): void {
   }).join("\n") ?? "";
   simulationAssumptions.value = scenario?.assumptions.join("\n") ?? "";
   simulationMaxSteps.value = String(scenario?.maxSteps ?? 1);
+  formDirty = false;
+  syncEphemeralState();
 }
 
 function scenarioLabel(scenario: SimulationScenario, index: number): string {
@@ -228,6 +240,7 @@ async function refreshScenarios(): Promise<void> {
       writeForm(null);
     }
     renderSelectors();
+    syncEphemeralState();
   } catch (value) {
     showError(value);
   }
@@ -256,10 +269,10 @@ function appendPromotionFields(card: HTMLElement, transition: SimulationTransiti
   const fieldsContainer = document.createElement("div");
   fieldsContainer.className = "simulation-promotion-fields";
   const mappingLabel = document.createElement("label");
-  mappingLabel.textContent = "Mapping";
+  mappingLabel.textContent = "Convertir resultado en";
   const mapping = document.createElement("select");
   mapping.className = "simulation-mapping";
-  for (const [value, label] of [["event", "Event"], ["claim", "Claim"]]) {
+  for (const [value, label] of [["event", "Evento"], ["claim", "Afirmación"]]) {
     const option = document.createElement("option");
     option.value = value!;
     option.textContent = label!;
@@ -268,14 +281,14 @@ function appendPromotionFields(card: HTMLElement, transition: SimulationTransiti
   mappingLabel.append(mapping);
 
   const summaryLabel = document.createElement("label");
-  summaryLabel.textContent = "Event summary";
+  summaryLabel.textContent = "Resumen del evento";
   const summary = document.createElement("input");
   summary.className = "simulation-event-summary";
   summary.value = `Paso ${transition.step}: ${ruleText(transition.rule)} aplicó ${transition.applied} de ${transition.requested}`;
   summaryLabel.append(summary);
 
   const subjectLabel = document.createElement("label");
-  subjectLabel.textContent = "Claim subject entity UUID";
+  subjectLabel.textContent = "Sujeto de la afirmación";
   subjectLabel.hidden = true;
   const subject = document.createElement("input");
   subject.className = "simulation-claim-subject";
@@ -283,7 +296,7 @@ function appendPromotionFields(card: HTMLElement, transition: SimulationTransiti
   subjectLabel.append(subject);
 
   const contentLabel = document.createElement("label");
-  contentLabel.textContent = "Claim content";
+  contentLabel.textContent = "Contenido de la afirmación";
   contentLabel.hidden = true;
   const content = document.createElement("input");
   content.className = "simulation-claim-content";
@@ -311,14 +324,14 @@ function appendPromotionFields(card: HTMLElement, transition: SimulationTransiti
 function promotionBlockReason(scenario: SimulationScenario): string | null {
   const session = state.session;
   if (!session) return "No hay un mundo abierto.";
-  if (session.read_only) return "Vuelve a la cabeza activa para promover.";
+  if (session.read_only) return "Vuelve a la versión actual para preparar cambios.";
   if (scenario.worldId !== session.world_id) return "El escenario pertenece a otro mundo.";
   if (
     scenario.variantId !== session.active_variant.id
     || scenario.variantId !== session.read_scope.variantId
   ) return "La variante del escenario no coincide con la variante activa.";
   if (scenario.baseRevision !== session.world.current_revision) {
-    return "La revisión base del escenario no coincide con la cabeza vigente.";
+    return "La versión base del escenario no coincide con la versión actual.";
   }
   return null;
 }
@@ -385,7 +398,7 @@ async function promoteScenario(scenario: SimulationScenario, container: HTMLElem
       input: { scenarioId: scenario.id, promotion: { selections } },
     });
     addReviewToPending(review);
-    simulationStatus.textContent = "ManualReviewSnapshot añadido a Cambios pendientes; el canon no cambió.";
+    simulationStatus.textContent = "Propuesta añadida a cambios pendientes; el canon no cambió.";
     setStatus("Promoción preparada para revisión manual estándar.");
   } catch (value) {
     showError(value);
@@ -428,18 +441,18 @@ function renderRunColumn(
     const rule = document.createElement("p");
     rule.textContent = `Regla ${transition.ruleIndex}: ${ruleText(transition.rule)}`;
     const before = document.createElement("p");
-    before.textContent = `Before: ${stockText(transition.before)}`;
+    before.textContent = `Antes: ${stockText(transition.before)}`;
     const after = document.createElement("p");
-    after.textContent = `After: ${stockText(transition.after)}`;
+    after.textContent = `Después: ${stockText(transition.after)}`;
     const amounts = document.createElement("p");
-    amounts.textContent = `Requested: ${transition.requested} · Applied: ${transition.applied} · Shortage: ${transition.shortage}`;
+    amounts.textContent = `Solicitado: ${transition.requested} · Aplicado: ${transition.applied} · Faltante: ${transition.shortage}`;
     card.append(rule, before, after, amounts);
     if (allowPromotion) appendPromotionFields(card, transition);
     stepSection!.append(card);
   }
 
   const finalStocks = document.createElement("p");
-  finalStocks.textContent = `Final stocks: ${stockText(run.finalStocks)}`;
+  finalStocks.textContent = `Existencias finales: ${stockText(run.finalStocks)}`;
   column.append(finalStocks);
   if (allowPromotion) {
     const promote = document.createElement("button");
@@ -553,6 +566,7 @@ simulationRun.addEventListener("click", async () => {
     ]);
     primaryRun = run;
     comparisonRun = compared;
+    syncEphemeralState();
     renderRuns();
     simulationStatus.textContent = comparisonRun
       ? "Dos corridas deterministas comparadas lado a lado."
@@ -563,9 +577,33 @@ simulationRun.addEventListener("click", async () => {
   }
 });
 
+simulationForm.addEventListener("input", () => {
+  formDirty = true;
+  syncEphemeralState();
+});
+simulationResults.addEventListener("input", () => {
+  formDirty = true;
+  syncEphemeralState();
+});
+simulationResults.addEventListener("change", () => {
+  formDirty = true;
+  syncEphemeralState();
+});
+
 window.addEventListener("nirmata:scope-changed", () => {
   renderRuns();
   void refreshScenarios();
+});
+window.addEventListener("nirmata:discard-ephemeral-work", () => {
+  scenarios = [];
+  selectedScenarioId = null;
+  primaryRun = null;
+  comparisonRun = null;
+  formDirty = false;
+  writeForm(null);
+  renderSelectors();
+  renderRuns();
+  syncEphemeralState();
 });
 
 writeForm(null);

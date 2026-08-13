@@ -1,9 +1,10 @@
-import { button, clearError, humanize, setStatus, showError } from "./helpers.js";
+import { button, clearError, commandCode, humanize, setStatus, showError } from "./helpers.js";
 import { attachAiReview } from "./render-pending.js";
 import {
   assistantCancel,
   assistantContext,
   assistantCredential,
+  assistantCredentialSettings,
   assistantDeepMode,
   assistantAuditMode,
   assistantFinalCritique,
@@ -13,24 +14,27 @@ import {
   assistantKeyClear,
   assistantKeyForm,
   assistantProgress,
+  assistantProviderCheck,
+  assistantProviderSettings,
   assistantProposeMode,
   assistantQueryMode,
   assistantSubmit,
   assistantTranscript,
+  beginAiActivity,
+  endAiActivity,
   invoke,
   listen,
   state,
 } from "./state.js";
 import type {
   AiQueryResponse,
+  AiProviderDiagnosticStatus,
   AiRunSnapshot,
   DeepReviewPlan,
   DeepReviewRun,
-  ProviderCredentialStatus,
   SpecialistRole,
-  WorldSession,
 } from "./types.js";
-import { renderWorkspace, selectUri } from "./workspace.js";
+import { renderWorkspace, selectUri, selectUriInScope } from "./workspace.js";
 
 type AssistantMode = "query" | "propose" | "deep_impact" | "audit";
 type ProgressEvent = {
@@ -41,7 +45,7 @@ type ProgressEvent = {
 let mode: AssistantMode = "query";
 let activeRequestId: string | null = null;
 let activeRun: AiRunSnapshot | null = null;
-let credentialConfigured = false;
+let providerReady = false;
 let streamedText = "";
 let streamElement: HTMLElement | null = null;
 
@@ -56,7 +60,7 @@ function updateAvailability(): void {
   assistantQueryMode.disabled = activeRequestId !== null;
   assistantAuditMode.disabled = activeRequestId !== null;
   assistantSubmit.disabled = activeRequestId !== null
-    || !credentialConfigured
+    || !providerReady
     || (readOnly && isWriteMode(mode));
   assistantFinalCritique.disabled = readOnly || activeRequestId !== null || !activeRun;
 }
@@ -84,28 +88,52 @@ function updateMode(next: AssistantMode): void {
 
 function updateContextLabel(): void {
   assistantContext.textContent = state.selectedUri
-    ? `Contexto anclado en ${state.selectedUri}`
+    ? "La propuesta usará el objeto seleccionado como contexto."
     : "Sin selección: se usará contexto general acotado.";
 }
 
+function startProposal(request = ""): void {
+  if (state.session?.read_only) {
+    showError("Vuelve a la versión actual antes de proponer cambios.");
+    return;
+  }
+  updateMode("propose");
+  assistantInput.value = request;
+  document.querySelector("#assistant-panel")?.scrollIntoView({ block: "start" });
+  assistantInput.focus();
+}
+
 async function refreshCredential(): Promise<void> {
-  const status = await invoke<ProviderCredentialStatus>("get_provider_credential_status");
-  credentialConfigured = status.configured;
-  assistantCredential.textContent = status.configured
-    ? `Credencial configurada · ${humanize(status.persistence)}`
-    : "Falta credencial: las acciones de IA están deshabilitadas.";
-  assistantCredential.className = `credential-status ${status.configured ? "ready" : "warning"}`;
-  assistantKeyClear.disabled = !status.configured;
-  if (status.limitation) {
-    assistantCredential.title = status.limitation;
+  const status = await invoke<AiProviderDiagnosticStatus>("get_ai_provider_status");
+  providerReady = status.connected;
+  state.aiProviderReady = providerReady;
+  window.dispatchEvent(new CustomEvent("nirmata:ai-provider-changed"));
+  assistantCredential.textContent = status.message;
+  assistantCredential.className = `credential-status ${status.connected ? "ready" : "warning"}`;
+  assistantProviderCheck.disabled = !status.canCheckConnection || activeRequestId !== null;
+  assistantKeyClear.disabled = !status.credential.configured;
+  if (status.credential.limitation) {
+    assistantCredential.title = status.credential.limitation;
+  } else {
+    assistantCredential.removeAttribute("title");
   }
   updateAvailability();
 }
 
 function setRunning(requestId: string | null): void {
+  const previousRequestId = activeRequestId;
   activeRequestId = requestId;
   assistantCancel.disabled = requestId === null;
   assistantInput.disabled = requestId !== null;
+  if (requestId) {
+    beginAiActivity({
+      requestId,
+      source: "assistant",
+      label: "El asistente está procesando tu solicitud.",
+    });
+  } else if (previousRequestId) {
+    endAiActivity(previousRequestId);
+  }
   updateAvailability();
 }
 
@@ -128,19 +156,42 @@ function renderQuery(response: AiQueryResponse): void {
       for (const citation of item.citations) {
         const source = button(citation.source.snippet || citation.source.uri, "ghost");
         source.title = citation.quoteMd;
-        source.addEventListener("click", () => void (async () => {
-          const session = await invoke<WorldSession>("set_read_scope", {
-            input: { scope: response.snapshot.readScope },
-          });
-          state.session = session;
-          renderWorkspace();
-          await selectUri(citation.source.uri);
-        })().catch(showError));
+        source.addEventListener("click", () => {
+          void selectUriInScope(citation.source.uri, response.snapshot.readScope).catch(showError);
+        });
         sources.append(source);
       }
       card.append(sources);
     }
     assistantTranscript.append(card);
+  }
+  if (response.proposalAction?.action === "start_proposal") {
+    const actionCard = document.createElement("article");
+    actionCard.className = "assistant-message proposal-action";
+    const detail = document.createElement("p");
+    detail.textContent = "Esta respuesta puede convertirse en una propuesta revisable. El mundo no cambiará automáticamente.";
+    const convert = button("Convertir en propuesta", "secondary");
+    convert.disabled = Boolean(state.session?.read_only);
+    convert.title = convert.disabled ? "Vuelve a la versión actual para proponer cambios." : "";
+    convert.addEventListener("click", () => {
+      const currentScope = state.session?.read_scope;
+      const sourceScope = response.snapshot.readScope;
+      if (!currentScope
+        || currentScope.variantId !== sourceScope.variantId
+        || currentScope.revisionId !== sourceScope.revisionId) {
+        showError("La versión observada cambió. Repite la pregunta antes de convertirla en propuesta.");
+        return;
+      }
+      if (!window.confirm(
+        "Se prepararán cambios a partir de esta respuesta y la selección actual. El mundo no cambiará hasta que uses «Aplicar al mundo». ¿Continuar?",
+      )) {
+        convert.focus();
+        return;
+      }
+      startProposal(response.proposalAction!.request);
+    });
+    actionCard.append(detail, convert);
+    assistantTranscript.append(actionCard);
   }
 }
 
@@ -336,10 +387,10 @@ async function executeDeepReview(plan: DeepReviewPlan, roles: SpecialistRole[]):
 
 async function continueIntentBrief(run: AiRunSnapshot): Promise<void> {
   if (state.session?.read_only) {
-    showError("Vuelve a la cabeza activa antes de continuar una propuesta.");
+    showError("Vuelve a la versión actual antes de continuar una propuesta.");
     return;
   }
-  if (!run.intentBrief || !credentialConfigured) {
+  if (!run.intentBrief || !providerReady) {
     return;
   }
   const requestId = crypto.randomUUID();
@@ -368,11 +419,11 @@ async function continueIntentBrief(run: AiRunSnapshot): Promise<void> {
 
 async function submitAssistant(): Promise<void> {
   const request = assistantInput.value.trim();
-  if (!request || !state.session || !credentialConfigured) {
+  if (!request || !state.session || !providerReady) {
     return;
   }
   if (state.session.read_only && isWriteMode(mode)) {
-    showError("Las propuestas solo pueden iniciarse desde la cabeza activa.");
+    showError("Las propuestas solo pueden iniciarse desde la versión actual.");
     updateMode("query");
     return;
   }
@@ -471,6 +522,43 @@ assistantKeyClear.addEventListener("click", async () => {
   await invoke("clear_provider_api_key");
   await refreshCredential();
 });
+assistantProviderSettings.addEventListener("click", () => {
+  assistantCredentialSettings.open = true;
+  assistantKey.focus();
+});
+assistantProviderCheck.addEventListener("click", async () => {
+  const requestId = crypto.randomUUID();
+  setRunning(requestId);
+  assistantProgress.textContent = "Comprobando credencial, endpoint y modelo sin usar contexto del mundo…";
+  try {
+    const status = await invoke<AiProviderDiagnosticStatus>("diagnose_ai_provider", {
+      input: { requestId },
+    });
+    providerReady = status.connected;
+    state.aiProviderReady = providerReady;
+    window.dispatchEvent(new CustomEvent("nirmata:ai-provider-changed"));
+    assistantCredential.textContent = status.message;
+    assistantCredential.className = "credential-status ready";
+    assistantProgress.textContent = "Conexión verificada. No se creó ninguna propuesta.";
+  } catch (value) {
+    providerReady = false;
+    state.aiProviderReady = false;
+    window.dispatchEvent(new CustomEvent("nirmata:ai-provider-changed"));
+    const code = commandCode(value);
+    assistantCredential.textContent = code === "provider_timeout"
+      ? "El proveedor no respondió a tiempo. Revisa red y endpoint."
+      : code === "provider_http_error"
+        ? "El proveedor rechazó la credencial, el endpoint o el modelo."
+        : code === "provider_transport_error"
+          ? "No se pudo conectar al endpoint configurado."
+          : "La comprobación falló. Revisa la configuración del proveedor.";
+    assistantCredential.className = "credential-status warning";
+    assistantProgress.textContent = "Conexión no disponible; las acciones de IA siguen deshabilitadas.";
+  } finally {
+    setRunning(null);
+    updateAvailability();
+  }
+});
 
 void listen<ProgressEvent>("ai-query-progress", ({ payload }) => {
   if (payload.requestId !== activeRequestId) {
@@ -512,6 +600,10 @@ window.addEventListener("nirmata:ai-review-attached", (event) => {
   activeRun = (event as CustomEvent<AiRunSnapshot>).detail;
   renderRun(activeRun);
   updateAvailability();
+});
+window.addEventListener("nirmata:start-proposal", (event) => {
+  const request = (event as CustomEvent<{ request?: string }>).detail?.request ?? "";
+  startProposal(request);
 });
 updateMode("query");
 updateContextLabel();

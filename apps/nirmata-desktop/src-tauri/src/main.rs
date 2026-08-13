@@ -28,10 +28,33 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
 struct AiCancellations(Mutex<HashMap<String, CancellationToken>>);
 static AI_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiActivitySnapshot {
+    busy: bool,
+    request_ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiProviderDiagnosticStatus {
+    state: &'static str,
+    message: String,
+    can_check_connection: bool,
+    connected: bool,
+    credential: ProviderCredentialStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderDiagnosticCommand {
+    request_id: String,
+}
 
 #[derive(Deserialize)]
 struct CreateWorldRequest {
@@ -39,6 +62,28 @@ struct CreateWorldRequest {
     name: String,
     premise_md: String,
     epoch_label: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecentProject {
+    path: PathBuf,
+    name: String,
+    world_id: String,
+    last_opened_ms: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RememberRecentProjectCommand {
+    path: PathBuf,
+    name: String,
+    world_id: String,
+}
+
+#[derive(Deserialize)]
+struct RemoveRecentProjectCommand {
+    path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -70,7 +115,7 @@ struct ImportSnapshotCommand {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateLoreImportCommand {
-    source_file: PathBuf,
+    source_files: Vec<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -346,7 +391,7 @@ struct AiProgressEvent<T> {
     progress: T,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct CommandError {
     code: &'static str,
     message: String,
@@ -490,6 +535,54 @@ fn get_current_world(
 }
 
 #[tauri::command]
+fn list_recent_projects(app: tauri::AppHandle) -> Result<Vec<RecentProject>, CommandError> {
+    read_recent_projects(&recent_projects_path(&app)?)
+}
+
+#[tauri::command]
+fn remember_recent_project(
+    input: RememberRecentProjectCommand,
+    app: tauri::AppHandle,
+) -> Result<Vec<RecentProject>, CommandError> {
+    let path = parse_project_path(&input.path)?;
+    let name = input.name.trim();
+    let world_id = input.world_id.trim();
+    if name.is_empty() || world_id.is_empty() {
+        return Err(CommandError {
+            code: "invalid_recent_project",
+            message: "Recent project metadata is incomplete.".to_owned(),
+        });
+    }
+    let settings_path = recent_projects_path(&app)?;
+    let mut projects = read_recent_projects(&settings_path)?;
+    projects.retain(|project| !same_project_path(&project.path, &path));
+    projects.insert(
+        0,
+        RecentProject {
+            path,
+            name: name.to_owned(),
+            world_id: world_id.to_owned(),
+            last_opened_ms: unix_time_ms()?,
+        },
+    );
+    projects.truncate(12);
+    write_recent_projects(&settings_path, &projects)?;
+    Ok(projects)
+}
+
+#[tauri::command]
+fn remove_recent_project(
+    input: RemoveRecentProjectCommand,
+    app: tauri::AppHandle,
+) -> Result<Vec<RecentProject>, CommandError> {
+    let settings_path = recent_projects_path(&app)?;
+    let mut projects = read_recent_projects(&settings_path)?;
+    projects.retain(|project| !same_project_path(&project.path, &input.path));
+    write_recent_projects(&settings_path, &projects)?;
+    Ok(projects)
+}
+
+#[tauri::command]
 fn search_world(
     input: SearchWorldCommand,
     state: State<'_, Arc<Mutex<NirmataApp>>>,
@@ -573,15 +666,12 @@ fn create_lore_import(
     input: CreateLoreImportCommand,
     state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ImportBatchSnapshot, CommandError> {
-    let source_file = input.source_file;
-    let source_root = source_file.parent().ok_or(CommandError {
-        code: "invalid_lore_import",
-        message: "The selected source has no parent directory.".to_owned(),
-    })?;
+    let source_files = input.source_files;
+    let source_root = common_source_root(&source_files)?;
     lock_app(&state)?
         .create_import_batch(nirmata_app::CreateImportBatchInput {
-            source_root: source_root.to_path_buf(),
-            files: vec![source_file.clone()],
+            source_root,
+            files: source_files,
         })
         .map_err(Into::into)
 }
@@ -741,6 +831,48 @@ fn get_provider_credential_status(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<ProviderCredentialStatus, CommandError> {
     Ok(lock_app(&state)?.get_provider_credential_status())
+}
+
+#[tauri::command]
+fn get_ai_provider_status(
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<AiProviderDiagnosticStatus, CommandError> {
+    let credential = lock_app(&state)?.get_provider_credential_status();
+    Ok(provider_diagnostic_status(credential, false))
+}
+
+#[tauri::command]
+async fn diagnose_ai_provider(
+    input: ProviderDiagnosticCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+    cancellations: State<'_, AiCancellations>,
+) -> Result<AiProviderDiagnosticStatus, CommandError> {
+    let provider = provider_config()?;
+    let token = register_cancellation(&cancellations, &input.request_id)?;
+    let cleanup_id = input.request_id.clone();
+    let app_state = Arc::clone(state.inner());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let app = app_state.lock().map_err(|_| internal_error())?;
+        tauri::async_runtime::block_on(app.diagnose_ai_provider(
+            &provider,
+            AiRequestOptions::new(std::time::Duration::from_secs(10)).with_cancellation(token),
+        ))
+        .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| internal_error());
+    remove_cancellation(&cancellations, &cleanup_id);
+    result??;
+
+    let credential = lock_app(&state)?.get_provider_credential_status();
+    Ok(provider_diagnostic_status(credential, true))
+}
+
+#[tauri::command]
+fn get_ai_activity(
+    cancellations: State<'_, AiCancellations>,
+) -> Result<AiActivitySnapshot, CommandError> {
+    current_ai_activity(cancellations.inner())
 }
 
 #[tauri::command]
@@ -1570,6 +1702,23 @@ fn remove_cancellation(cancellations: &State<'_, AiCancellations>, request_id: &
     }
 }
 
+fn current_ai_activity(
+    cancellations: &AiCancellations,
+) -> Result<AiActivitySnapshot, CommandError> {
+    let mut request_ids = cancellations
+        .0
+        .lock()
+        .map_err(|_| internal_error())?
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    request_ids.sort();
+    Ok(AiActivitySnapshot {
+        busy: !request_ids.is_empty(),
+        request_ids,
+    })
+}
+
 fn provider_config() -> Result<AiProviderConfig, CommandError> {
     let base_url = development_config_value("BASE_URL").ok_or(CommandError {
         code: "provider_config_missing",
@@ -1588,6 +1737,71 @@ fn provider_config() -> Result<AiProviderConfig, CommandError> {
             message: "AZURE_FOUNDRY_MODEL is not configured for Microsoft Foundry.".to_owned(),
         })?;
     Ok(AiProviderConfig::new(base_url, model))
+}
+
+fn provider_diagnostic_status(
+    credential: ProviderCredentialStatus,
+    connected: bool,
+) -> AiProviderDiagnosticStatus {
+    let base_url = development_config_value("BASE_URL");
+    let model = development_config_value("AZURE_FOUNDRY_MODEL")
+        .or_else(|| development_config_value("GPT-5.6-SOL"));
+    provider_diagnostic_status_from_config(credential, connected, base_url, model)
+}
+
+fn provider_diagnostic_status_from_config(
+    credential: ProviderCredentialStatus,
+    connected: bool,
+    base_url: Option<String>,
+    model: Option<String>,
+) -> AiProviderDiagnosticStatus {
+    let (state, message, can_check_connection) = if !credential.configured {
+        (
+            "credential_missing",
+            "Falta la credencial del proveedor. Configúrala para esta sesión o en el almacén seguro.",
+            false,
+        )
+    } else if base_url.is_none() {
+        (
+            "endpoint_missing",
+            "Falta BASE_URL. Configura el endpoint HTTPS de Microsoft Foundry.",
+            false,
+        )
+    } else if !base_url
+        .as_deref()
+        .is_some_and(|value| value.to_ascii_lowercase().starts_with("https://"))
+    {
+        (
+            "endpoint_invalid",
+            "BASE_URL debe ser un endpoint HTTPS válido de Microsoft Foundry.",
+            false,
+        )
+    } else if model.is_none() {
+        (
+            "model_missing",
+            "Falta AZURE_FOUNDRY_MODEL. Configura el nombre del modelo o deployment.",
+            false,
+        )
+    } else if connected {
+        (
+            "connected",
+            "Proveedor verificado. Las acciones de IA están disponibles.",
+            true,
+        )
+    } else {
+        (
+            "connection_unchecked",
+            "Configuración local completa. Comprueba la conexión antes de usar IA.",
+            true,
+        )
+    };
+    AiProviderDiagnosticStatus {
+        state,
+        message: message.to_owned(),
+        can_check_connection,
+        connected,
+        credential,
+    }
 }
 
 fn development_config_value(name: &str) -> Option<String> {
@@ -1774,6 +1988,88 @@ fn parse_project_path(path: &Path) -> Result<PathBuf, CommandError> {
     Ok(path.to_path_buf())
 }
 
+fn common_source_root(files: &[PathBuf]) -> Result<PathBuf, CommandError> {
+    let mut parents = files.iter().map(|file| {
+        file.parent().map(Path::to_path_buf).ok_or(CommandError {
+            code: "invalid_lore_import",
+            message: "Every selected source must have a parent directory.".to_owned(),
+        })
+    });
+    let mut root = parents.next().ok_or(CommandError {
+        code: "invalid_lore_import",
+        message: "Select at least one lore source.".to_owned(),
+    })??;
+    for parent in parents {
+        let parent = parent?;
+        while !parent.starts_with(&root) {
+            root = root.parent().map(Path::to_path_buf).ok_or(CommandError {
+                code: "invalid_lore_import",
+                message: "Selected sources must share a local root.".to_owned(),
+            })?;
+        }
+    }
+    Ok(root)
+}
+
+fn recent_projects_path(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join("recent-projects.json"))
+        .map_err(|error| CommandError {
+            code: "settings_io_error",
+            message: format!("Could not locate desktop settings: {error}"),
+        })
+}
+
+fn read_recent_projects(path: &Path) -> Result<Vec<RecentProject>, CommandError> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(settings_io_error("read", error)),
+    };
+    serde_json::from_str(&contents).map_err(|error| CommandError {
+        code: "settings_format_error",
+        message: format!("Desktop settings could not be read: {error}"),
+    })
+}
+
+fn write_recent_projects(path: &Path, projects: &[RecentProject]) -> Result<(), CommandError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| settings_io_error("create", error))?;
+    }
+    let contents = serde_json::to_vec_pretty(projects).map_err(|error| CommandError {
+        code: "settings_format_error",
+        message: format!("Desktop settings could not be serialized: {error}"),
+    })?;
+    fs::write(path, contents).map_err(|error| settings_io_error("write", error))
+}
+
+fn settings_io_error(action: &str, error: std::io::Error) -> CommandError {
+    CommandError {
+        code: "settings_io_error",
+        message: format!("Could not {action} desktop settings: {error}"),
+    }
+}
+
+fn same_project_path(left: &Path, right: &Path) -> bool {
+    left.to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
+}
+
+fn unix_time_ms() -> Result<i64, CommandError> {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| CommandError {
+            code: "clock_error",
+            message: "The system clock is before the Unix epoch.".to_owned(),
+        })?
+        .as_millis();
+    i64::try_from(millis).map_err(|_| CommandError {
+        code: "clock_error",
+        message: "The system clock is outside the supported range.".to_owned(),
+    })
+}
+
 fn parse_snapshot_parent(path: &Path) -> Result<PathBuf, CommandError> {
     if path.as_os_str().is_empty() || !path.is_absolute() {
         return Err(CommandError {
@@ -1864,6 +2160,9 @@ fn main() {
             create_world,
             open_world,
             get_current_world,
+            list_recent_projects,
+            remember_recent_project,
+            remove_recent_project,
             search_world,
             open_uri,
             get_related_context,
@@ -1880,7 +2179,10 @@ fn main() {
             delete_lore_import,
             extract_lore_import,
             prepare_lore_import_review,
+            get_ai_activity,
             get_provider_credential_status,
+            get_ai_provider_status,
+            diagnose_ai_provider,
             set_provider_api_key,
             clear_provider_api_key,
             execute_ai_query,

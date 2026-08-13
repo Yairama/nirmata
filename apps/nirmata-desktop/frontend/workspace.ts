@@ -8,7 +8,6 @@ import {
   clearError,
   commandCode,
   commandMessage,
-  firstUriFromTree,
   normalizeText,
   pathForUri,
   retainedDraftHint,
@@ -17,14 +16,7 @@ import {
   showError,
   splitLines,
 } from "./helpers.js";
-import { renderContext } from "./render-context.js";
 import { renderEditor } from "./render-editor.js";
-import {
-  renderKindFilters,
-  renderRecents,
-  renderResults,
-  renderTree,
-} from "./render-navigation.js";
 import {
   readPendingDraft,
   renderPending,
@@ -32,7 +24,6 @@ import {
 } from "./render-pending.js";
 import {
   bottomPanelSize,
-  closedView,
   contextPanel,
   editWorldButton,
   invoke,
@@ -40,12 +31,12 @@ import {
   navigationPanel,
   pendingPanel,
   rightPanelSize,
-  searchInput,
+  setSession,
   state,
+  statusElement,
   toggleContextButton,
   toggleNavigationButton,
   togglePendingButton,
-  uriInput,
   workspaceShell,
   worldEpoch,
   worldName,
@@ -63,6 +54,7 @@ import type {
   OpenUriResponse,
   PendingDraftRecord,
   RelatedContextResponse,
+  ReadScope,
   ReviewEditContext,
   RevisionHistorySnapshot,
   SearchObjectKind,
@@ -71,7 +63,7 @@ import type {
   WorldSession,
 } from "./types.js";
 
-function editorIsDirty(mode: EditorMode | null): boolean {
+export function editorIsDirty(mode: EditorMode | null): boolean {
   if (!mode) {
     return false;
   }
@@ -85,7 +77,9 @@ function editorIsDirty(mode: EditorMode | null): boolean {
 }
 
 export function hasPendingWork(): boolean {
-  return state.pendingDrafts.size > 0 || editorIsDirty(state.editorMode);
+  return state.pendingDrafts.size > 0
+    || state.ephemeralWork.size > 0
+    || editorIsDirty(state.editorMode);
 }
 
 export function applyLayoutState(): void {
@@ -104,7 +98,7 @@ export function applyLayoutState(): void {
 
   navigationPanel.hidden = state.panels.leftCollapsed;
   contextPanel.hidden = state.panels.rightCollapsed;
-  pendingPanel.hidden = state.panels.bottomCollapsed;
+  pendingPanel.hidden = !document.body.classList.contains("review-drawer-open");
 
   toggleNavigationButton.textContent = state.panels.leftCollapsed
     ? "Mostrar navegación"
@@ -113,8 +107,8 @@ export function applyLayoutState(): void {
     ? "Mostrar contexto"
     : "Ocultar contexto";
   togglePendingButton.textContent = state.panels.bottomCollapsed
-    ? "Mostrar drafts"
-    : "Ocultar drafts";
+    ? "Mostrar cambios"
+    : "Ocultar cambios";
 
   toggleNavigationButton.setAttribute("aria-expanded", String(!state.panels.leftCollapsed));
   toggleContextButton.setAttribute("aria-expanded", String(!state.panels.rightCollapsed));
@@ -130,36 +124,26 @@ export function applyLayoutState(): void {
 
 export function renderWorkspace(): void {
   if (!state.session) {
-    closedView.hidden = false;
     worldView.hidden = true;
+    statusElement.hidden = true;
     return;
   }
 
-  closedView.hidden = true;
   worldView.hidden = false;
+  statusElement.hidden = false;
   worldName.textContent = state.session.world.name;
   worldPath.textContent = state.session.path;
   setMarkdownText(worldPremise, state.session.world.premise_md, "No especificada");
   worldEpoch.textContent = normalizeText(state.session.world.epoch_label, "No especificado");
-  worldRevision.textContent = state.session.world.current_revision;
+  worldRevision.textContent = state.session.read_only ? "Versión anterior" : "Versión actual";
   editWorldButton.disabled = state.session.read_only;
-  searchInput.value = state.queryText;
-  uriInput.value = state.selectedUri ?? uriInput.value;
-
   applyLayoutState();
-  renderKindFilters();
-  renderRecents();
-  renderTree();
-  renderResults();
   renderEditor();
-  renderContext();
+  window.dispatchEvent(new CustomEvent("nirmata:context-changed"));
   renderPending();
 }
 
 function resetWorkspaceState(): void {
-  state.queryText = "";
-  state.activeKind = "all";
-  state.searchHits = [];
   state.logicalTree = null;
   state.selectedUri = null;
   state.selectedLogicalPath = null;
@@ -175,28 +159,31 @@ function resetWorkspaceState(): void {
   state.selectedRevisionId = null;
   state.recentUris = [];
   state.pendingDrafts.clear();
+  state.ephemeralWork.clear();
   state.workspaceNotice = null;
   state.navigationRequestId = 0;
   state.selectionRequestId = 0;
 }
 
 export function openSession(session: WorldSession): void {
-  state.session = session;
   resetWorkspaceState();
+  setSession(session);
   renderWorkspace();
   window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
   void refreshNavigation();
 }
 
 export function closeSession(): void {
-  state.session = null;
+  window.dispatchEvent(new CustomEvent("nirmata:discard-ephemeral-work"));
   resetWorkspaceState();
+  setSession(null);
   renderWorkspace();
   setStatus("Mundo cerrado.");
 }
 
 function pushRecent(uri: string): void {
   state.recentUris = [uri, ...state.recentUris.filter((item) => item !== uri)].slice(0, 8);
+  window.dispatchEvent(new CustomEvent("nirmata:selection-changed"));
 }
 
 export function applyCommandStateError(value: unknown, fallback?: string): void {
@@ -228,8 +215,8 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
     case "manual_review_stale":
       state.workspaceNotice = {
         kind: "warning",
-        title: "Draft obsoleto",
-        detail: `${message || "La revisión quedó detrás de la cabeza actual; revalida antes de confirmar."}${retainedDraftHint()}`,
+        title: "Propuesta desactualizada",
+        detail: `${message || "La propuesta quedó detrás de la versión actual; vuelve a comprobarla antes de aplicarla."}${retainedDraftHint()}`,
       };
       setStatus("La revisión manual requiere revalidación.");
       break;
@@ -238,10 +225,10 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
     case "validation_error":
       state.workspaceNotice = {
         kind: "warning",
-        title: "Commit rechazado por validación",
+        title: "No se puede aplicar todavía",
         detail: `${message}${retainedDraftHint()}`,
       };
-      setStatus("El ChangeSet sigue pendiente de revisión.");
+      setStatus("El conjunto de cambios sigue pendiente de revisión.");
       break;
     case "project_locked":
       state.workspaceNotice = {
@@ -251,13 +238,21 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
       };
       setStatus("No se pudo escribir porque el archivo está en uso.");
       break;
+    case "app_busy":
+      state.workspaceNotice = {
+        kind: "warning",
+        title: "IA trabajando",
+        detail: "Espera a que termine la solicitud activa o cancélala antes de cambiar el mundo.",
+      };
+      setStatus("La acción no se ejecutó; el mundo y el trabajo local se conservaron.");
+      break;
     case "constraint_error":
       state.workspaceNotice = {
         kind: "warning",
-        title: "Constraint de SQLite rechazó el cambio",
+        title: "El almacenamiento rechazó el cambio",
         detail: `${message}${retainedDraftHint()}`,
       };
-      setStatus("El draft se conservó para corregirlo o reintentarlo.");
+      setStatus("La propuesta se conservó para corregirla o reintentarlo.");
       break;
     case "storage_error":
       state.workspaceNotice = {
@@ -265,7 +260,7 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
         title: "La transacción no pudo completarse",
         detail: `${message}${retainedDraftHint()}`,
       };
-      setStatus("El canon no cambió. El draft se conservó y puedes reintentar.");
+      setStatus("El canon no cambió. La propuesta se conservó y puedes reintentar.");
       break;
     case "file_not_found":
       state.workspaceNotice = {
@@ -304,7 +299,7 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
     case "undo_conflict":
       state.workspaceNotice = {
         kind: "warning",
-        title: "Undo no disponible",
+        title: "Deshacer no disponible",
         detail: message,
       };
       setStatus("El historial local indica qué revisión puede deshacerse ahora.");
@@ -328,16 +323,8 @@ export async function refreshNavigation(): Promise<void> {
   setStatus("Actualizando navegación…");
   const requestId = ++state.navigationRequestId;
   try {
-    const [session, response, logicalTree, timeline, revisionHistory] = await Promise.all([
+    const [session, timeline, revisionHistory] = await Promise.all([
       invoke<WorldSession | null>("get_current_world"),
-      invoke<SearchWorldResponse>("search_world", {
-        input: {
-          queryText: state.queryText,
-          kind: state.activeKind,
-          limit: 200,
-        },
-      }),
-      invoke<LogicalVfsDirectory>("read_logical_vfs"),
       invoke<TimelineOverview>("list_timeline_events"),
       invoke<RevisionHistorySnapshot>("list_revision_history"),
     ]);
@@ -346,11 +333,8 @@ export async function refreshNavigation(): Promise<void> {
     }
 
     if (session) {
-      state.session = session;
+      setSession(session);
     }
-    const previousPath = state.selectedLogicalPath;
-    state.searchHits = response.hits;
-    state.logicalTree = logicalTree;
     state.timeline = timeline;
     state.revisionHistory = revisionHistory;
     state.selectedRevisionId =
@@ -361,27 +345,8 @@ export async function refreshNavigation(): Promise<void> {
     window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
 
     if (state.selectedUri) {
-      const nextPath = pathForUri(logicalTree, state.selectedUri);
-      if (nextPath && previousPath && nextPath !== previousPath) {
-        state.workspaceNotice = {
-          kind: "info",
-          title: "Archivo lógico movido",
-          detail: `La selección conservó su URI estable y ahora vive en ${nextPath}.`,
-        };
-      }
-      state.selectedLogicalPath = nextPath;
-      if (!nextPath) {
-        await loadSelection(state.selectedUri, true);
-      }
-    } else {
-      const nextSelection = state.searchHits[0]?.uri ?? firstUriFromTree(logicalTree);
-      if (nextSelection) {
-        await loadSelection(nextSelection, true);
-        return;
-      }
-      if (!state.editorMode) {
-        state.editorMode = buildCreateEditor("entity");
-      }
+      await loadSelection(state.selectedUri, true);
+      return;
     }
 
     const pending = Array.from(state.pendingDrafts.values());
@@ -393,7 +358,7 @@ export async function refreshNavigation(): Promise<void> {
     }
 
     renderWorkspace();
-    setStatus(state.queryText.trim() ? "Búsqueda y árbol actualizados." : "Navegación actualizada.");
+    setStatus("Navegación actualizada.");
   } catch (value) {
     applyCommandStateError(value, "");
   }
@@ -432,11 +397,48 @@ export async function loadSelection(uri: string, keepNotice: boolean): Promise<v
   }
 }
 
-export async function selectUri(uri: string): Promise<void> {
+export async function selectUri(uri: string): Promise<boolean> {
   if (state.selectedUri === uri && state.selectedObject && state.context) {
-    return;
+    return true;
+  }
+  if (!confirmDiscardPending("editor")) {
+    return false;
   }
   await loadSelection(uri, false);
+  return true;
+}
+
+export function startCreatingObject(kind: SearchObjectKind): boolean {
+  if (state.session?.read_only) {
+    showError("Vuelve a la versión actual antes de crear objetos.");
+    return false;
+  }
+  if (!confirmDiscardPending("editor")) {
+    return false;
+  }
+  state.workspaceNotice = null;
+  state.editorMode = buildCreateEditor(kind);
+  renderWorkspace();
+  return true;
+}
+
+export async function selectUriInScope(uri: string, scope: ReadScope): Promise<boolean> {
+  const session = state.session;
+  if (!session) {
+    return false;
+  }
+  const current = session.read_scope;
+  if (current.variantId === scope.variantId && current.revisionId === scope.revisionId) {
+    return selectUri(uri);
+  }
+  if (!confirmDiscardPending("editor")) {
+    return false;
+  }
+  setSession(await invoke<WorldSession>("set_read_scope", { input: { scope } }));
+  state.editorMode = null;
+  await refreshNavigation();
+  await loadSelection(uri, false);
+  return true;
 }
 
 function applyManualRequestToEditor(
@@ -466,6 +468,9 @@ export async function openReviewOperationEditor(
   record: PendingDraftRecord,
   operation: ManualReviewOperationSnapshot,
 ): Promise<void> {
+  if (!confirmDiscardPending("editor")) {
+    return;
+  }
   clearError();
   setStatus("Abriendo edición de operación…");
   try {
@@ -492,7 +497,7 @@ export async function openReviewOperationEditor(
     state.workspaceNotice = {
       kind: "info",
       title: "Edición por operación",
-      detail: "El formulario reutiliza el workflow existente y revalidará el ChangeSet al guardar.",
+      detail: "El formulario reutiliza el flujo existente y volverá a validar el conjunto de cambios al guardar.",
     };
     state.editorMode = applyManualRequestToEditor(editor, request, {
       reviewKey: record.review.reviewKey,
@@ -522,7 +527,7 @@ function currentManualRequest(): ManualDraftRequest | null {
 
 export async function saveCurrentDraft(): Promise<void> {
   if (state.session?.read_only) {
-    showError("La revisión observada es de solo lectura. Vuelve a la cabeza activa para editar.");
+    showError("La versión observada es de solo lectura. Vuelve a la versión actual para editar.");
     return;
   }
   const editor = state.editorMode;
@@ -558,9 +563,6 @@ export async function saveCurrentDraft(): Promise<void> {
       const record = state.pendingDrafts.get(editor.reviewEdit.reviewKey);
       if (record) {
         syncPendingReviewRecord(record, response.review);
-        if (record.preview.targetUri === request.existingUri || record.review.operations.length === 1) {
-          record.editor = applyManualRequestToEditor(cloneEditorMode(editor), request, null);
-        }
       }
       state.workspaceNotice = {
         kind: "info",
@@ -577,7 +579,7 @@ export async function saveCurrentDraft(): Promise<void> {
     }
   }
   clearError();
-  setStatus("Construyendo ChangeSetDraft…");
+  setStatus("Preparando conjunto de cambios…");
   try {
     const response = await invoke<ManualDraftResponse>("preview_manual_draft", { input: request });
     if (!state.editorMode) {
@@ -587,11 +589,11 @@ export async function saveCurrentDraft(): Promise<void> {
     if (!response.draft) {
       state.workspaceNotice = {
         kind: "warning",
-        title: "Draft no creado",
-        detail: "Corrige las validaciones por campo antes de generar el ChangeSetDraft.",
+        title: "Propuesta no creada",
+        detail: "Corrige los campos marcados antes de preparar el conjunto de cambios.",
       };
       renderWorkspace();
-      setStatus("El draft manual requiere correcciones.");
+      setStatus("La propuesta requiere correcciones.");
       return;
     }
     if (!response.review) {
@@ -609,11 +611,12 @@ export async function saveCurrentDraft(): Promise<void> {
     });
     state.workspaceNotice = {
       kind: "info",
-      title: "Draft creado",
-      detail: "El formulario generó un ChangeSetDraft pendiente. Revisa validaciones en el panel inferior.",
+      title: "Propuesta preparada",
+      detail: "El conjunto de cambios está listo para revisarse en el panel inferior.",
     };
+    state.editorMode = null;
     renderWorkspace();
-    setStatus(`Draft listo: ${response.draft.title}.`);
+    setStatus(`Propuesta lista: ${response.draft.title}.`);
   } catch (value) {
     applyCommandStateError(value, "");
   }
@@ -636,12 +639,25 @@ export function resetCurrentEditor(): void {
   renderWorkspace();
 }
 
-export function confirmDiscardPending(): boolean {
-  if (!hasPendingWork()) {
+export function confirmDiscardPending(scope: "editor" | "workspace" = "workspace"): boolean {
+  const shouldConfirm = editorIsDirty(state.editorMode)
+    || (scope === "workspace" && (state.pendingDrafts.size > 0 || state.ephemeralWork.size > 0));
+  if (!shouldConfirm) {
     return true;
   }
-
-  return window.confirm(
-    "Hay drafts manuales no revisados o cambios locales sin guardar. ¿Descartar y continuar?",
+  const previousFocus = document.activeElement instanceof HTMLElement
+    ? document.activeElement
+    : null;
+  const volatileItems = Array.from(state.ephemeralWork.values());
+  const accepted = window.confirm(
+    scope === "workspace"
+      ? volatileItems.length > 0
+        ? `Hay trabajo de sesión que se perderá: ${volatileItems.join(", ")}. También se descartará cualquier formulario o revisión local pendiente. ¿Continuar?`
+        : "Hay cambios locales o revisiones pendientes. ¿Descartar y continuar?"
+      : "Hay cambios sin guardar en el formulario. ¿Descartar y continuar?",
   );
+  if (!accepted) {
+    previousFocus?.focus();
+  }
+  return accepted;
 }
