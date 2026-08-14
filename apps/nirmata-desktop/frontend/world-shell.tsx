@@ -23,6 +23,7 @@ import type { AssistantIntent, ProposalTemplate } from "./assistant-workspace.js
 import type { DesktopActionRequest } from "./desktop-actions.js";
 import { Icon } from "./icons.js";
 import type { IconName } from "./icons.js";
+import { buttonStyles, chipStyles, cn } from "./ui-styles.js";
 
 const AssistantWorkspace = lazy(() => import("./assistant-workspace.js").then((module) => ({ default: module.AssistantWorkspace })));
 const ImportCenter = lazy(() => import("./import-center.js").then((module) => ({ default: module.ImportCenter })));
@@ -200,6 +201,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
     ? readOnboarding(session.world_id)
     : { dismissed: false });
   const areaHeading = useRef<HTMLHeadingElement>(null);
+  const homeRef = useRef<HTMLElement>(null);
   const initialArea = useRef(true);
   const assistantReturnFocus = useRef<HTMLElement | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -233,10 +235,9 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
 
   useEffect(() => {
     if (!session) return;
-    document.body.classList.add("world-session-open");
+    document.body.classList.add("world-session-open", "h-dvh", "overflow-hidden");
     return () => {
-      document.body.classList.remove("world-session-open");
-      delete document.body.dataset.worldArea;
+      document.body.classList.remove("world-session-open", "h-dvh", "overflow-hidden");
     };
   }, [session]);
 
@@ -249,10 +250,15 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
 
   useEffect(() => {
     if (!session) return;
-    document.body.dataset.worldArea = area;
     if (initialArea.current) {
       initialArea.current = false;
-    } else if (area === "home") areaHeading.current?.focus();
+    } else if (area === "home") {
+      if (homeRef.current) {
+        homeRef.current.scrollTop = 0;
+        homeRef.current.scrollLeft = 0;
+      }
+      areaHeading.current?.focus({ preventScroll: true });
+    }
   }, [area, session]);
 
   useEffect(() => {
@@ -320,8 +326,6 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
     if (!session) return;
     setOnboarding(readOnboarding(session.world_id));
   }, [session]);
-
-  useEffect(() => () => document.body.classList.remove("review-drawer-open"), []);
 
   if (!session) return null;
   const worldId = session.world_id;
@@ -429,12 +433,10 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
 
   function openReviews(trigger: HTMLElement | null) {
     reviewReturnFocus.current = trigger ?? document.activeElement as HTMLElement | null;
-    document.body.classList.add("review-drawer-open");
     setReviewOpen(true);
   }
 
   function closeReviews(restoreFocus = true) {
-    document.body.classList.remove("review-drawer-open");
     setReviewOpen(false);
     if (restoreFocus) window.setTimeout(() => reviewReturnFocus.current?.focus());
   }
@@ -564,6 +566,10 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
   }
 
   const currentArea = areas.find((item) => item.id === area)!;
+  const premise = session.world.premise_md
+    .replace(/[*_`#>~]+/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim() || "Este mundo todavía no tiene una premisa. Define en una frase qué lo hace único.";
   const paletteActions: PaletteAction[] = [
     ...areas.filter((item) => item.id !== "assistant").map((item): PaletteAction => ({ id: `area-${item.id}`, label: `Ir a ${item.label}`, group: "Navegar", keywords: [item.label], run: () => setArea(item.id as WorldArea) })),
     { id: "search", label: "Buscar en el canon", group: "Trabajar", keywords: ["objeto", "nombre", "alias"], run: openSearch },
@@ -608,71 +614,75 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
   ];
   return (
     <>
-      <section id="ai-busy-banner" className="ai-busy-banner" role="status" aria-live="polite" hidden={!aiActivity}>
+      <section id="ai-busy-banner" className="ai-busy-banner fixed inset-x-0 top-0 z-[100] flex min-h-16 items-center justify-between gap-4 border-b border-warning bg-warning-soft px-5 py-3" role="status" aria-live="polite" hidden={!aiActivity}>
         <div><strong>IA trabajando</strong><p id="ai-busy-message">{aiActivity?.label} Las acciones que cambian o recargan el mundo están pausadas.</p></div>
-        <button id="ai-busy-cancel" type="button" className="secondary" disabled={!aiActivity} onClick={() => void cancelAiActivity()}>Cancelar solicitud</button>
+        <button id="ai-busy-cancel" type="button" className={buttonStyles({ variant: "secondary" })} disabled={!aiActivity} onClick={() => void cancelAiActivity()}>Cancelar solicitud</button>
       </section>
-      <fieldset className="world-busy-boundary" disabled={Boolean(aiActivity)}>
-      <div className={`open-shell${collapsed ? " navigation-collapsed" : ""}`}>
-      <header className="open-shell-topbar">
-        <div className="project-identity">
-          <p className="eyebrow">Proyecto</p>
-          <strong id="world-name">{session.world.name}</strong>
+      <fieldset className="world-busy-boundary contents" disabled={Boolean(aiActivity)}>
+      <div className={cn(
+        "open-shell grid h-dvh w-full grid-cols-[14.5rem_minmax(0,1fr)] grid-rows-[4rem_minmax(0,1fr)] overflow-hidden bg-canvas max-mobile:grid-cols-[minmax(0,1fr)] max-mobile:grid-rows-[auto_auto_minmax(0,1fr)]",
+        collapsed && "navigation-collapsed grid-cols-[4.5rem_minmax(0,1fr)] max-mobile:grid-cols-[minmax(0,1fr)]",
+      )}>
+      <header className="open-shell-topbar z-20 col-span-full row-start-1 grid grid-cols-[minmax(10rem,auto)_minmax(16rem,1fr)_auto_auto] items-center gap-6 border-b border-line bg-surface px-4 max-mobile:col-start-1 max-mobile:row-start-1 max-mobile:flex max-mobile:min-h-14 max-mobile:flex-wrap max-mobile:gap-2 max-mobile:px-3 max-mobile:py-2">
+        <div className="project-identity min-w-0 max-mobile:mr-auto">
+          <p className="eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Proyecto</p>
+          <strong id="world-name" className="block truncate font-serif text-base">{session.world.name}</strong>
         </div>
-        <dl className="scope-summary">
-          <div><dt>Escribiendo en</dt><dd>{session.active_variant.name}</dd></div>
-          <div><dt>Viendo</dt><dd>{session.read_only ? "Versión anterior" : "Versión actual"}</dd></div>
+        <dl className="scope-summary flex min-w-0 gap-6 max-mobile:order-3 max-mobile:w-full max-mobile:border-t max-mobile:border-line max-mobile:pt-2 max-compact:gap-3">
+          <div className="min-w-0"><dt className="text-[0.62rem] font-bold uppercase tracking-wider text-muted">Escribiendo en</dt><dd className="truncate text-xs font-semibold">{session.active_variant.name}</dd></div>
+          <div className="min-w-0"><dt className="text-[0.62rem] font-bold uppercase tracking-wider text-muted">Viendo</dt><dd className="truncate text-xs font-semibold">{session.read_only ? "Versión anterior" : "Versión actual"}</dd></div>
         </dl>
-        {session.read_only && <span className="read-only-chip">Solo lectura</span>}
-        <div className="open-shell-actions">
-          <button type="button" className="topbar-search" onClick={(event) => openPalette(event.currentTarget)}><Icon name="search" /> <span>Buscar</span> <kbd>Ctrl K</kbd></button>
-          <button type="button" className="ghost topbar-changes" aria-label={`Cambios ${pendingCount} cambios pendientes`} aria-expanded={reviewOpen} onClick={(event) => openReviews(event.currentTarget)}><Icon name="layers" /> <span>Cambios</span> <span className="count-badge" aria-hidden="true">{pendingCount}</span></button>
-          <details className="topbar-more">
-            <summary aria-label="Más acciones" title="Más acciones"><Icon name="more" /><span className="sr-only">Más</span></summary>
-            <div>
-              <button type="button" className="ghost" disabled={session.read_only} title={session.read_only ? "El calendario histórico es de solo lectura." : "Editar el calendario del mundo actual"} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void configureCalendar(); }}>Editar calendario</button>
-              <button type="button" className="ghost" onClick={(event) => openDialog("settings", event.currentTarget)}>Ajustes</button>
-              <button type="button" className="ghost" onClick={(event) => openDialog("help", event.currentTarget)}>Ayuda</button>
-              <button type="button" className="ghost" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onClose(); }}>Cerrar mundo</button>
+        {session.read_only && <span className={chipStyles({ kind: "readOnly" })}>Solo lectura</span>}
+        <div className="open-shell-actions flex items-center justify-end gap-2 max-mobile:ml-auto">
+          <button type="button" className={cn(buttonStyles({ variant: "ghost" }), "topbar-search min-h-9 max-mobile:size-9 max-mobile:min-h-9 max-mobile:rounded-full max-mobile:p-0")} onClick={(event) => openPalette(event.currentTarget)}><Icon name="search" /> <span className="max-mobile:hidden">Buscar</span> <kbd className="ml-2 text-[0.65rem] font-normal text-muted max-mobile:hidden">Ctrl K</kbd></button>
+          <button type="button" className={cn(buttonStyles({ variant: "ghost" }), "topbar-changes min-h-9 max-mobile:size-9 max-mobile:min-h-9 max-mobile:rounded-full max-mobile:p-0")} aria-label={`Cambios ${pendingCount} cambios pendientes`} aria-expanded={reviewOpen} onClick={(event) => openReviews(event.currentTarget)}><Icon name="layers" /> <span className="max-mobile:hidden">Cambios</span> <span className={chipStyles({ kind: "count" })} aria-hidden="true">{pendingCount}</span></button>
+          <details className="topbar-more group relative">
+            <summary className="flex size-9 list-none items-center justify-center rounded-full border border-line group-open:bg-subtle" aria-label="Más acciones" title="Más acciones"><Icon name="more" /><span className="sr-only">Más</span></summary>
+            <div className="absolute right-0 top-11 z-50 grid min-w-48 gap-1 rounded-xl border border-line bg-raised p-2 shadow-overlay">
+              <button type="button" className={cn(buttonStyles({ variant: "ghost" }), "justify-start border-0")} disabled={session.read_only} title={session.read_only ? "El calendario histórico es de solo lectura." : "Editar el calendario del mundo actual"} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void configureCalendar(); }}>Editar calendario</button>
+              <button type="button" className={cn(buttonStyles({ variant: "ghost" }), "justify-start border-0")} onClick={(event) => openDialog("settings", event.currentTarget)}>Ajustes</button>
+              <button type="button" className={cn(buttonStyles({ variant: "ghost" }), "justify-start border-0")} onClick={(event) => openDialog("help", event.currentTarget)}>Ayuda</button>
+              <button type="button" className={cn(buttonStyles({ variant: "ghost" }), "justify-start border-0")} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onClose(); }}>Cerrar mundo</button>
             </div>
           </details>
         </div>
       </header>
-      <nav className="open-shell-sidebar" aria-label="Áreas del mundo">
-        <button type="button" className="sidebar-collapse ghost" aria-expanded={!collapsed} aria-label={collapsed ? "Expandir navegación" : "Contraer navegación"} onClick={() => setCollapsed((value) => !value)}>
+      <nav className="open-shell-sidebar z-10 col-start-1 row-start-2 flex min-h-0 flex-col gap-1 border-r border-line bg-surface px-2 py-3 max-mobile:row-start-2 max-mobile:flex-row max-mobile:overflow-x-auto max-mobile:border-r-0 max-mobile:border-b max-mobile:px-2 max-mobile:py-1.5" aria-label="Áreas del mundo">
+        <button type="button" className={cn(buttonStyles({ variant: "ghost" }), "sidebar-collapse mb-2 ml-auto max-mobile:hidden")} aria-expanded={!collapsed} aria-label={collapsed ? "Expandir navegación" : "Contraer navegación"} onClick={() => setCollapsed((value) => !value)}>
           <Icon name={collapsed ? "chevron-right" : "chevron-left"} />
         </button>
         {areas.map((item) => (
-          <button key={item.id} type="button" aria-current={item.id === "assistant" ? assistantOpen ? "page" : undefined : item.id === area ? "page" : undefined} aria-label={collapsed ? item.label : undefined} title={item.label} onClick={(event) => chooseArea(item.id, event.currentTarget)}>
-            <span className="area-mark" aria-hidden="true"><Icon name={item.icon} /></span>
-            <span className="area-label">{item.label}</span>
+          <button key={item.id} type="button" className={cn(
+            "min-h-11 justify-start border-0 bg-transparent px-3 text-muted enabled:hover:bg-subtle enabled:hover:text-ink aria-[current=page]:bg-accent-soft aria-[current=page]:text-accent max-mobile:min-h-10 max-mobile:shrink-0 max-mobile:justify-center max-mobile:px-3 max-compact:size-10 max-compact:px-0",
+            collapsed && "justify-center px-0 max-mobile:px-3 max-compact:px-0",
+          )} aria-current={item.id !== "assistant" && item.id === area ? "page" : undefined} aria-haspopup={item.id === "assistant" ? "dialog" : undefined} aria-expanded={item.id === "assistant" ? assistantOpen : undefined} aria-label={collapsed ? item.label : undefined} title={item.label} onClick={(event) => chooseArea(item.id, event.currentTarget)}>
+            <span className="area-mark flex size-6 shrink-0 items-center justify-center" aria-hidden="true"><Icon name={item.icon} /></span>
+            <span className={cn("area-label min-w-0 truncate max-compact:hidden", collapsed && "hidden max-mobile:inline max-compact:hidden")}>{item.label}</span>
           </button>
         ))}
       </nav>
-      <section className="open-world-home" hidden={area !== "home"} aria-labelledby="world-home-title">
-        <p className="panel-eyebrow">Inicio del mundo</p>
-        <h1 id="world-home-title" ref={areaHeading} tabIndex={-1}>{session.world.name}</h1>
-        <p className="world-home-premise">{session.world.premise_md
-          ? session.world.premise_md.replace(/[*_`#>~]+/gu, "").replace(/\s+/gu, " ").trim()
-          : "Este mundo todavía no tiene una premisa. Define en una frase qué lo hace único."}</p>
-        <div className="world-home-actions">
+      <section ref={homeRef} className="open-world-home col-start-2 row-start-2 grid min-h-0 min-w-0 justify-items-start gap-6 overflow-auto p-8 [align-content:safe_center] lg:p-14 max-mobile:col-start-1 max-mobile:row-start-3 max-mobile:content-start max-mobile:p-6" hidden={area !== "home"} aria-labelledby="world-home-title">
+        <p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Inicio del mundo</p>
+        <h1 id="world-home-title" className="max-w-5xl text-6xl lg:text-7xl max-mobile:text-5xl" ref={areaHeading} tabIndex={-1}>{session.world.name}</h1>
+        <p className="world-home-premise max-w-3xl font-serif text-xl leading-relaxed text-muted">{premise}</p>
+        <div className="world-home-actions flex flex-wrap gap-2">
           <button type="button" onClick={() => setArea("world")}>Abrir Mundo</button>
-          <button type="button" className="secondary" disabled={session.read_only} onClick={() => void startCreate("entity")}>Crear entidad</button>
-          <button type="button" className="secondary" disabled={session.read_only} onClick={() => void startCreate("event")}>Crear evento</button>
-          <button type="button" className="ghost" onClick={() => openAssistant("query")}>Preguntar</button>
+          <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={session.read_only} onClick={() => void startCreate("entity")}>Crear entidad</button>
+          <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={session.read_only} onClick={() => void startCreate("event")}>Crear evento</button>
+          <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => openAssistant("query")}>Preguntar</button>
         </div>
         {!onboarding.dismissed && (
-          <section className="world-home-guide" aria-labelledby="world-guide-title">
-            <div className="world-guide-heading">
-              <div><p className="panel-eyebrow">Flujo básico</p><h2 id="world-guide-title">Tú decides qué entra al mundo</h2></div>
-              <button type="button" className="ghost" onClick={() => updateOnboarding(true)}>Ocultar guía</button>
+          <section className="world-home-guide grid max-w-3xl gap-2 border-l-2 border-accent bg-surface px-5 py-4" aria-labelledby="world-guide-title">
+            <div className="world-guide-heading flex items-start justify-between gap-4">
+              <div><p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Flujo básico</p><h2 id="world-guide-title">Tú decides qué entra al mundo</h2></div>
+              <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => updateOnboarding(true)}>Ocultar guía</button>
             </div>
             <p>Edita o crea, prepara una propuesta, revísala en <strong>Cambios</strong> y usa <strong>Aplicar al mundo</strong> solo cuando estés conforme.</p>
           </section>
         )}
       </section>
       {area === "chronology" && <WorldTimeline onOpen={openTimelineEvent} onConfigureCalendar={configureCalendar} onCreateEvent={() => startCreate("event")} onUseTemplate={(template) => openAssistant("propose", "", template)} />}
-      <Suspense fallback={<p className="area-loading" role="status">Cargando herramienta…</p>}>
+      <Suspense fallback={<p className="area-loading col-start-2 row-start-2 min-h-0 min-w-0 overflow-auto max-mobile:col-start-1 max-mobile:row-start-3" role="status">Cargando herramienta…</p>}>
         {area === "versions" && <VersionsWorkspace />}
         {mountedAreas.current.has("simulation") && <SimulationWorkspace active={area === "simulation"} onOpenReviews={() => openReviews(null)} />}
         {mountedAreas.current.has("narrative") && <NarrativeWorkspace active={area === "narrative"} onOpen={(uri, scope) => void openNarrativeObject(uri, scope)} onOpenReviews={() => openReviews(null)} onPendingReviewsChanged={() => void queryClient.invalidateQueries({ queryKey: pendingReviewsQueryKey(session) })} />}
@@ -691,24 +701,25 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
           void openReviewOperationEditor(record, operation);
         }}
       />
-      <p className="area-announcement" aria-live="polite">Área actual: {currentArea.label}</p>
-      <section id="world-view" aria-labelledby="world-name" aria-busy={Boolean(aiActivity)} hidden={area !== "world" && area !== "imports"}>
-        <div className="world-header" hidden>
+      <p className="area-announcement sr-only" aria-live="polite">Área actual: {currentArea.label}</p>
+      <section id="world-view" className="col-start-2 row-start-2 min-h-0 min-w-0 overflow-hidden bg-canvas max-mobile:col-start-1 max-mobile:row-start-3" aria-labelledby="world-name" aria-busy={Boolean(aiActivity)} hidden={area !== "world" && area !== "imports"}>
+        <div hidden>
           <p id="world-path">{session.path}</p>
           <p id="world-premise">{session.world.premise_md || "No especificada"}</p>
           <p id="world-epoch">{session.world.epoch_label || "No especificado"}</p>
         </div>
         <span id="world-revision" hidden>{session.read_only ? "Versión anterior" : "Versión actual"}</span>
-        <section id="imports-panel" className="imports-panel" aria-label="Importaciones" hidden={area !== "imports"}>
+        <section id="imports-panel" className="imports-panel h-full overflow-auto p-5" aria-label="Importaciones" hidden={area !== "imports"}>
           <div id="import-center-react-root"><Suspense fallback={<p role="status">Cargando importaciones…</p>}>{mountedAreas.current.has("imports") && <ImportCenter active={area === "imports"} intent={importIntent} onOpenReviews={() => openReviews(null)} />}</Suspense></div>
         </section>
-        <div id="workspace-shell" ref={workspaceRef} className="workspace-shell" hidden={area !== "world"}>
-          <div className="workspace-region-tabs" role="tablist" aria-label="Región de Mundo">
+        <div id="workspace-shell" ref={workspaceRef} className="workspace-shell grid h-full min-h-0 min-w-0 grid-cols-[var(--explorer-panel-width,18rem)_0.75rem_minmax(15rem,1fr)_0.75rem_var(--context-panel-width,19rem)] gap-0 p-3 [grid-template-areas:'explorer_split-explorer_editor_split-context_context'] max-workspace:grid-cols-[minmax(0,1fr)] max-workspace:grid-rows-[auto_minmax(0,1fr)] max-workspace:gap-2 max-workspace:[grid-template-areas:'tabs'_'active'] max-mobile:p-2" hidden={area !== "world"}>
+          <div className="workspace-region-tabs hidden max-workspace:grid max-workspace:grid-cols-3 max-workspace:gap-1 max-workspace:rounded-xl max-workspace:bg-subtle max-workspace:p-1 max-workspace:[grid-area:tabs]" role="tablist" aria-label="Región de Mundo">
             {workspaceRegions.map((region) => (
               <button
                 key={region.id}
                 id={`workspace-region-${region.id}`}
-                type="button"
+                 type="button"
+                 className="max-workspace:border-0 max-workspace:bg-transparent max-workspace:text-ink max-workspace:aria-[selected=true]:bg-raised max-workspace:aria-[selected=true]:text-accent max-workspace:aria-[selected=true]:shadow-sm"
                 role="tab"
                 aria-selected={workspaceRegion === region.id}
                 aria-controls={region.panelId}
@@ -728,7 +739,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
            </div>
           <section
             id="navigation-panel"
-            className="panel"
+            className="panel flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-sm [grid-area:explorer] max-workspace:[grid-area:active]"
             hidden={narrowWorkspace ? workspaceRegion !== "explorer" : workspaceLayout.explorerCollapsed}
             role={narrowWorkspace ? "tabpanel" : undefined}
             aria-labelledby={narrowWorkspace ? "workspace-region-explorer" : "explorer-title"}
@@ -737,16 +748,16 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
           </section>
           <section
             id="editor-panel"
-            className="panel"
+            className="panel flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-sm [grid-area:editor] max-workspace:[grid-area:active]"
             aria-labelledby={narrowWorkspace ? "workspace-region-editor" : "editor-title"}
             hidden={narrowWorkspace && workspaceRegion !== "editor"}
             role={narrowWorkspace ? "tabpanel" : undefined}
           >
-             <div id="structured-editor-react-root"><Suspense fallback={<p role="status">Cargando editor…</p>}>{mountedAreas.current.has("world") && <StructuredEditor onPendingReviewsChanged={() => void queryClient.invalidateQueries({ queryKey: pendingReviewsQueryKey(session) })} onStartProposal={(request) => openAssistant("propose", request)} />}</Suspense></div>
+             <div id="structured-editor-react-root" className="flex h-full min-h-0 flex-col"><Suspense fallback={<p role="status">Cargando editor…</p>}>{mountedAreas.current.has("world") && <StructuredEditor onPendingReviewsChanged={() => void queryClient.invalidateQueries({ queryKey: pendingReviewsQueryKey(session) })} onStartProposal={(request) => openAssistant("propose", request)} />}</Suspense></div>
           </section>
           <section
             id="context-panel"
-            className="panel"
+            className="panel flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-sm [grid-area:context] max-workspace:[grid-area:active]"
             aria-labelledby={narrowWorkspace ? "workspace-region-context" : "context-title"}
             hidden={narrowWorkspace ? workspaceRegion !== "context" : workspaceLayout.contextCollapsed}
             role={narrowWorkspace ? "tabpanel" : undefined}
@@ -755,8 +766,9 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
           </section>
           {!narrowWorkspace && (
             <>
-              <div className="workspace-splitter workspace-splitter-explorer">
+              <div className="workspace-splitter workspace-splitter-explorer relative flex items-center justify-center [grid-area:split-explorer] max-workspace:hidden">
                 <div
+                  className="absolute inset-y-0 w-full cursor-col-resize after:absolute after:bottom-4 after:left-1/2 after:top-4 after:w-px after:-translate-x-1/2 after:bg-line after:content-['']"
                   role="separator"
                   tabIndex={0}
                   aria-label="Redimensionar Explorador"
@@ -774,7 +786,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
                 />
                 <button
                   type="button"
-                  className="workspace-splitter-action"
+                  className="workspace-splitter-action relative z-10 size-7 min-h-7 rounded-full border-line bg-surface p-0 text-muted shadow-sm"
                   aria-controls="navigation-panel"
                   aria-expanded={!workspaceLayout.explorerCollapsed}
                   aria-label={workspaceLayout.explorerCollapsed ? "Restaurar Explorador" : "Colapsar Explorador"}
@@ -782,8 +794,9 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
                   onClick={() => toggleWorkspacePanel("explorer")}
                 ><Icon name={workspaceLayout.explorerCollapsed ? "chevron-right" : "chevron-left"} /></button>
               </div>
-              <div className="workspace-splitter workspace-splitter-context">
+              <div className="workspace-splitter workspace-splitter-context relative flex items-center justify-center [grid-area:split-context] max-workspace:hidden">
                 <div
+                  className="absolute inset-y-0 w-full cursor-col-resize after:absolute after:bottom-4 after:left-1/2 after:top-4 after:w-px after:-translate-x-1/2 after:bg-line after:content-['']"
                   role="separator"
                   tabIndex={0}
                   aria-label="Redimensionar Contexto"
@@ -801,7 +814,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
                 />
                 <button
                   type="button"
-                  className="workspace-splitter-action"
+                  className="workspace-splitter-action relative z-10 size-7 min-h-7 rounded-full border-line bg-surface p-0 text-muted shadow-sm"
                   aria-controls="context-panel"
                   aria-expanded={!workspaceLayout.contextCollapsed}
                   aria-label={workspaceLayout.contextCollapsed ? "Restaurar Contexto" : "Colapsar Contexto"}
@@ -837,16 +850,16 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
         }
       }}>
         <Dialog.Portal>
-          <Dialog.Overlay className="dialog-overlay" />
-          <Dialog.Content className="confirmation-dialog" aria-describedby="confirmation-detail">
+          <Dialog.Overlay className="dialog-overlay fixed inset-0 z-40 bg-overlay" />
+          <Dialog.Content className="confirmation-dialog fixed left-1/2 top-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[min(42rem,calc(100vw-2rem))] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-auto rounded-2xl border border-line bg-raised p-6 shadow-overlay outline-none" aria-describedby="confirmation-detail">
             <Dialog.Title>{confirmation?.title}</Dialog.Title>
             <Dialog.Description id="confirmation-detail">{confirmation?.detail}</Dialog.Description>
-            <div className="dialog-actions">
-              <button type="button" className={confirmation?.danger ? "danger" : undefined} onClick={() => {
+            <div className="dialog-actions flex flex-wrap items-center gap-2">
+              <button type="button" className={buttonStyles({ variant: confirmation?.danger ? "danger" : "primary" })} onClick={() => {
                 confirmation?.resolve(true);
                 setConfirmation(null);
               }}>{confirmation?.confirmLabel}</button>
-              <Dialog.Close asChild><button type="button" className="secondary">Cancelar</button></Dialog.Close>
+              <Dialog.Close asChild><button type="button" className={buttonStyles({ variant: "secondary" })}>Cancelar</button></Dialog.Close>
             </div>
           </Dialog.Content>
         </Dialog.Portal>

@@ -7,6 +7,7 @@ import { firstUriFromTree, pathForUri } from "./helpers.js";
 import { useSession } from "./session-provider.js";
 import { appActions, getAppState, useAppState } from "./state.js";
 import type { LogicalVfsDirectory, LogicalVfsNode, SearchKind, SearchObjectKind, SearchResult, SearchWorldResponse } from "./types.js";
+import { buttonStyles, chipStyles, cn, noticeStyles } from "./ui-styles.js";
 import { selectUri, startCreatingObject } from "./workspace.js";
 import { observedScopeQueryKey } from "./workspace-data.js";
 
@@ -22,6 +23,8 @@ const filters: Array<{ value: SearchKind; label: string }> = [
 ];
 
 const createOptions = filters.slice(1) as Array<{ value: SearchObjectKind; label: string }>;
+const tabTriggerStyles = `${buttonStyles({ variant: "secondary", size: "compact" })} shrink-0 rounded-full px-3 aria-selected:border-accent aria-selected:bg-accent-soft aria-selected:text-accent`;
+const explorerObjectStyles = "explorer-object grid w-full justify-stretch gap-1 rounded-xl border border-transparent bg-transparent p-3 text-left text-ink hover:border-line hover:bg-subtle";
 
 export function WorldExplorer({ onStartProposal, onEditorOpened }: { onStartProposal: () => void; onEditorOpened: () => void }) {
   const session = useSession();
@@ -106,15 +109,14 @@ export function WorldExplorer({ onStartProposal, onEditorOpened }: { onStartProp
   const worldIsEmpty = tree.data?.children.length === 0;
   const searchIsFiltered = Boolean(deferredQuery) || kind !== "all";
   return (
-    <div className="world-explorer">
-      <div className="panel-header explorer-heading">
-        <div><p className="panel-eyebrow">Exploración</p><h3 id="explorer-title">Mundo</h3></div>
-        <p className="panel-summary">{hits.length} resultado{hits.length === 1 ? "" : "s"}</p>
+    <div className="world-explorer flex h-full min-h-0 flex-col">
+      <div className="panel-header explorer-heading flex min-h-18 items-start justify-between gap-4 border-b border-line px-4 py-3">
+        <div className="grid gap-1"><p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Exploración</p><h3 id="explorer-title">Mundo</h3></div>
+        <p className="panel-summary text-xs font-medium text-muted">{hits.length} resultado{hits.length === 1 ? "" : "s"}</p>
       </div>
-      <div className="explorer-controls">
-        <label className="search-field">Buscar
+      <div className="explorer-controls grid gap-3 border-b border-line p-3">
+        <label className="search-field gap-1">Buscar
           <input
-            className="world-explorer-search"
             name="world-search"
             type="search"
             value={query}
@@ -123,12 +125,12 @@ export function WorldExplorer({ onStartProposal, onEditorOpened }: { onStartProp
             autoComplete="off"
           />
         </label>
-        <div className="kind-filters" aria-label="Filtros por tipo">
+        <div className="kind-filters flex gap-1 overflow-x-auto pb-1" aria-label="Filtros por tipo">
           {filters.map((filter) => (
-            <button key={filter.value} type="button" className="kind-filter secondary" aria-pressed={kind === filter.value} onClick={() => setKind(filter.value)}>{filter.label}</button>
+            <button key={filter.value} type="button" className={cn(buttonStyles({ variant: "secondary", size: "compact" }), "kind-filter shrink-0 rounded-full aria-pressed:border-accent aria-pressed:bg-accent-soft aria-pressed:text-accent")} aria-pressed={kind === filter.value} onClick={() => setKind(filter.value)}>{filter.label}</button>
           ))}
         </div>
-        <div className="explorer-create">
+        <div className="explorer-create grid grid-cols-[1fr_auto] gap-2">
           <label>Nuevo
             <select name="new-object-kind" value={createKind} onChange={(event) => setCreateKind(event.currentTarget.value as SearchObjectKind)} disabled={session.read_only}>
               {createOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -137,32 +139,32 @@ export function WorldExplorer({ onStartProposal, onEditorOpened }: { onStartProp
           <button type="button" onClick={createObject} disabled={session.read_only}>Crear</button>
         </div>
       </div>
-      <Tabs.Root className="explorer-tabs" defaultValue="results">
-        <Tabs.List aria-label="Vistas del explorador">
-          <Tabs.Trigger value="results">Resultados</Tabs.Trigger>
-          <Tabs.Trigger value="tree">Estructura</Tabs.Trigger>
-          <Tabs.Trigger value="recent">Recientes</Tabs.Trigger>
+      <Tabs.Root className="explorer-tabs flex min-h-0 flex-1 flex-col" defaultValue="results">
+        <Tabs.List className="flex gap-1 overflow-x-auto pb-1" aria-label="Vistas del explorador">
+          <Tabs.Trigger className={tabTriggerStyles} value="results">Resultados</Tabs.Trigger>
+          <Tabs.Trigger className={tabTriggerStyles} value="tree">Estructura</Tabs.Trigger>
+          <Tabs.Trigger className={tabTriggerStyles} value="recent">Recientes</Tabs.Trigger>
         </Tabs.List>
-        <Tabs.Content value="results" className="explorer-scroll">
-          {search.isFetching && <p role="status" className="muted">Buscando en la versión observada…</p>}
-          {search.isError && <p role="alert" className="notice warning">No se pudo buscar. El mundo no cambió.</p>}
+        <Tabs.Content value="results" className="explorer-scroll min-h-0 flex-1 overflow-auto p-3">
+          {search.isFetching && <p role="status" className="muted text-muted">Buscando en la versión observada…</p>}
+          {search.isError && <p role="alert" className={noticeStyles({ tone: "warning" })}>No se pudo buscar. El mundo no cambió.</p>}
           {!search.isFetching && !search.isError && hits.length === 0 && worldIsEmpty && !searchIsFiltered && <EmptyWorldActions readOnly={session.read_only} onStartProposal={onStartProposal} onEditorOpened={onEditorOpened} />}
-          {!search.isFetching && !search.isError && hits.length === 0 && (!worldIsEmpty || searchIsFiltered) && <p className="empty-state">No hay coincidencias con estos términos y filtros. El contenido del mundo no se ocultó ni cambió.</p>}
-          <div className="explorer-results" role="region" aria-label="Resultados de búsqueda" onKeyDown={onResultKeyDown}>
+          {!search.isFetching && !search.isError && hits.length === 0 && (!worldIsEmpty || searchIsFiltered) && <p className="empty-state grid gap-4 rounded-xl border border-dashed border-line bg-surface p-5 text-sm text-muted">No hay coincidencias con estos términos y filtros. El contenido del mundo no se ocultó ni cambió.</p>}
+          <div className="explorer-results grid gap-1.5" role="region" aria-label="Resultados de búsqueda" onKeyDown={onResultKeyDown}>
             {hits.map((result) => <ResultButton key={result.uri} result={result} selected={result.uri === state.selectedUri} onOpen={openObject} />)}
           </div>
         </Tabs.Content>
-        <Tabs.Content value="tree" className="explorer-scroll">
-          {tree.isPending && <p role="status" className="muted">Cargando estructura…</p>}
-          {tree.isError && <p role="alert" className="notice warning">No se pudo cargar la estructura.</p>}
+        <Tabs.Content value="tree" className="explorer-scroll min-h-0 flex-1 overflow-auto p-3">
+          {tree.isPending && <p role="status" className="muted text-muted">Cargando estructura…</p>}
+          {tree.isError && <p role="alert" className={noticeStyles({ tone: "warning" })}>No se pudo cargar la estructura.</p>}
           {tree.data?.children.length === 0 && <EmptyWorldActions readOnly={session.read_only} onStartProposal={onStartProposal} onEditorOpened={onEditorOpened} />}
           {tree.data && <TreeNodes nodes={tree.data.children} selectedUri={state.selectedUri} onOpen={openObject} />}
         </Tabs.Content>
-        <Tabs.Content value="recent" className="explorer-scroll">
-          {state.recentUris.length === 0 && <p className="empty-state">Todavía no abriste objetos en esta sesión.</p>}
-          <div className="explorer-results">
+        <Tabs.Content value="recent" className="explorer-scroll min-h-0 flex-1 overflow-auto p-3">
+          {state.recentUris.length === 0 && <p className="empty-state grid gap-4 rounded-xl border border-dashed border-line bg-surface p-5 text-sm text-muted">Todavía no abriste objetos en esta sesión.</p>}
+          <div className="explorer-results grid gap-1.5">
             {state.recentUris.map((uri) => (
-              <button key={uri} type="button" className="explorer-object" aria-current={uri === state.selectedUri ? "true" : undefined} onClick={() => void openObject(uri)}>
+              <button key={uri} type="button" className={explorerObjectStyles} aria-current={uri === state.selectedUri ? "true" : undefined} onClick={() => void openObject(uri)}>
                 <strong>{nameForUri(tree.data ?? null, uri)}</strong>
                 <small>{kindFromUri(uri)}</small>
               </button>
@@ -170,9 +172,9 @@ export function WorldExplorer({ onStartProposal, onEditorOpened }: { onStartProp
           </div>
         </Tabs.Content>
       </Tabs.Root>
-      <details className="technical-details explorer-advanced">
+      <details className="technical-details explorer-advanced border-t border-line px-3 py-2">
         <summary>Abrir identificador técnico</summary>
-        <form onSubmit={(event) => { event.preventDefault(); if (directUri.trim()) void openObject(directUri.trim()); }}>
+        <form className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2" onSubmit={(event) => { event.preventDefault(); if (directUri.trim()) void openObject(directUri.trim()); }}>
           <label>URI <input name="direct-uri" value={directUri} onChange={(event) => setDirectUri(event.currentTarget.value)} placeholder="nirmata://…" autoComplete="off" /></label>
           <button type="submit">Abrir</button>
         </form>
@@ -186,14 +188,14 @@ function EmptyWorldActions({ readOnly, onStartProposal, onEditorOpened }: { read
     void startCreatingObject(kind).then((opened) => { if (opened) onEditorOpened(); });
   }
   return (
-    <section className="empty-state contextual-empty" aria-label="Mundo sin objetos">
+    <section className="empty-state grid gap-4 rounded-xl border border-dashed border-line bg-surface p-5 text-sm text-muted" aria-label="Mundo sin objetos">
       <h4>El mundo todavía no tiene objetos</h4>
       <p>Crea una pieza canónica manualmente o abre una propuesta revisable. Nada se genera automáticamente.</p>
-      <div className="pending-actions">
+      <div className="pending-actions flex flex-wrap items-center gap-2">
         <button type="button" disabled={readOnly} onClick={() => create("entity")}>Crear entidad</button>
-        <button type="button" className="secondary" disabled={readOnly} onClick={() => create("rule")}>Crear regla</button>
-        <button type="button" className="secondary" disabled={readOnly} onClick={() => create("event")}>Crear evento</button>
-        <button type="button" className="ghost" disabled={readOnly} onClick={onStartProposal}>Proponer con IA</button>
+        <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={readOnly} onClick={() => create("rule")}>Crear regla</button>
+        <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={readOnly} onClick={() => create("event")}>Crear evento</button>
+        <button type="button" className={buttonStyles({ variant: "ghost" })} disabled={readOnly} onClick={onStartProposal}>Proponer con IA</button>
       </div>
     </section>
   );
@@ -201,16 +203,16 @@ function EmptyWorldActions({ readOnly, onStartProposal, onEditorOpened }: { read
 
 function ResultButton({ result, selected, onOpen }: { result: SearchResult; selected: boolean; onOpen: (uri: string) => Promise<void> }) {
   return (
-    <article className="explorer-object">
+    <article className={explorerObjectStyles}>
       <button type="button" data-result aria-current={selected ? "true" : undefined} onClick={() => void onOpen(result.uri)}>
         <strong>{cleanSnippet(result.snippet)}</strong>
-        <span className="badge-row">
-          <span className="badge kind">{kindLabel(result.object_type)}</span>
-          <span className={`badge ${result.classification === "no_evidence" ? "warning" : "info"}`}>{classificationLabel(result.classification)}</span>
-          <span className={`badge ${result.authority === "canonical" ? "ready" : "context"}`}>{result.authority === "canonical" ? "Canon" : "Perspectiva"}</span>
+        <span className="badge-row flex flex-wrap items-center gap-1.5">
+          <span className={chipStyles({ tone: "kind" })}>{kindLabel(result.object_type)}</span>
+          <span className={chipStyles({ tone: result.classification === "no_evidence" ? "warning" : "info" })}>{classificationLabel(result.classification)}</span>
+          <span className={chipStyles({ tone: result.authority === "canonical" ? "success" : "perspective" })}>{result.authority === "canonical" ? "Canon" : "Perspectiva"}</span>
         </span>
       </button>
-      <details className="technical-details">
+      <details className="technical-details border-t border-line pt-3">
         <summary>Detalles de coincidencia</summary>
         <small>Posición {result.rank} · puntuación {result.score.toFixed(3)} · {result.score_explanation}</small>
       </details>
@@ -220,15 +222,15 @@ function ResultButton({ result, selected, onOpen }: { result: SearchResult; sele
 
 function TreeNodes({ nodes, selectedUri, onOpen }: { nodes: LogicalVfsNode[]; selectedUri: string | null; onOpen: (uri: string) => Promise<void> }) {
   return (
-    <ul className="explorer-tree">
+    <ul className="explorer-tree grid gap-2">
       {nodes.map((node) => node.type === "directory" ? (
         <li key={`directory-${node.name}`}>
           <details open><summary>{node.name}</summary><TreeNodes nodes={node.children} selectedUri={selectedUri} onOpen={onOpen} /></details>
         </li>
       ) : (
-        <li key={node.uri} className="explorer-tree-object">
+        <li key={node.uri} className="explorer-tree-object ml-4 border-l border-line pl-3">
           <button type="button" aria-current={node.uri === selectedUri ? "true" : undefined} onClick={() => void onOpen(node.uri)}>{node.name}</button>
-          <details className="technical-details"><summary>Detalles</summary><code>{node.uri}</code></details>
+          <details className="technical-details border-t border-line pt-3"><summary>Detalles</summary><code>{node.uri}</code></details>
         </li>
       ))}
     </ul>

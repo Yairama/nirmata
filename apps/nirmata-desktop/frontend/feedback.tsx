@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { appActions } from "./state.js";
 import { Icon } from "./icons.js";
+import { buttonStyles, cn } from "./ui-styles.js";
 
 type FeedbackAction = {
   label: string;
@@ -51,6 +52,7 @@ const errorCopy: Record<string, ErrorCopy> = {
   provider_transport_error: { kind: "error", title: "No se pudo conectar con la IA", detail: "Comprueba la conexión y vuelve a intentarlo." },
   provider_http_error: { kind: "error", title: "El proveedor rechazó la solicitud", detail: "Revisa la configuración o inténtalo de nuevo más tarde." },
   provider_response_error: { kind: "error", title: "La respuesta de IA no era válida", detail: "No se aplicó ningún cambio. Puedes volver a generar la respuesta." },
+  invalid_ai_proposal: { kind: "warning", title: "La propuesta de IA no pasó la validación", detail: "Ningún cambio se aplicó. Revisa el diagnóstico y vuelve a generar la propuesta." },
   ai_context_stale: { kind: "warning", title: "El contexto quedó desactualizado", detail: "La versión cambió. Actualiza el contexto antes de continuar." },
   invalid_lore_import: { kind: "warning", title: "No se pudo usar este material", detail: "El lote se conserva. Reemplaza la fuente indicada o elige otros archivos." },
   lore_import_not_found: { kind: "warning", title: "El lote ya no está disponible", detail: "Actualiza la lista de lotes o crea una importación nueva." },
@@ -86,11 +88,23 @@ function commandCode(value: unknown): string | null {
   return null;
 }
 
+function commandMessage(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || !("message" in value)) return null;
+  const message = String((value as { message: unknown }).message).replace(/\s+/g, " ").trim();
+  if (!message) return null;
+  return message.length <= 1_000 ? message : `${message.slice(0, 997)}...`;
+}
+
 export function commandErrorCopy(value: unknown): ErrorCopy {
   const code = commandCode(value);
-  return code && errorCopy[code]
-    ? errorCopy[code]
-    : { kind: "error", title: "No se pudo completar la acción", detail: "Tu trabajo se conserva. Vuelve a intentarlo o elige otra acción." };
+  if (!code || !errorCopy[code]) {
+    return { kind: "error", title: "No se pudo completar la acción", detail: "Tu trabajo se conserva. Vuelve a intentarlo o elige otra acción." };
+  }
+  const copy = errorCopy[code];
+  const message = commandMessage(value);
+  return message
+    ? { ...copy, detail: `${copy.detail} Detalle del sistema: ${message}` }
+    : copy;
 }
 
 export function showCommandError(value: unknown, action?: FeedbackAction) {
@@ -116,7 +130,13 @@ function aiPhaseLabel(phase: string): string {
   return labels[phase] ?? "esperando al proveedor";
 }
 
-export function aiTimeoutDetail(observation: AiFailureObservation): string {
+export function aiResponseErrorDetail(value: unknown, observation: AiFailureObservation): string {
+  const message = commandMessage(value);
+  const diagnostic = message ? ` Diagnóstico: ${message}` : "";
+  return `Etapa: ${aiPhaseLabel(observation.phase)}.${diagnostic} Ningún cambio se aplicó al canon.`;
+}
+
+export function aiTimeoutDetail(value: unknown, observation: AiFailureObservation): string {
   const elapsedSeconds = Math.max(1, Math.round((Date.now() - observation.startedAtMs) / 1_000));
   const activity = observation.receivedCharacters > 0
     ? `${observation.receivedCharacters.toLocaleString("es")} caracteres recibidos antes de detenerse`
@@ -124,7 +144,9 @@ export function aiTimeoutDetail(observation: AiFailureObservation): string {
   const uncertainty = observation.receivedCharacters > 0
     ? "La respuesta comenzó, pero quedó incompleta."
     : "Sin contenido no se puede distinguir entre razonamiento interno y un proveedor bloqueado.";
-  return `Actividad observable: ${elapsedSeconds} s ${aiPhaseLabel(observation.phase)}; ${activity}. ${uncertainty} El canon no cambió. Puedes volver a intentarlo.`;
+  const message = commandMessage(value);
+  const diagnostic = message ? ` Detalle del sistema: ${message}` : "";
+  return `Actividad observable: ${elapsedSeconds} s ${aiPhaseLabel(observation.phase)}; ${activity}. ${uncertainty} El canon no cambió. Puedes volver a intentarlo.${diagnostic}`;
 }
 
 export function showAiCommandError(
@@ -132,7 +154,21 @@ export function showAiCommandError(
   observation: AiFailureObservation,
   action?: FeedbackAction,
 ) {
-  if (commandCode(value) !== "provider_timeout") {
+  const code = commandCode(value);
+  if (code === "provider_response_error" || code === "invalid_ai_proposal") {
+    const fallback = commandErrorCopy(value);
+    emit({
+      presentation: "banner",
+      ...fallback,
+      title: observation.phase === "calling_critic"
+        ? "La revisión de IA no era válida"
+        : fallback.title,
+      detail: aiResponseErrorDetail(value, observation),
+      action,
+    });
+    return;
+  }
+  if (code !== "provider_timeout") {
     showCommandError(value, action);
     return;
   }
@@ -140,7 +176,7 @@ export function showAiCommandError(
     presentation: "banner",
     kind: "warning",
     title: "La IA tardó demasiado",
-    detail: aiTimeoutDetail(observation),
+    detail: aiTimeoutDetail(value, observation),
     action,
   });
 }
@@ -175,18 +211,26 @@ export function FeedbackHost() {
   if (!item) return null;
   return createPortal(
     <aside
-      className={`global-feedback ${item.presentation} ${item.kind}`}
+      className={cn(
+        "global-feedback pointer-events-auto fixed right-4 top-20 z-[120] grid w-[min(27rem,calc(100vw-2rem))] grid-cols-[1fr_auto] gap-4 rounded-2xl border border-line bg-raised p-4 text-sm shadow-overlay max-mobile:bottom-3 max-mobile:left-3 max-mobile:right-3 max-mobile:top-auto max-mobile:w-auto",
+        item.presentation,
+        item.kind === "warning" && "warning border-warning",
+        item.kind === "error" && "error border-danger",
+        item.kind === "info" && "info border-info",
+        item.kind === "success" && "success border-success",
+      )}
       role={item.presentation === "toast" ? "status" : "alert"}
       aria-live={item.presentation === "toast" ? "polite" : "assertive"}
     >
-      <div>
+      <div className="grid gap-1">
         <strong>{item.title}</strong>
         <p>{item.detail}</p>
       </div>
-      <div className="global-feedback-actions">
+      <div className="global-feedback-actions flex items-start gap-2">
         {item.action && (
           <button
             type="button"
+            className={buttonStyles()}
             onClick={() => {
               const result = item.action?.run();
               if (result instanceof Promise) void result.catch((error) => showCommandError(error, item.action));
@@ -195,7 +239,7 @@ export function FeedbackHost() {
             {item.action.label}
           </button>
         )}
-        <button type="button" className="icon-button" onClick={clearFeedback} aria-label="Cerrar aviso" title="Cerrar aviso"><Icon name="x" /></button>
+        <button type="button" className={buttonStyles({ variant: "icon" })} onClick={clearFeedback} aria-label="Cerrar aviso" title="Cerrar aviso"><Icon name="x" /></button>
       </div>
     </aside>,
     document.body,

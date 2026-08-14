@@ -31,6 +31,7 @@ import type {
 } from "./types.js";
 import { selectUri, selectUriInScope } from "./workspace.js";
 import { Icon } from "./icons.js";
+import { buttonStyles, cn, noticeStyles } from "./ui-styles.js";
 
 export type AssistantMode = "query" | "propose" | "deep_impact" | "audit";
 export type ProposalTemplate = "faction" | "city" | "character" | "conflict" | "chronology" | "consequences";
@@ -644,7 +645,7 @@ export function AssistantWorkspace({ active, intent, onClose, onOpenSettings, on
   return (
     <Dialog.Root open={active} onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="assistant-sheet-backdrop" />
+        <Dialog.Overlay className="assistant-sheet-backdrop fixed inset-0 top-16 z-40 bg-overlay max-mobile:top-0" />
         <Dialog.Content
           asChild
           aria-describedby={undefined}
@@ -652,21 +653,21 @@ export function AssistantWorkspace({ active, intent, onClose, onOpenSettings, on
             if ((event.target as HTMLElement).closest(".global-feedback")) event.preventDefault();
           }}
         >
-      <section id="assistant-panel" className="assistant-panel" aria-labelledby="assistant-title" aria-modal="true">
-        <header className="assistant-shell-header">
-          <button type="button" className="icon-button" aria-label="Volver en el asistente" title="Volver" disabled={!canGoBack} onClick={goBack}><Icon name="arrow-left" /></button>
-          <div className="assistant-heading"><p className="panel-eyebrow">{queryMode ? "Solo lectura" : proposalMode ? "Cambios revisables" : "Análisis avanzado"}</p><Dialog.Title asChild><h2 id="assistant-title">Asistente</h2></Dialog.Title></div>
-          <Dialog.Close asChild><button type="button" className="icon-button assistant-sheet-close" aria-label="Cerrar asistente" title="Cerrar asistente"><Icon name="x" /></button></Dialog.Close>
+      <section id="assistant-panel" className="assistant-panel fixed bottom-0 right-0 top-16 z-50 flex min-h-0 w-[clamp(44rem,58vw,64rem)] flex-col border-l border-line bg-surface shadow-overlay outline-none max-workspace:w-[min(48rem,calc(100vw-4.5rem))] max-mobile:inset-0 max-mobile:w-full max-mobile:border-l-0" aria-labelledby="assistant-title" aria-modal="true">
+        <header className="assistant-shell-header grid min-h-16 shrink-0 grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-line px-5 py-3 max-mobile:min-h-14 max-mobile:px-3 max-mobile:py-2">
+          <button type="button" className={buttonStyles({ variant: "icon" })} aria-label="Volver en el asistente" title="Volver" disabled={!canGoBack} onClick={goBack}><Icon name="arrow-left" /></button>
+          <div className="assistant-heading flex items-start justify-between gap-4"><p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">{queryMode ? "Solo lectura" : proposalMode ? "Cambios revisables" : "Análisis avanzado"}</p><Dialog.Title asChild><h2 id="assistant-title" className="text-2xl">Asistente</h2></Dialog.Title></div>
+          <Dialog.Close asChild><button type="button" className={buttonStyles({ variant: "icon" })} aria-label="Cerrar asistente" title="Cerrar asistente"><Icon name="x" /></button></Dialog.Close>
         </header>
-        <div className="assistant-scroll-region">
-        <div className="assistant-task-tabs" role="tablist" aria-label="Tarea del asistente">
-          <button type="button" role="tab" aria-selected={queryMode} disabled={running} onClick={() => updateMode("query")}>Preguntar</button>
-          <button type="button" role="tab" aria-selected={proposalMode} disabled={running || Boolean(session?.read_only)} onClick={() => startProposal()}>Proponer un cambio</button>
+        <div className="assistant-scroll-region min-h-0 flex-1 overflow-y-auto px-5 py-5 [&>*+*]:mt-4 lg:px-8 max-mobile:px-4 max-mobile:py-4">
+        <div className="assistant-task-tabs grid grid-cols-2 gap-1 rounded-xl bg-subtle p-1" role="tablist" aria-label="Tarea del asistente">
+          <button type="button" className="border-0 bg-transparent text-ink aria-selected:bg-raised aria-selected:text-accent aria-selected:shadow-sm max-compact:px-2 max-compact:text-xs" role="tab" aria-selected={queryMode} disabled={running} onClick={() => updateMode("query")}>Preguntar</button>
+          <button type="button" className="border-0 bg-transparent text-ink aria-selected:bg-raised aria-selected:text-accent aria-selected:shadow-sm max-compact:px-2 max-compact:text-xs" role="tab" aria-selected={proposalMode} disabled={running || Boolean(session?.read_only)} onClick={() => startProposal()}>Proponer un cambio</button>
         </div>
-        <p id="assistant-context" className="assistant-context">{contextLabel}</p>
-        {queryMode && <details className="assistant-history">
+        <p id="assistant-context" className="assistant-context border-l-2 border-line-strong pl-3 text-sm text-muted">{contextLabel}</p>
+        {queryMode && <details>
           <summary>Historial de conversaciones</summary>
-          <div className="assistant-conversations">
+          <div className="assistant-conversations mt-3 grid gap-3 rounded-xl border border-line bg-canvas p-4">
             <label>Conversación
             <select
               id="assistant-conversation-select"
@@ -677,34 +678,34 @@ export function AssistantWorkspace({ active, intent, onClose, onOpenSettings, on
               {workspace.conversations.map((conversation) => <option key={conversation.id} value={conversation.id}>{conversation.title}</option>)}
             </select>
             </label>
-            <div className="pending-actions">
-              <button type="button" className="secondary" disabled={running} onClick={newConversation}>Nueva</button>
-              <button type="button" className="ghost" disabled={running || (workspace.conversations.length === 1 && (activeConversation?.turns.length ?? 0) === 0)} onClick={deleteConversation}>{workspace.deleteArmed ? "Confirmar eliminación" : "Eliminar"}</button>
+            <div className="pending-actions flex flex-wrap items-center gap-2">
+              <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={running} onClick={newConversation}>Nueva</button>
+              <button type="button" className={buttonStyles({ variant: "ghost" })} disabled={running || (workspace.conversations.length === 1 && (activeConversation?.turns.length ?? 0) === 0)} onClick={deleteConversation}>{workspace.deleteArmed ? "Confirmar eliminación" : "Eliminar"}</button>
             </div>
             <p>Se guarda solo en este equipo y no forma parte del canon.</p>
           </div>
         </details>}
-        {composing && !provider.isPending && !providerReady && <section className="notice warning assistant-provider-required">
-          <h4>Configura la IA una sola vez</h4>
+        {composing && !provider.isPending && !providerReady && <section className={noticeStyles({ tone: "warning" })}>
+          <h4 className="font-semibold">Configura la IA una sola vez</h4>
           <p>{provider.data?.message ?? "Falta completar la conexión con Microsoft Foundry."}</p>
-          <button type="button" className="secondary" onClick={onOpenSettings}>Abrir Ajustes de IA</button>
+          <button type="button" className={buttonStyles({ variant: "secondary" })} onClick={onOpenSettings}>Abrir Ajustes de IA</button>
         </section>}
-        {composing && (queryMode || proposalMode) && <details className="assistant-advanced-modes">
+        {composing && (queryMode || proposalMode) && <details className="assistant-advanced-modes border-t border-line pt-3">
             <summary>Más opciones</summary>
-            <div className="assistant-advanced-options">
-              <button type="button" className={`assistant-profile${workspace.mode === "deep_impact" ? "" : " secondary"}`} aria-pressed={workspace.mode === "deep_impact"} disabled={running || Boolean(session?.read_only)} onClick={() => updateMode("deep_impact")}>
-                <strong>Revisión profunda</strong><span>Especialistas de solo lectura analizan el impacto. La síntesis prepara una propuesta, pero nunca la aplica.</span>
+            <div className="assistant-advanced-options mt-3 grid gap-3 rounded-xl border border-line bg-canvas p-4">
+              <button type="button" className={cn("assistant-profile grid justify-items-start gap-1 text-left aria-pressed:border-accent aria-pressed:bg-accent-soft aria-pressed:text-accent", workspace.mode !== "deep_impact" && buttonStyles({ variant: "secondary" }))} aria-pressed={workspace.mode === "deep_impact"} disabled={running || Boolean(session?.read_only)} onClick={() => updateMode("deep_impact")}>
+                <strong>Revisión profunda</strong><span className="font-normal text-muted">Especialistas de solo lectura analizan el impacto. La síntesis prepara una propuesta, pero nunca la aplica.</span>
               </button>
-              <button type="button" className={`assistant-profile${workspace.mode === "audit" ? "" : " secondary"}`} aria-pressed={workspace.mode === "audit"} disabled={running} onClick={() => updateMode("audit")}>
-                <strong>Auditoría del canon</strong><span>Busca problemas y presenta hallazgos orientativos. Es solo lectura y no crea propuestas.</span>
+              <button type="button" className={cn("assistant-profile grid justify-items-start gap-1 text-left aria-pressed:border-accent aria-pressed:bg-accent-soft aria-pressed:text-accent", workspace.mode !== "audit" && buttonStyles({ variant: "secondary" }))} aria-pressed={workspace.mode === "audit"} disabled={running} onClick={() => updateMode("audit")}>
+                <strong>Auditoría del canon</strong><span className="font-normal text-muted">Busca problemas y presenta hallazgos orientativos. Es solo lectura y no crea propuestas.</span>
               </button>
             </div>
           </details>}
-        {composing && proposalMode && !templatesOpen && <button type="button" className="secondary assistant-template-open" disabled={running} onClick={() => setTemplatesOpen(true)}>Usar una plantilla</button>}
+        {composing && proposalMode && !templatesOpen && <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={running} onClick={() => setTemplatesOpen(true)}>Usar una plantilla</button>}
         {composing && proposalMode && templatesOpen && (
-          <section id="assistant-template-catalog" className="assistant-template-catalog" aria-labelledby="assistant-template-title">
-            <div className="assistant-template-heading">
-              <div><p className="panel-eyebrow">Expansión guiada</p><h4 id="assistant-template-title">Empezar desde una plantilla</h4></div>
+          <section id="assistant-template-catalog" className="assistant-template-catalog grid gap-4" aria-labelledby="assistant-template-title">
+            <div className="assistant-template-heading flex items-end justify-between gap-4">
+              <div><p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Expansión guiada</p><h4 id="assistant-template-title">Empezar desde una plantilla</h4></div>
               <label>Escala
                 <select name="assistant-template-scale" value={templateScale} onChange={(event) => setTemplateScale(event.currentTarget.value as ProposalScale)}>
                   <option value="small">Pequeña · máximo 3 operaciones</option>
@@ -712,25 +713,25 @@ export function AssistantWorkspace({ active, intent, onClose, onOpenSettings, on
                 </select>
               </label>
             </div>
-            <p className="muted">Preparar el brief es local y no llama al proveedor. Continuar usa la propuesta y revisión habituales.</p>
-            <div className="assistant-template-grid">
-              {templates.map((template) => <button key={template.id} type="button" className="assistant-template-card secondary" data-template={template.id} disabled={running || Boolean(session?.read_only)} onClick={() => void prepareTemplate(template.id)}><strong>{template.label}</strong><span>{template.detail}</span></button>)}
+            <p className="muted text-muted">Preparar el brief es local y no llama al proveedor. Continuar usa la propuesta y revisión habituales.</p>
+            <div className="assistant-template-grid grid grid-cols-2 gap-2 max-mobile:grid-cols-1 xl:grid-cols-3">
+              {templates.map((template) => <button key={template.id} type="button" className={cn("assistant-template-card min-h-28 flex-col items-start justify-start gap-1 text-left", buttonStyles({ variant: "secondary" }))} data-template={template.id} disabled={running || Boolean(session?.read_only)} onClick={() => void prepareTemplate(template.id)}><strong>{template.label}</strong><span className="font-normal text-muted">{template.detail}</span></button>)}
             </div>
-            <button type="button" className="ghost" onClick={() => setTemplatesOpen(false)}>Volver</button>
+            <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => setTemplatesOpen(false)}>Volver</button>
           </section>
         )}
-        {composing && !templatesOpen && <form className="assistant-form" onSubmit={(event) => void submitAssistant(event)}>
-          <label>{queryMode ? "Tu pregunta" : proposalMode ? "Cambio que quieres preparar" : "Qué quieres analizar"}
+        {composing && !templatesOpen && <form className="assistant-form grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 max-mobile:grid-cols-1" onSubmit={(event) => void submitAssistant(event)}>
+          <label className="min-w-0">{queryMode ? "Tu pregunta" : proposalMode ? "Cambio que quieres preparar" : "Qué quieres analizar"}
             <textarea id="assistant-input" ref={inputRef} name="assistant-request" rows={3} autoComplete="off" placeholder={queryMode ? "Ej.: ¿Qué sabemos de esta ciudad?" : proposalMode ? "Ej.: Añade una tensión política a esta ciudad." : "Describe el análisis que necesitas."} value={workspace.request} disabled={running} onChange={(event) => dispatch({ type: "patch", value: { request: event.currentTarget.value } })} />
           </label>
-          <div className="pending-actions">
+          <div className="pending-actions flex flex-wrap items-center gap-2 max-mobile:justify-start">
             <button id="assistant-submit" type="submit" disabled={running || !providerReady || writeBlocked || !workspace.request.trim()}>{submitLabel}</button>
-            {running && <button type="button" className="secondary" onClick={() => { if (workspace.activeRequestId) void invoke("cancel_ai_request", { requestId: workspace.activeRequestId }); }}>Cancelar</button>}
+            {running && <button type="button" className={buttonStyles({ variant: "secondary" })} onClick={() => { if (workspace.activeRequestId) void invoke("cancel_ai_request", { requestId: workspace.activeRequestId }); }}>Cancelar</button>}
           </div>
         </form>}
-        {composing && queryMode && (activeConversation?.turns.length ?? 0) === 0 && !workspace.request && <section className="assistant-example"><p><strong>Ejemplo:</strong> ¿Qué tensiones ya aparecen en el canon?</p><button type="button" className="ghost" onClick={() => { dispatch({ type: "patch", value: { request: "¿Qué tensiones ya aparecen en el canon?" } }); inputRef.current?.focus(); }}>Usar ejemplo</button></section>}
-        {workspace.progress && <div className="assistant-progress" aria-live="polite">{workspace.progress}</div>}
-        <div ref={transcriptRef} className="assistant-transcript" aria-live="polite">
+        {composing && queryMode && (activeConversation?.turns.length ?? 0) === 0 && !workspace.request && <section className="assistant-example flex items-center justify-between gap-4 border-t border-line pt-4 text-sm text-muted"><p><strong>Ejemplo:</strong> ¿Qué tensiones ya aparecen en el canon?</p><button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => { dispatch({ type: "patch", value: { request: "¿Qué tensiones ya aparecen en el canon?" } }); inputRef.current?.focus(); }}>Usar ejemplo</button></section>}
+        {workspace.progress && <div className="assistant-progress rounded-lg bg-info-soft px-3 py-2 text-sm text-info" aria-live="polite">{workspace.progress}</div>}
+        <div ref={transcriptRef} className="assistant-transcript grid gap-3" aria-live="polite">
           {workspace.view === "conversation" && queryMode && <ConversationView
             conversation={activeConversation}
             streamedText={running && workspace.mode === "query" ? workspace.streamedText : ""}
@@ -751,7 +752,7 @@ export function AssistantWorkspace({ active, intent, onClose, onOpenSettings, on
           {workspace.view === "deep_plan" && workspace.deepPlan && <DeepPlanView key={`${workspace.deepPlan.plan.mode}:${workspace.deepPlan.plan.request}`} prepared={workspace.deepPlan} running={running} onExecute={executeDeepReview} />}
           {workspace.view === "deep_run" && workspace.activeDeepRun && <DeepRunView run={workspace.activeDeepRun} readOnly={Boolean(session?.read_only)} />}
         </div>
-        {workspace.view === "run" && workspace.activeRun?.reviewKey && !workspace.activeRun.intentBrief && <div className="assistant-result-actions"><button type="button" onClick={onOpenReviews}>Abrir en Cambios</button><button type="button" className="secondary" onClick={() => startProposal()}>Preparar otra propuesta</button></div>}
+        {workspace.view === "run" && workspace.activeRun?.reviewKey && !workspace.activeRun.intentBrief && <div className="assistant-result-actions sticky bottom-0 z-10 flex flex-wrap gap-2 border-t border-line bg-surface py-4"><button type="button" onClick={onOpenReviews}>Abrir en Cambios</button><button type="button" className={buttonStyles({ variant: "secondary" })} onClick={() => startProposal()}>Preparar otra propuesta</button></div>}
         </div>
       </section>
         </Dialog.Content>
@@ -771,9 +772,9 @@ function ConversationView({ conversation, streamedText, confirmingTurnId, readOn
   onConvert: (turn: AssistantConversationTurn) => void;
 }) {
   if (!conversation || conversation.turns.length === 0) {
-    return streamedText ? <article className="assistant-message"><strong>Recibiendo respuesta</strong><pre>{streamedText}</pre></article> : null;
+    return streamedText ? <article className="assistant-message grid gap-3 rounded-2xl border border-line bg-raised p-5"><strong>Recibiendo respuesta</strong><pre>{streamedText}</pre></article> : null;
   }
-  return <>{conversation.turns.map((turn) => <QueryTurn key={turn.id} turn={turn} confirming={confirmingTurnId === turn.id} readOnly={readOnly} onOpenCitation={onOpenCitation} onConfirm={() => onConfirm(turn.id)} onCancelConfirm={onCancelConfirm} onConvert={() => onConvert(turn)} />)}{streamedText && <article className="assistant-message"><strong>Stream estructurado en curso</strong><pre>{streamedText}</pre></article>}</>;
+  return <>{conversation.turns.map((turn) => <QueryTurn key={turn.id} turn={turn} confirming={confirmingTurnId === turn.id} readOnly={readOnly} onOpenCitation={onOpenCitation} onConfirm={() => onConfirm(turn.id)} onCancelConfirm={onCancelConfirm} onConvert={() => onConvert(turn)} />)}{streamedText && <article className="assistant-message grid gap-3 rounded-2xl border border-line bg-raised p-5"><strong>Stream estructurado en curso</strong><pre>{streamedText}</pre></article>}</>;
 }
 
 function QueryTurn({ turn, confirming, readOnly, onOpenCitation, onConfirm, onCancelConfirm, onConvert }: {
@@ -787,9 +788,9 @@ function QueryTurn({ turn, confirming, readOnly, onOpenCitation, onConfirm, onCa
 }) {
   const convertRef = useRef<HTMLButtonElement>(null);
   return <>
-    <article className="assistant-message user-message"><div className="badge-row"><strong>Tú</strong><span className="muted">{turn.origin.contextLabel} · {new Date(turn.createdAtMs).toLocaleString()}</span></div><p>{turn.request}</p></article>
-    {turn.response.items.map((item) => <article className="assistant-message" key={item.itemId}><div className="badge-row"><strong>{humanize(item.classification)}</strong></div><p>{item.markdown}</p>{item.citations.length > 0 && <div className="assistant-sources">{Array.from(new Map(item.citations.map((citation) => [citation.source.uri, citation])).values()).map((citation) => <button key={citation.source.uri} type="button" className="ghost" title={citation.quoteMd} onClick={() => onOpenCitation(citation.source.uri, turn.response.snapshot.readScope)}>{citation.source.snippet || "Abrir fuente"}</button>)}</div>}</article>)}
-    {turn.response.proposalAction?.action === "start_proposal" && <article className="assistant-message proposal-action"><p>Esta respuesta puede convertirse en una propuesta revisable. El mundo no cambiará automáticamente.</p>{!confirming ? <button ref={convertRef} type="button" className="secondary" disabled={readOnly} title={readOnly ? "Vuelve a la versión actual para proponer cambios." : ""} onClick={onConfirm}>Convertir en propuesta</button> : <div className="proposal-confirmation"><h4>Confirmar paso a propuesta</h4><blockquote>{turn.response.proposalAction.request}</blockquote><p>Contexto: {turn.origin.contextLabel} · versión actual · {turn.origin.sourceCount} fuentes heredadas</p><p>Esto preparará cambios revisables. No modifica el mundo hasta usar «Aplicar al mundo».</p><div className="pending-actions"><button type="button" className="ghost" autoFocus onClick={() => { onCancelConfirm(); window.setTimeout(() => convertRef.current?.focus()); }}>Cancelar</button><button type="button" className="secondary" onClick={onConvert}>Continuar a Proponer cambios</button></div></div>}</article>}
+    <article className="assistant-message user-message ml-[8%] grid gap-3 rounded-2xl border border-accent bg-accent-soft p-5"><div className="badge-row flex flex-wrap items-center gap-1.5"><strong>Tú</strong><span className="muted text-muted">{turn.origin.contextLabel} · {new Date(turn.createdAtMs).toLocaleString()}</span></div><p>{turn.request}</p></article>
+    {turn.response.items.map((item) => <article className="assistant-message grid gap-3 rounded-2xl border border-line bg-raised p-5" key={item.itemId}><div className="badge-row flex flex-wrap items-center gap-1.5"><strong>{humanize(item.classification)}</strong></div><p>{item.markdown}</p>{item.citations.length > 0 && <div className="assistant-sources flex flex-wrap gap-2">{Array.from(new Map(item.citations.map((citation) => [citation.source.uri, citation])).values()).map((citation) => <button key={citation.source.uri} type="button" className={buttonStyles({ variant: "ghost" })} title={citation.quoteMd} onClick={() => onOpenCitation(citation.source.uri, turn.response.snapshot.readScope)}>{citation.source.snippet || "Abrir fuente"}</button>)}</div>}</article>)}
+    {turn.response.proposalAction?.action === "start_proposal" && <article className="assistant-message grid gap-3 rounded-2xl border border-line bg-raised p-5"><p>Esta respuesta puede convertirse en una propuesta revisable. El mundo no cambiará automáticamente.</p>{!confirming ? <button ref={convertRef} type="button" className={buttonStyles({ variant: "secondary" })} disabled={readOnly} title={readOnly ? "Vuelve a la versión actual para proponer cambios." : ""} onClick={onConfirm}>Convertir en propuesta</button> : <div className="proposal-confirmation grid gap-3 rounded-xl bg-warning-soft p-4"><h4>Confirmar paso a propuesta</h4><blockquote>{turn.response.proposalAction.request}</blockquote><p>Contexto: {turn.origin.contextLabel} · versión actual · {turn.origin.sourceCount} fuentes heredadas</p><p>Esto preparará cambios revisables. No modifica el mundo hasta usar «Aplicar al mundo».</p><div className="pending-actions flex flex-wrap items-center gap-2"><button type="button" className={buttonStyles({ variant: "ghost" })} autoFocus onClick={() => { onCancelConfirm(); window.setTimeout(() => convertRef.current?.focus()); }}>Cancelar</button><button type="button" className={buttonStyles({ variant: "secondary" })} onClick={onConvert}>Continuar a Proponer cambios</button></div></div>}</article>}
   </>;
 }
 
@@ -800,7 +801,7 @@ function RunView({ run, providerReady, running, writeAllowed, onContinue }: {
   writeAllowed: boolean;
   onContinue: (run: AiRunSnapshot, edited: { objective: string; scope: string; entities: SearchResult[]; restrictions: string[]; scale?: ProposalScale }) => Promise<void>;
 }) {
-  return <article className="assistant-message proposal"><h4>{run.intentBrief?.objective ?? run.draft?.objective ?? "Propuesta preparada"}</h4>{run.intentBrief ? <IntentBriefForm key={run.id} run={run} providerReady={providerReady} running={running} writeAllowed={writeAllowed} onContinue={onContinue} /> : <p>La propuesta está fuera del canon. Revísala en Cambios antes de decidir si la aplicas.</p>}</article>;
+  return <article className="assistant-message proposal grid gap-3 rounded-2xl border border-perspective bg-raised p-5"><h4>{run.intentBrief?.objective ?? run.draft?.objective ?? "Propuesta preparada"}</h4>{run.intentBrief ? <IntentBriefForm key={run.id} run={run} providerReady={providerReady} running={running} writeAllowed={writeAllowed} onContinue={onContinue} /> : <p>La propuesta está fuera del canon. Revísala en Cambios antes de decidir si la aplicas.</p>}</article>;
 }
 
 function IntentBriefForm({ run, providerReady, running, writeAllowed, onContinue }: {
@@ -819,21 +820,21 @@ function IntentBriefForm({ run, providerReady, running, writeAllowed, onContinue
   const [scale, setScale] = useState<ProposalScale>(brief.scale ?? "small");
   const chooseRef = useRef<HTMLButtonElement>(null);
   const capturedUris = [...run.context.context.canon, ...run.context.context.perspectives, ...run.context.context.desires, ...run.context.context.obligations, ...run.context.context.searchEvidence].map((entry) => entry.uri);
-  return <form className="intent-brief-form" onSubmit={(event) => { event.preventDefault(); void onContinue(run, { objective, scope, entities, restrictions: restrictions.split("\n").map((value) => value.trim()).filter(Boolean), scale: brief.template ? scale : undefined }); }}>
-    <p className="read-only-callout">{brief.authority}</p><p className="muted">Por qué se prepara este brief: {brief.reason}</p>
-    <label>Objetivo<textarea name="intent-objective" rows={2} value={objective} onChange={(event) => setObjective(event.currentTarget.value)} /></label>
-    <label>Alcance<textarea name="intent-scope" rows={2} value={scope} onChange={(event) => setScope(event.currentTarget.value)} /></label>
-    <fieldset><legend>Entidades por nombre</legend><div className="intent-brief-entities">{entities.length === 0 && <p className="muted">Sin entidades concretas; el mundo permanece como fuente de contexto.</p>}{entities.map((entity) => <button key={entity.uri} type="button" className="ghost" onClick={() => setEntities((current) => current.filter((item) => item.uri !== entity.uri))}>{entity.snippet.replace(/[\[\]]/gu, "")} · quitar</button>)}</div><button ref={chooseRef} type="button" className="secondary" onClick={() => requestObjectPicker({ title: "Entidades del contexto capturado", kinds: ["entity"], multiple: true, allowedUris: capturedUris, returnFocus: chooseRef.current, apply: setEntities })}>Elegir entidades por nombre</button></fieldset>
-    <label>Restricciones, una por línea<textarea name="intent-restrictions" rows={4} value={restrictions} onChange={(event) => setRestrictions(event.currentTarget.value)} /></label>
+  return <form className="intent-brief-form grid gap-5" onSubmit={(event) => { event.preventDefault(); void onContinue(run, { objective, scope, entities, restrictions: restrictions.split("\n").map((value) => value.trim()).filter(Boolean), scale: brief.template ? scale : undefined }); }}>
+    <p className="read-only-callout border-l-2 border-accent bg-accent-soft px-3 py-2 text-sm font-semibold">{brief.authority}</p><p className="muted text-muted">Por qué se prepara este brief: {brief.reason}</p>
+    <label>Objetivo<textarea className="min-h-24" name="intent-objective" rows={2} value={objective} onChange={(event) => setObjective(event.currentTarget.value)} /></label>
+    <label>Alcance<textarea className="min-h-24" name="intent-scope" rows={2} value={scope} onChange={(event) => setScope(event.currentTarget.value)} /></label>
+    <fieldset className="rounded-xl border border-line bg-canvas p-4"><legend>Entidades por nombre</legend><div className="intent-brief-entities mb-3 flex flex-wrap gap-2">{entities.length === 0 && <p className="muted text-muted">Sin entidades concretas; el mundo permanece como fuente de contexto.</p>}{entities.map((entity) => <button key={entity.uri} type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => setEntities((current) => current.filter((item) => item.uri !== entity.uri))}>{entity.snippet.replace(/[\[\]]/gu, "")} · quitar</button>)}</div><button ref={chooseRef} type="button" className={buttonStyles({ variant: "secondary" })} onClick={() => requestObjectPicker({ title: "Entidades del contexto capturado", kinds: ["entity"], multiple: true, allowedUris: capturedUris, returnFocus: chooseRef.current, apply: setEntities })}>Elegir entidades por nombre</button></fieldset>
+    <label>Restricciones, una por línea<textarea className="min-h-24" name="intent-restrictions" rows={4} value={restrictions} onChange={(event) => setRestrictions(event.currentTarget.value)} /></label>
     {brief.template && <label>Escala<select name="intent-scale" value={scale} onChange={(event) => setScale(event.currentTarget.value as ProposalScale)}><option value="small">Pequeña · máximo 3 operaciones</option><option value="medium">Mediana · máximo 6 operaciones</option></select></label>}
-    <button type="submit" className="secondary" disabled={!providerReady || running || !writeAllowed} title={!writeAllowed ? "La versión observada cambió. Prepara de nuevo el brief." : providerReady ? "" : "Configura y verifica la IA para continuar. El brief ya está guardado."}>Continuar al proveedor</button>
+    <button type="submit" className={buttonStyles({ variant: "secondary" })} disabled={!providerReady || running || !writeAllowed} title={!writeAllowed ? "La versión observada cambió. Prepara de nuevo el brief." : providerReady ? "" : "Configura y verifica la IA para continuar. El brief ya está guardado."}>Continuar al proveedor</button>
   </form>;
 }
 
 function DeepPlanView({ prepared, running, onExecute }: { prepared: DeepPlanState; running: boolean; onExecute: (prepared: DeepPlanState, roles: SpecialistRole[]) => Promise<void> }) {
   const [roles, setRoles] = useState(prepared.plan.roles);
   const plan = prepared.plan;
-  return <article className="assistant-message proposal deep-review"><h4>{plan.mode === "audit" ? "Confirmar auditoría del canon" : "Confirmar revisión profunda"}</h4><p className={plan.mode === "audit" ? "read-only-callout" : "muted"}>{plan.mode === "audit" ? "Resultado orientativo · solo lectura. No se crearán operaciones ni propuestas." : "Los especialistas solo leen el canon. La síntesis irá a Cambios y requerirá «Aplicar al mundo»."}</p><p>{plan.reason}</p><p className="muted">Hasta {plan.budget.maxSpecialists} especialistas · {Math.round(plan.budget.specialistTimeoutMs / 1000)} s por rol · {plan.budget.maxReadToolCalls} lecturas de contexto por rol</p><details className="technical-disclosure"><summary>Detalles técnicos del presupuesto</summary><p>{plan.budget.maxSpecialistCalls} llamadas de especialistas · {plan.budget.maxSynthesisCalls} de síntesis · {plan.budget.specialistMaxOutputTokens} tokens por informe · {plan.budget.maxNestedDelegations} delegaciones</p></details><fieldset><legend>Roles confirmados por el usuario</legend>{plan.roles.map((role) => <label className="deep-role" key={role}><input type="checkbox" value={role} checked={roles.includes(role)} onChange={(event) => setRoles((current) => event.currentTarget.checked ? [...current, role] : current.filter((item) => item !== role))} />{specialistRoleLabel(role)}</label>)}</fieldset><button type="button" className="secondary" disabled={running} onClick={() => void onExecute(prepared, roles)}>Confirmar roles e iniciar</button></article>;
+  return <article className="assistant-message proposal deep-review grid gap-3 rounded-2xl border border-perspective border-l-4 border-l-warning bg-raised p-5"><h4>{plan.mode === "audit" ? "Confirmar auditoría del canon" : "Confirmar revisión profunda"}</h4><p className={cn(plan.mode === "audit" ? "read-only-callout border-l-2 border-accent bg-accent-soft px-3 py-2 text-sm font-semibold" : "muted text-muted")}>{plan.mode === "audit" ? "Resultado orientativo · solo lectura. No se crearán operaciones ni propuestas." : "Los especialistas solo leen el canon. La síntesis irá a Cambios y requerirá «Aplicar al mundo»."}</p><p>{plan.reason}</p><p className="muted text-muted">Hasta {plan.budget.maxSpecialists} especialistas · {Math.round(plan.budget.specialistTimeoutMs / 1000)} s por rol · {plan.budget.maxReadToolCalls} lecturas de contexto por rol</p><details><summary>Detalles técnicos del presupuesto</summary><p>{plan.budget.maxSpecialistCalls} llamadas de especialistas · {plan.budget.maxSynthesisCalls} de síntesis · {plan.budget.specialistMaxOutputTokens} tokens por informe · {plan.budget.maxNestedDelegations} delegaciones</p></details><fieldset className="mb-3 flex flex-wrap gap-2.5 rounded-lg border border-line p-3"><legend>Roles confirmados por el usuario</legend>{plan.roles.map((role) => <label className="deep-role flex grid-cols-none items-center gap-2" key={role}><input className="size-4 min-h-0 w-4" type="checkbox" value={role} checked={roles.includes(role)} onChange={(event) => setRoles((current) => event.currentTarget.checked ? [...current, role] : current.filter((item) => item !== role))} />{specialistRoleLabel(role)}</label>)}</fieldset><button type="button" className={buttonStyles({ variant: "secondary" })} disabled={running} onClick={() => void onExecute(prepared, roles)}>Confirmar roles e iniciar</button></article>;
 }
 
 function DeepRunView({ run, readOnly }: { run: DeepReviewRun; readOnly: boolean }) {
@@ -845,10 +846,10 @@ function DeepRunView({ run, readOnly }: { run: DeepReviewRun; readOnly: boolean 
   }
   const findingCount = run.auditResult ? Object.values(run.auditResult.validationReport).reduce((total, findings) => total + findings.length, 0) : 0;
   const cards: ReactNode[] = [];
-  cards.push(<article className="assistant-message proposal deep-review" key="summary"><h4>{run.mode === "audit" ? "Auditoría del canon" : "Revisión profunda"}</h4><p>Estado: {humanize(run.status)} · versión analizada: {readOnly ? "versión anterior" : "versión actual"}</p><p className={run.mode === "audit" ? "read-only-callout" : "muted"}>{run.mode === "audit" ? "Resultado orientativo · solo lectura. No se creó ninguna propuesta." : "La síntesis no modifica el mundo: debe revisarse en Cambios y aplicarse explícitamente."}</p>{run.error && <p className="assistant-issue conflict">La revisión no pudo completarse. El canon no cambió y puedes volver a intentarlo.</p>}</article>);
-  for (const specialist of run.specialists) cards.push(<article className="assistant-message specialist-report" key={specialist.role}><h4>{specialistRoleLabel(specialist.role)} · {humanize(specialist.status)}</h4>{specialist.error && <p className="assistant-issue warning">Este análisis especializado no pudo completarse. Los demás resultados siguen disponibles.</p>}{specialist.report?.findings.map((finding) => <div key={finding.findingId}><p>{finding.summary.markdown}</p>{finding.evidence.map((evidence) => <button key={evidence.sourceUri} type="button" className="ghost" title={evidence.excerptMd} onClick={() => void selectUri(evidence.sourceUri)}>{evidence.sourceUri}</button>)}</div>)}</article>);
-  for (const [key, alternatives] of positions) if (alternatives.size > 1) cards.push(<article className="assistant-message assistant-issue conflict" key={key}><h4>Desacuerdo: {humanize(key)}</h4><p>{Array.from(alternatives).join(" / ")}</p></article>);
-  if (run.auditResult) cards.push(<article className="assistant-message audit-result" key="audit"><h4>Hallazgos de la auditoría</h4><p>{findingCount} hallazgos consolidados · {run.auditResult.findingIds.length} evidencias de especialistas · ninguna propuesta creada</p></article>);
-  if (run.synthesis?.draft) cards.push(<article className="assistant-message proposal" key="synthesis"><h4>Síntesis enviada a Cambios</h4><p>{run.synthesis.draft.operations.length} operaciones · {run.synthesis.draft.decisions.length} decisiones pendientes · todavía requiere revisión y «Aplicar al mundo»</p></article>);
+  cards.push(<article className="assistant-message proposal deep-review grid gap-3 rounded-2xl border border-perspective border-l-4 border-l-warning bg-raised p-5" key="summary"><h4>{run.mode === "audit" ? "Auditoría del canon" : "Revisión profunda"}</h4><p>Estado: {humanize(run.status)} · versión analizada: {readOnly ? "versión anterior" : "versión actual"}</p><p className={cn(run.mode === "audit" ? "read-only-callout border-l-2 border-accent bg-accent-soft px-3 py-2 text-sm font-semibold" : "muted text-muted")}>{run.mode === "audit" ? "Resultado orientativo · solo lectura. No se creó ninguna propuesta." : "La síntesis no modifica el mundo: debe revisarse en Cambios y aplicarse explícitamente."}</p>{run.error && <p className="assistant-issue conflict rounded-lg border-l-2 border-conflict bg-conflict-soft p-3 text-sm">La revisión no pudo completarse. El canon no cambió y puedes volver a intentarlo.</p>}</article>);
+  for (const specialist of run.specialists) cards.push(<article className="assistant-message specialist-report grid gap-3 rounded-2xl border border-line border-l-4 border-l-success bg-raised p-5" key={specialist.role}><h4>{specialistRoleLabel(specialist.role)} · {humanize(specialist.status)}</h4>{specialist.error && <p className="assistant-issue warning rounded-lg border-l-2 border-warning bg-warning-soft p-3 text-sm">Este análisis especializado no pudo completarse. Los demás resultados siguen disponibles.</p>}{specialist.report?.findings.map((finding) => <div key={finding.findingId}><p>{finding.summary.markdown}</p>{finding.evidence.map((evidence) => <button key={evidence.sourceUri} type="button" className={buttonStyles({ variant: "ghost" })} title={evidence.excerptMd} onClick={() => void selectUri(evidence.sourceUri)}>{evidence.sourceUri}</button>)}</div>)}</article>);
+  for (const [key, alternatives] of positions) if (alternatives.size > 1) cards.push(<article className="assistant-message assistant-issue conflict grid gap-3 rounded-2xl border border-line border-l-2 border-conflict bg-conflict-soft p-5 text-sm" key={key}><h4>Desacuerdo: {humanize(key)}</h4><p>{Array.from(alternatives).join(" / ")}</p></article>);
+  if (run.auditResult) cards.push(<article className="assistant-message grid gap-3 rounded-2xl border border-line bg-raised p-5" key="audit"><h4>Hallazgos de la auditoría</h4><p>{findingCount} hallazgos consolidados · {run.auditResult.findingIds.length} evidencias de especialistas · ninguna propuesta creada</p></article>);
+  if (run.synthesis?.draft) cards.push(<article className="assistant-message proposal grid gap-3 rounded-2xl border border-perspective bg-raised p-5" key="synthesis"><h4>Síntesis enviada a Cambios</h4><p>{run.synthesis.draft.operations.length} operaciones · {run.synthesis.draft.decisions.length} decisiones pendientes · todavía requiere revisión y «Aplicar al mundo»</p></article>);
   return <>{cards}</>;
 }

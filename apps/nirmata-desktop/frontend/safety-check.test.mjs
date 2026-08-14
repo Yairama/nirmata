@@ -118,7 +118,8 @@ test("hostile Markdown stays in plain text mode", () => {
   assert.match(assistantSource, /<pre>\{streamedText\}<\/pre>/u);
   assert.doesNotMatch(frontendSource, /failure\.textContent = specialist\.error/u);
   assert.match(assistantSource, /title=\{evidence\.excerptMd\}/u);
-  assert.match(frontendSource, /<pre className="lore-preview">\{source\.preview\}<\/pre>/u);
+  assert.match(loreSource, /const lorePreviewStyles = "[^"]*\blore-preview\b[^"]*"/u);
+  assert.match(loreSource, /<pre className=\{lorePreviewStyles\}>\{source\.preview\}<\/pre>/u);
   assert.match(frontendSource, /setOpenedExcerpt\(location\.chunk\.content\)/u);
   assert.match(pendingSource, /Crítica final/u);
   assert.doesNotMatch(frontendSource, /\binnerHTML\b/u);
@@ -201,7 +202,7 @@ test("queries and selected objects enter the same explicit proposal workflow", (
 test("browser prompts and confirms are replaced by accessible owned forms", () => {
   assert.doesNotMatch(frontendSource, /window\.(?:prompt|confirm)\s*\(/u);
   assert.doesNotMatch(frontendSource, /(?:^|[^\w.])(?:prompt|confirm)\s*\(/mu);
-  assert.match(worldShellSource, /<Dialog\.Content className="confirmation-dialog"/u);
+  assert.match(worldShellSource, /<Dialog\.Content className="[^"]*\bconfirmation-dialog\b[^"]*"/u);
   assert.match(pendingSource, /inline-review-form/u);
 });
 
@@ -427,7 +428,7 @@ test("narrative derivation stays cited, scoped, review-only, and shallow by defa
   assert.match(narrativeSource, /session\.read_only/u);
   assert.match(narrativeSource, /onPendingReviewsChanged\(\)/u);
   assert.match(narrativeSource, /Alternativas de continuidad listas; todavía no se llamó a IA/u);
-  assert.match(narrativeSource, /<pre className="narrative-document-body">\{value\.document\.body_md\}<\/pre>/u);
+  assert.match(narrativeSource, /<pre className="[^"]*\bnarrative-document-body\b[^"]*">\{value\.document\.body_md\}<\/pre>/u);
   assert.match(narrativeSource, /Abrir revisión en Cambios/u);
   assert.match(narrativeSource, /beginAiActivity/u);
   assert.match(narrativeSource, /endAiActivity/u);

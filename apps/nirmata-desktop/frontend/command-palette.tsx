@@ -2,6 +2,7 @@ import { Command } from "cmdk";
 import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useRef } from "react";
 import type { SearchResult } from "./types.js";
+import { chipStyles } from "./ui-styles.js";
 
 type PaletteAction = {
   id: string;
@@ -72,8 +73,8 @@ export function CommandPalette({
       open={open}
       onOpenChange={onOpenChange}
       label="Buscar objetos y acciones"
-      className="command-dialog"
-      overlayClassName="dialog-overlay command-overlay"
+      className="command-dialog fixed left-1/2 top-[15dvh] z-50 max-h-[70dvh] w-[min(42rem,calc(100vw-2rem))] -translate-x-1/2 translate-y-0 overflow-auto rounded-2xl border border-line bg-raised p-0 shadow-overlay outline-none [&>*+*]:mt-4"
+      overlayClassName="dialog-overlay command-overlay fixed inset-0 z-40 bg-overlay"
     >
       <Command.Input
         autoFocus
@@ -81,15 +82,16 @@ export function CommandPalette({
         onValueChange={onQueryChange}
         placeholder="Busca objetos o escribe una acción…"
         aria-label="Buscar objetos y acciones"
+        className="rounded-none border-0 border-b border-line px-5 py-4 text-lg shadow-none"
       />
-      <Command.List>
+      <Command.List className="max-h-[52dvh] overflow-auto p-2">
         <Command.Empty>{hasWorldQuery && !searching ? "No hay objetos ni acciones con ese nombre." : "No hay acciones con ese nombre."}</Command.Empty>
         {hasWorldQuery && (
           <Command.Group heading="Objetos" forceMount>
             {searching && <Command.Loading>Buscando en la versión observada…</Command.Loading>}
-            {searchError && <div className="command-search-state" role="alert">No se pudo buscar. El mundo no cambió.</div>}
+            {searchError && <div className="command-search-state p-5 text-sm text-muted" role="alert">No se pudo buscar. El mundo no cambió.</div>}
             {!searching && !searchError && results.length === 0 && (
-              <div className="command-search-state">Sin evidencia con estos términos en la versión observada.</div>
+              <div className="command-search-state p-5 text-sm text-muted">Sin evidencia con estos términos en la versión observada.</div>
             )}
             {results.map((result) => (
               <Command.Item
@@ -97,12 +99,13 @@ export function CommandPalette({
                 value={`${result.snippet} ${result.object_type} ${result.classification}`}
                 forceMount
                 onSelect={() => void selectResult(result)}
+                className="cursor-pointer rounded-xl px-3 py-3 data-[selected=true]:bg-accent-soft data-[selected=true]:text-accent"
               >
-                <span className="command-result-copy">
+                <span className="command-result-copy grid">
                   <strong>{cleanSnippet(result.snippet)}</strong>
                   <small>{resultLabel(result.object_type)} · {classificationLabel(result.classification)}</small>
                 </span>
-                <span className={`badge ${result.authority === "canonical" ? "ready" : "context"}`}>
+                <span className={chipStyles({ tone: result.authority === "canonical" ? "success" : "perspective" })}>
                   {result.authority === "canonical" ? "Canon" : "Perspectiva"}
                 </span>
               </Command.Item>
@@ -117,6 +120,7 @@ export function CommandPalette({
                 value={`${action.label} ${(action.keywords ?? []).join(" ")}`}
                 disabled={action.disabled}
                 onSelect={() => select(action)}
+                className="cursor-pointer rounded-xl px-3 py-3 data-[selected=true]:bg-accent-soft data-[selected=true]:text-accent"
               >
                 <span>{action.label}</span>
                 {action.disabled && <small>Solo lectura</small>}

@@ -9,6 +9,7 @@ import type { DesktopActionRequest } from "./desktop-actions.js";
 import { commandErrorCopy } from "./feedback.js";
 import { useSession } from "./session-provider.js";
 import type { AiProviderDiagnosticStatus, RecentProject, WorldSession } from "./types.js";
+import { buttonStyles, cn, noticeStyles } from "./ui-styles.js";
 import { openSession } from "./workspace.js";
 
 type CreationPath = "manual" | "ai" | "import";
@@ -270,59 +271,59 @@ export function ClosedView({ desktopAction, onStartProposal, onStartImport }: { 
   const nameRegistration = form.register("name", { required: "Escribe un nombre para el mundo." });
   return (
     <>
-      <header className="home-header">
-        <div>
-          <p className="eyebrow">Nirmata</p>
+      <header className="home-header flex items-center justify-between gap-6 border-b border-line px-6 py-4 max-mobile:items-start max-mobile:px-4">
+        <div className="grid gap-1">
+          <p className="eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Nirmata</p>
           <h1>Tu mundo, guardado localmente</h1>
           <p>Construye canon, consulta consecuencias y revisa cada cambio antes de aplicarlo.</p>
         </div>
-        <nav className="home-utilities" aria-label="Aplicación">
-          <button type="button" className="ghost" onClick={(event) => openSoftwareDialog("settings", event.currentTarget)}>Ajustes</button>
-          <button type="button" className="ghost" onClick={(event) => openSoftwareDialog("help", event.currentTarget)}>Ayuda</button>
-          <button type="button" className="ghost" onClick={(event) => openSoftwareDialog("about", event.currentTarget)}>Acerca de</button>
+        <nav className="home-utilities flex flex-wrap justify-end gap-2 max-compact:gap-1" aria-label="Aplicación">
+          <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={(event) => openSoftwareDialog("settings", event.currentTarget)}>Ajustes</button>
+          <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={(event) => openSoftwareDialog("help", event.currentTarget)}>Ayuda</button>
+          <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={(event) => openSoftwareDialog("about", event.currentTarget)}>Acerca de</button>
         </nav>
       </header>
-      <section id="closed-view" aria-labelledby="create-title">
+      <section id="closed-view" className="grid min-h-[calc(100dvh-4rem)] grid-rows-[auto_1fr_auto] overflow-hidden rounded-3xl border border-line bg-surface shadow-sm max-mobile:min-h-dvh max-mobile:rounded-none max-mobile:border-0" aria-labelledby="create-title">
         {creationPath === null ? (
-          <div className="home-grid">
-            <section className="creation-paths" aria-labelledby="create-title">
-              <p className="panel-eyebrow">Inicio</p>
+          <div className="home-grid grid min-h-0 grid-cols-[minmax(0,1.6fr)_minmax(19rem,0.65fr)] max-workspace:grid-cols-1 max-mobile:overflow-auto">
+            <section className="creation-paths min-w-0 px-6 py-8 lg:px-10 max-mobile:px-4 max-mobile:py-6" aria-labelledby="create-title">
+              <p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Inicio</p>
               <h2 id="create-title">Nuevo mundo</h2>
-              <p>Elige un punto de partida. Ningún camino incorpora cambios al canon sin revisión.</p>
-              <div className="creation-path-grid">
-                <button ref={manualButton} type="button" className="creation-path-card" onClick={() => startCreation("manual")}>
-                  <strong>Empezar manualmente</strong><span>Un proyecto vacío para construir paso a paso.</span>
+              <p className="mt-4 max-w-3xl text-lg text-muted">Elige un punto de partida. Ningún camino incorpora cambios al canon sin revisión.</p>
+              <div className="creation-path-grid mt-8 grid grid-cols-3 gap-3 max-workspace:grid-cols-2 max-mobile:grid-cols-1">
+                <button ref={manualButton} type="button" className="creation-path-card flex min-h-44 flex-col items-start justify-between gap-4 rounded-2xl border border-line bg-raised p-5 text-left text-ink shadow-sm enabled:hover:-translate-y-0.5 enabled:hover:border-accent enabled:hover:bg-accent-soft" onClick={() => startCreation("manual")}>
+                  <strong className="font-serif text-xl">Empezar manualmente</strong><span className="font-normal leading-relaxed text-muted">Un proyecto vacío para construir paso a paso.</span>
                 </button>
-                <button type="button" className="creation-path-card" onClick={() => startCreation("ai")}>
-                  <strong>Crear una base del mundo con IA</strong><span>Una propuesta pequeña y editable que revisarás antes de aplicar.</span>
+                <button type="button" className="creation-path-card flex min-h-44 flex-col items-start justify-between gap-4 rounded-2xl border border-line bg-raised p-5 text-left text-ink shadow-sm enabled:hover:-translate-y-0.5 enabled:hover:border-accent enabled:hover:bg-accent-soft" onClick={() => startCreation("ai")}>
+                  <strong className="font-serif text-xl">Crear una base del mundo con IA</strong><span className="font-normal leading-relaxed text-muted">Una propuesta pequeña y editable que revisarás antes de aplicar.</span>
                 </button>
-                <button type="button" className="creation-path-card" onClick={() => startCreation("import")}>
-                  <strong>Estructurar material existente</strong><span>Una copia inerte de Markdown o texto para convertir en candidatos.</span>
+                <button type="button" className="creation-path-card flex min-h-44 flex-col items-start justify-between gap-4 rounded-2xl border border-line bg-raised p-5 text-left text-ink shadow-sm enabled:hover:-translate-y-0.5 enabled:hover:border-accent enabled:hover:bg-accent-soft" onClick={() => startCreation("import")}>
+                  <strong className="font-serif text-xl">Estructurar material existente</strong><span className="font-normal leading-relaxed text-muted">Una copia inerte de Markdown o texto para convertir en candidatos.</span>
                 </button>
               </div>
-              <button type="button" className="open-project-action" onClick={() => void openWorld()} disabled={busy}>Abrir otro mundo…</button>
+              <button type="button" className="open-project-action mt-4" onClick={() => void openWorld()} disabled={busy}>Abrir otro mundo…</button>
             </section>
-            <aside className="home-side" aria-label="Estado y proyectos recientes">
-              <section className="provider-card">
-                <p className="panel-eyebrow">IA opcional</p>
+            <aside className="home-side min-w-0 border-l border-line bg-canvas p-6 max-workspace:border-l-0 max-workspace:border-t max-mobile:p-4" aria-label="Estado y proyectos recientes">
+              <section className="provider-card grid gap-4 border-b border-line py-5">
+                <p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">IA opcional</p>
                 <h2>Microsoft Foundry</h2>
                 <p>{provider.isPending ? "Comprobando configuración…" : provider.data?.message ?? "No se pudo comprobar la configuración."}</p>
-                <button type="button" className="ghost" onClick={(event) => openSoftwareDialog("settings", event.currentTarget)}>Configurar IA</button>
+                <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={(event) => openSoftwareDialog("settings", event.currentTarget)}>Configurar IA</button>
               </section>
-              <section className="recent-projects" aria-labelledby="recents-heading">
+              <section className="recent-projects grid gap-4 border-b border-line py-5" aria-labelledby="recents-heading">
                 <h2 id="recents-heading">Recientes</h2>
                 {recents.isPending && <p role="status">Cargando proyectos…</p>}
                 {recents.isError && <p>No se pudo leer la lista. Aún puedes abrir un archivo.</p>}
-                {recents.data?.length === 0 && <p className="muted">Los mundos que abras aparecerán aquí.</p>}
+                {recents.data?.length === 0 && <p className="muted text-muted">Los mundos que abras aparecerán aquí.</p>}
                 <ul>
                   {recents.data?.map((project) => (
                     <li key={project.path}>
-                      <button type="button" className="recent-project" aria-label={`Abrir ${project.name}`} disabled={busy} onClick={() => void openWorld(project.path)}>
+                      <button type="button" className="recent-project grid grid-cols-[1fr_auto] gap-2 border-b border-line py-3" aria-label={`Abrir ${project.name}`} disabled={busy} onClick={() => void openWorld(project.path)}>
                         <strong>{project.name}</strong>
                         <span>{formatRecentDate(project.lastOpenedMs)}</span>
-                        <small className="path">{project.path}</small>
+                        <small className="path font-mono">{project.path}</small>
                       </button>
-                      <button type="button" className="recent-remove ghost" aria-label={`Quitar ${project.name} de recientes`} onClick={() => removeRecent.mutate(project.path)}>Quitar</button>
+                      <button type="button" className={cn(buttonStyles({ variant: "ghost", size: "compact" }), "recent-remove")} aria-label={`Quitar ${project.name} de recientes`} onClick={() => removeRecent.mutate(project.path)}>Quitar</button>
                     </li>
                   ))}
                 </ul>
@@ -330,39 +331,39 @@ export function ClosedView({ desktopAction, onStartProposal, onStartImport }: { 
             </aside>
           </div>
         ) : (
-          <form className="creation-wizard" onSubmit={form.handleSubmit(createWorld)} noValidate>
-            <div className="creation-step-heading">
+          <form className="creation-wizard mt-6 grid gap-6" onSubmit={form.handleSubmit(createWorld)} noValidate>
+            <div className="creation-step-heading flex items-start justify-between gap-4">
               <div>
-                <p className="panel-eyebrow">Nuevo mundo · Paso {visibleStep} de {totalSteps}</p>
+                <p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Nuevo mundo · Paso {visibleStep} de {totalSteps}</p>
                 <h2 id="create-title">{pathTitle(creationPath)}</h2>
                 <p>{pathDescription(creationPath)}</p>
               </div>
-              <button type="button" className="ghost" onClick={() => { setCreationPath(null); setError(""); }}>Cancelar</button>
+              <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => { setCreationPath(null); setError(""); }}>Cancelar</button>
             </div>
-            <ol className="wizard-progress" aria-label="Progreso de creación">
+            <ol className="wizard-progress flex gap-2" aria-label="Progreso de creación">
               <li aria-current={step === 1 ? "step" : undefined}>Proyecto</li>
               {creationPath !== "manual" && <li aria-current={step === 2 ? "step" : undefined}>{creationPath === "ai" ? "Intención" : "Importación"}</li>}
               <li aria-current={step === 3 ? "step" : undefined}>Revisar</li>
             </ol>
             {step === 1 && (
-              <div className="wizard-fields">
+              <div className="wizard-fields grid max-w-3xl gap-4">
                 <label>Nombre
                   <input {...nameRegistration} ref={(element) => { nameRegistration.ref(element); nameInput.current = element; }} maxLength={200} autoComplete="off" aria-invalid={Boolean(form.formState.errors.name)} />
-                  {form.formState.errors.name && <span className="field-error" role="alert">{form.formState.errors.name.message}</span>}
+                  {form.formState.errors.name && <span className="field-error text-sm text-danger" role="alert">{form.formState.errors.name.message}</span>}
                 </label>
                 <label>Premisa <textarea {...form.register("premise")} rows={4} maxLength={100000} /></label>
                 <label>Origen del calendario <input {...form.register("epochLabel")} maxLength={200} /></label>
                 <label>Archivo
-                  <span className="path-row">
+                  <span className="path-row grid grid-cols-[1fr_auto] gap-2">
                     <input name="project-path" value={projectPath} readOnly placeholder="Selecciona dónde guardarlo" />
                     <button type="button" onClick={() => void chooseProjectPath()}>Elegir…</button>
                   </span>
                 </label>
-                <div className="wizard-actions"><button type="button" onClick={() => void advanceFromProject()}>Continuar</button></div>
+                <div className="wizard-actions flex flex-wrap items-center gap-2"><button type="button" onClick={() => void advanceFromProject()}>Continuar</button></div>
               </div>
             )}
             {step === 2 && creationPath === "ai" && (
-              <fieldset className="creation-brief wizard-fields">
+              <fieldset className="creation-brief wizard-fields grid max-w-3xl gap-4">
                 <legend>Resumen de intención</legend>
                 <label>Género <input {...form.register("genre")} maxLength={120} /></label>
                 <label>Temas <input {...form.register("themes")} maxLength={300} /></label>
@@ -371,42 +372,42 @@ export function ClosedView({ desktopAction, onStartProposal, onStartImport }: { 
                   <select {...form.register("scale")}><option value="small">Pequeña</option><option value="medium">Mediana</option></select>
                 </label>
                 <label>Restricciones <textarea {...form.register("restrictions")} rows={3} /></label>
-                <div className="wizard-actions"><button type="button" className="ghost" onClick={() => setStep(1)}>Atrás</button><button type="button" onClick={nextStep}>Revisar creación</button></div>
+                <div className="wizard-actions flex flex-wrap items-center gap-2"><button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => setStep(1)}>Atrás</button><button type="button" onClick={nextStep}>Revisar creación</button></div>
               </fieldset>
             )}
             {step === 2 && creationPath === "import" && (
-              <div className="wizard-fields">
-                <div className="notice info">
+              <div className="wizard-fields grid max-w-3xl gap-4">
+                <div className={noticeStyles({ tone: "info" })}>
                   <h3>El material original permanece intacto</h3>
                   <p>Después de crear el proyecto podrás seleccionar Markdown o texto. Nirmata lo copiará a un lote local, extraerá candidatos y te pedirá decidir qué revisar.</p>
                 </div>
-                <div className="wizard-actions"><button type="button" className="ghost" onClick={() => setStep(1)}>Atrás</button><button type="button" onClick={nextStep}>Revisar creación</button></div>
+                <div className="wizard-actions flex flex-wrap items-center gap-2"><button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => setStep(1)}>Atrás</button><button type="button" onClick={nextStep}>Revisar creación</button></div>
               </div>
             )}
             {step === 3 && (
-              <div className="creation-summary">
+              <div className="creation-summary grid gap-3 rounded-2xl border border-line bg-raised p-5">
                 <h3>Comprueba antes de crear</h3>
-                <dl className="settings-facts">
+                <dl className="settings-facts grid gap-0 [&>div]:grid [&>div]:grid-cols-[minmax(7rem,0.4fr)_minmax(0,1fr)] [&>div]:gap-4 [&>div]:border-b [&>div]:border-line [&>div]:py-2 [&>div]:text-sm [&_dd]:min-w-0 [&_dd]:break-words [&_dt]:text-muted">
                   <div><dt>Mundo</dt><dd>{values.name}</dd></div>
-                  <div><dt>Archivo</dt><dd className="path">{projectPath}</dd></div>
+                  <div><dt>Archivo</dt><dd className="path font-mono">{projectPath}</dd></div>
                   <div><dt>Inicio</dt><dd>{pathTitle(creationPath)}</dd></div>
                   {creationPath === "ai" && <div><dt>Alcance IA</dt><dd>Base {values.scale === "small" ? "pequeña" : "mediana"}, siempre revisable</dd></div>}
                 </dl>
-                <p className="notice info">Se creará un único archivo local. {creationPath === "manual" ? "No se agregará contenido automáticamente." : "El siguiente paso preparará material para revisión; no lo aplicará al canon."}</p>
-                <div className="wizard-actions"><button type="button" className="ghost" onClick={() => setStep(creationPath === "manual" ? 1 : 2)}>Atrás</button><button type="submit" disabled={busy}>{busy ? "Creando…" : "Crear mundo"}</button></div>
+                <p className={noticeStyles({ tone: "info" })}>Se creará un único archivo local. {creationPath === "manual" ? "No se agregará contenido automáticamente." : "El siguiente paso preparará material para revisión; no lo aplicará al canon."}</p>
+                <div className="wizard-actions flex flex-wrap items-center gap-2"><button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => setStep(creationPath === "manual" ? 1 : 2)}>Atrás</button><button type="submit" disabled={busy}>{busy ? "Creando…" : "Crear mundo"}</button></div>
               </div>
             )}
           </form>
         )}
       </section>
       {missingRecent && (
-        <section className="missing-recent notice warning" role="alert">
+        <section className={cn(noticeStyles({ tone: "warning" }), "missing-recent flex items-start justify-between gap-4 max-mobile:flex-col")} role="alert">
           <div><strong>Archivo movido</strong><p>Localiza «{missingRecent.name}» en su nueva ubicación o quítalo de la lista.</p></div>
-          <div className="dialog-actions"><button type="button" onClick={() => void relocateRecent()}>Localizar…</button><button type="button" className="ghost" onClick={() => { removeRecent.mutate(missingRecent.path); setMissingRecent(null); setError(""); }}>Quitar</button></div>
+          <div className="dialog-actions flex flex-wrap items-center gap-2"><button type="button" onClick={() => void relocateRecent()}>Localizar…</button><button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => { removeRecent.mutate(missingRecent.path); setMissingRecent(null); setError(""); }}>Quitar</button></div>
         </section>
       )}
-      <p className="creation-status" role="status" aria-live="polite">{status}</p>
-      {error && <p className="creation-error" role="alert">{error}</p>}
+      <p className="creation-status border-t border-line px-6 py-3 text-sm text-muted" role="status" aria-live="polite">{status}</p>
+      {error && <p className="creation-error text-sm text-danger" role="alert">{error}</p>}
       <SoftwareDialogs active={dialog} onActiveChange={setDialog} returnFocus={dialogTrigger} onOpenBackups={() => undefined} onShowOnboarding={() => undefined} />
     </>
   );

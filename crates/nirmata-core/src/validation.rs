@@ -7,10 +7,11 @@ use crate::relation::Relation;
 use crate::rule::{Rule, RuleSeverity, RuleValidatorKind};
 use crate::time::PartialTruth;
 use crate::{Period, RevisionId, WorldId};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationSeverity {
     Error,

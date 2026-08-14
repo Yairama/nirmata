@@ -23,6 +23,7 @@ import type {
   SearchResult,
   StructuredEditorState,
 } from "./types.js";
+import { buttonStyles, cn, noticeStyles } from "./ui-styles.js";
 import {
   resetCurrentEditor,
   saveCurrentDraft,
@@ -330,13 +331,13 @@ export function StructuredEditor({ onPendingReviewsChanged, onStartProposal }: {
   if (!editor) {
     return (
       <>
-        <div className="panel-header"><div><p className="panel-eyebrow">Formularios manuales</p><h3 id="editor-title">Selecciona o crea un objeto</h3></div></div>
-        <div className="panel-body">
+        <div className="panel-header flex min-h-16 items-start justify-between gap-4 border-b border-line px-4 py-3"><div className="grid gap-1"><p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Formularios manuales</p><h3 id="editor-title">Selecciona o crea un objeto</h3></div></div>
+        <div className="panel-body min-h-0 flex-1 overflow-auto p-4">
           {(workspaceData.selectedObject.isPending || workspaceData.relatedContext.isPending) && workspaceData.selectedUri
-            ? <p role="status" className="empty-state">Cargando la selección de esta versión…</p>
+            ? <p role="status" className="empty-state grid gap-4 rounded-xl border border-dashed border-line bg-surface p-5 text-sm text-muted">Cargando la selección de esta versión…</p>
             : (workspaceData.selectedObject.isError || workspaceData.relatedContext.isError) && workspaceData.selectedUri
-              ? <p role="alert" className="notice warning">No se pudo abrir este objeto en la versión observada.</p>
-              : <p className="empty-state">El panel central permite editar la selección o preparar un cambio nuevo.</p>}
+              ? <p role="alert" className={noticeStyles({ tone: "warning" })}>No se pudo abrir este objeto en la versión observada.</p>
+              : <p className="empty-state grid gap-4 rounded-xl border border-dashed border-line bg-surface p-5 text-sm text-muted">El panel central permite editar la selección o preparar un cambio nuevo.</p>}
         </div>
       </>
     );
@@ -406,23 +407,23 @@ export function StructuredEditor({ onPendingReviewsChanged, onStartProposal }: {
 
   return (
     <>
-      <div className="panel-header">
-        <div><p className="panel-eyebrow">Formularios manuales</p><h3 id="editor-title">{editor.title}</h3></div>
-        <p className="panel-summary">{editor.mode === "create" ? "Nuevo" : "Editar"} · {kindLabel(editor.objectType)}</p>
+      <div className="panel-header flex min-h-16 items-start justify-between gap-4 border-b border-line px-4 py-3">
+        <div className="grid gap-1"><p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Formularios manuales</p><h3 id="editor-title">{editor.title}</h3></div>
+        <p className="panel-summary text-xs font-medium text-muted">{editor.mode === "create" ? "Nuevo" : "Editar"} · {kindLabel(editor.objectType)}</p>
       </div>
-      <div className="panel-body">
-        <form className="editor-layout" onSubmit={handleSubmit(submit)}>
-          {state.workspaceNotice && <section className={`notice ${state.workspaceNotice.kind}`}><h4>{state.workspaceNotice.title}</h4><p>{state.workspaceNotice.detail}</p></section>}
+      <div className="panel-body min-h-0 flex-1 overflow-auto p-4">
+        <form className="editor-layout grid gap-4" onSubmit={handleSubmit(submit)}>
+          {state.workspaceNotice && <section className={noticeStyles({ tone: state.workspaceNotice.kind })}><h4 className="font-semibold">{state.workspaceNotice.title}</h4><p>{state.workspaceNotice.detail}</p></section>}
           {editor.mode === "update" && workspaceData.selectedUri === editor.existingUri && (
-            <div className="editor-toolbar">
-              <button type="button" className="secondary" disabled={Boolean(session?.read_only)} onClick={() => onStartProposal?.(`Propón un cambio acotado sobre ${editor.title}: `)}>Proponer con IA</button>
-              {editor.objectType === "entity" && <button type="button" className="danger-outline" disabled={Boolean(session?.read_only || preparingDeletion)} onClick={() => void prepareDeletion()}>{preparingDeletion ? "Preparando…" : "Eliminar del canon"}</button>}
+            <div className="editor-toolbar flex flex-wrap justify-end gap-2 border-b border-line pb-3">
+              <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={Boolean(session?.read_only)} onClick={() => onStartProposal?.(`Propón un cambio acotado sobre ${editor.title}: `)}>Proponer con IA</button>
+              {editor.objectType === "entity" && <button type="button" className={buttonStyles({ variant: "dangerOutline" })} disabled={Boolean(session?.read_only || preparingDeletion)} onClick={() => void prepareDeletion()}>{preparingDeletion ? "Preparando…" : "Eliminar del canon"}</button>}
             </div>
           )}
-          <fieldset disabled={Boolean(session?.read_only || formState.isSubmitting)} className="editor-form-fieldset">
-            <section className="editor-section">
-              <h4>Formulario</h4>
-              <div className="editor-fields">
+          <fieldset disabled={Boolean(session?.read_only || formState.isSubmitting)} className="editor-form-fieldset grid gap-5">
+            <section className="editor-section grid gap-4 border-b border-line pb-5">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted">Formulario</h4>
+              <div className="editor-fields grid gap-4">
                 {regular.filter(visible).map((field) => <EditorControl key={field.key} editor={editor} field={field} control={control} register={register} setValue={setValue} messages={issueMap.get(field.key) ?? []} />)}
                 {editor.objectType === "world" && calendarMode === "fixed" && (
                   <>
@@ -441,26 +442,26 @@ export function StructuredEditor({ onPendingReviewsChanged, onStartProposal }: {
                 {editor.objectType === "document" && <ReferenceList title="Referencias de contenido" field="documentReferences" fields={documentReferences.fields} register={register} setValue={setValue} actions={documentReferences} append={documentReferences.append} multiple messages={issueMap.get("content_references") ?? []} />}
               </div>
               {advanced.filter(visible).length > 0 && (
-                <details className="editor-advanced-options"><summary>Opciones avanzadas</summary><div className="editor-fields advanced-editor-fields">
+                <details className="editor-advanced-options mt-3"><summary>Opciones avanzadas</summary><div className="editor-fields advanced-editor-fields grid gap-4 pt-4">
                   {advanced.filter(visible).map((field) => <EditorControl key={field.key} editor={editor} field={field} control={control} register={register} setValue={setValue} messages={issueMap.get(field.key) ?? []} />)}
                 </div></details>
               )}
             </section>
-            <section className="editor-section">
-              <h4>Preparar cambios</h4>
+            <section className="editor-section grid gap-4 border-b border-line pb-5">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted">Preparar cambios</h4>
               <label>Objetivo de la propuesta<input {...register("objective")} name="objective" autoComplete="off" /></label>
               <ReferenceList title="Fuentes internas (opcional)" field="sources" fields={sources.fields} register={register} setValue={setValue} actions={sources} append={sources.append} multiple messages={issueMap.get("sourceUris") ?? []} />
               <label>Supuestos (uno por línea)<textarea {...register("assumptionsText")} name="assumptionsText" rows={4} /></label>
-              <div className="form-actions">
+              <div className="form-actions flex flex-wrap items-center gap-2">
                 <button type="submit">{formState.isSubmitting ? "Preparando…" : "Preparar cambios"}</button>
-                <button type="button" className="secondary" onClick={resetCurrentEditor}>Revertir formulario</button>
+                <button type="button" className={buttonStyles({ variant: "secondary" })} onClick={resetCurrentEditor}>Revertir formulario</button>
               </div>
             </section>
           </fieldset>
-          {editor.mode === "update" && <details className="editor-section editor-reading"><summary>Información del objeto</summary><p>{editor.description}</p>{editor.logicalPath && <p className="path muted">{editor.logicalPath}</p>}</details>}
-          <details className="editor-section editor-technical-details">
+          {editor.mode === "update" && <details className="editor-section grid gap-4 border-b border-line pb-5"><summary>Información del objeto</summary><p>{editor.description}</p>{editor.logicalPath && <p className="path muted font-mono text-muted">{editor.logicalPath}</p>}</details>}
+          <details className="editor-section editor-technical-details mt-3 grid gap-4 border-b border-line pb-5">
             <summary>Detalles técnicos</summary>
-            <dl className="meta-list">{editor.metadata.map((item) => <div className="meta-row" key={item.label}><dt>{item.label}</dt><dd>{item.uri ? <button type="button" className="meta-link" onClick={() => void selectUri(item.uri!)}>{item.value}</button> : item.value}</dd></div>)}</dl>
+            <dl className="meta-list mt-3 grid gap-0">{editor.metadata.map((item) => <div className="meta-row grid grid-cols-[minmax(7rem,0.4fr)_minmax(0,1fr)] gap-4 border-b border-line py-2 text-sm" key={item.label}><dt className="text-muted">{item.label}</dt><dd className="min-w-0 break-words">{item.uri ? <button type="button" className="meta-link min-h-0 justify-start border-0 bg-transparent p-0 text-left text-accent" onClick={() => void selectUri(item.uri!)}>{item.value}</button> : item.value}</dd></div>)}</dl>
           </details>
         </form>
       </div>
@@ -493,16 +494,16 @@ function EditorControl({ editor, field, control, register, setValue, messages }:
     "data-editor-field": field.key,
   };
   return (
-    <div className={`editor-field${value !== editor.baselineValues[field.key] ? " dirty" : ""}`}>
+    <div className={cn("editor-field grid min-w-0 gap-2", value !== editor.baselineValues[field.key] && "dirty border-l-2 border-accent pl-3")}>
       {reference ? (
         <>
-          <span className="field-label">{field.label}</span>
-          <div className="field-picker-row">
+          <span className="field-label text-sm font-semibold text-muted">{field.label}</span>
+          <div className="field-picker-row grid grid-cols-[minmax(0,1fr)_auto_auto] items-end gap-2 max-mobile:grid-cols-1">
             <ReferenceName uri={referenceUri(value, reference.kinds[0])} fallback="Sin selección" />
-            <button type="button" className="secondary" onClick={(event) => requestObjectPicker({ title: field.label, kinds: [...reference.kinds], multiple: false, returnFocus: event.currentTarget, apply: ([result]) => setValue(name, result.uri, { shouldDirty: true }) })}>Elegir por nombre</button>
-            {value && <button type="button" className="ghost" onClick={() => setValue(name, "", { shouldDirty: true })}>Quitar</button>}
+            <button type="button" className={buttonStyles({ variant: "secondary" })} onClick={(event) => requestObjectPicker({ title: field.label, kinds: [...reference.kinds], multiple: false, returnFocus: event.currentTarget, apply: ([result]) => setValue(name, result.uri, { shouldDirty: true }) })}>Elegir por nombre</button>
+            {value && <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => setValue(name, "", { shouldDirty: true })}>Quitar</button>}
           </div>
-          <details className="technical-details field-technical-input"><summary>Introducir UUID o URI manualmente</summary><label htmlFor={id}>{field.label}, valor técnico<input {...inputProps} type="text" value={value} /></label></details>
+          <details className="technical-details field-technical-input border-t border-line pt-3"><summary className="text-xs">Introducir UUID o URI manualmente</summary><label className="mt-2" htmlFor={id}>{field.label}, valor técnico<input {...inputProps} type="text" value={value} /></label></details>
         </>
       ) : (
         <label htmlFor={id}>{field.label}
@@ -511,7 +512,7 @@ function EditorControl({ editor, field, control, register, setValue, messages }:
               : <input {...inputProps} type={field.control === "number" ? "number" : "text"} value={value} />}
         </label>
       )}
-      {field.help && !reference && <p className="field-help">{field.help}</p>}
+      {field.help && !reference && <p className="field-help text-muted">{field.help}</p>}
       {field.key.endsWith("_md") || field.key === "body_md" ? <MarkdownPreview value={value} /> : null}
       <FieldErrors id={errorId} messages={messages} />
     </div>
@@ -530,17 +531,17 @@ function CalendarRows({ title, singular, fields, register, actions, append, mont
 }) {
   const fieldKey = hasDays ? "calendar_months" : "calendar_weekdays";
   return (
-    <section className="editor-field calendar-builder" data-editor-field={fieldKey} tabIndex={messages.length ? -1 : undefined} aria-invalid={messages.length ? true : undefined} aria-describedby={messages.length ? `${fieldKey}-error` : undefined}>
+    <section className="editor-field calendar-builder grid min-w-0 gap-2 rounded-xl border border-line bg-canvas p-4" data-editor-field={fieldKey} tabIndex={messages.length ? -1 : undefined} aria-invalid={messages.length ? true : undefined} aria-describedby={messages.length ? `${fieldKey}-error` : undefined}>
       <h5>{title}</h5>
-      <div className="calendar-builder-list">
-        {fields.length === 0 && <p className="muted">Añade al menos un {singular}.</p>}
-        {fields.map((field, index) => <div className="calendar-builder-row" key={field.id}>
+      <div className="calendar-builder-list grid gap-3">
+        {fields.length === 0 && <p className="muted text-muted">Añade al menos un {singular}.</p>}
+        {fields.map((field, index) => <div className="calendar-builder-row grid grid-cols-[minmax(0,1fr)_minmax(6rem,0.25fr)_auto] gap-3 border-b border-line py-4 max-mobile:grid-cols-1" key={field.id}>
           <label>Nombre del {singular} {index + 1}<input {...register(`${hasDays ? "months" : "weekdays"}.${index}.name`)} /></label>
           {hasDays && <label>Días<input type="number" min="1" step="1" {...register(`months.${index}.days`)} /></label>}
           <RowActions noun={singular} index={index} count={fields.length} actions={actions} />
         </div>)}
       </div>
-      <button type="button" className="secondary" onClick={append}>Agregar {singular}</button>
+      <button type="button" className={buttonStyles({ variant: "secondary" })} onClick={append}>Agregar {singular}</button>
       <FieldErrors id={`${fieldKey}-error`} messages={messages} />
     </section>
   );
@@ -548,10 +549,10 @@ function CalendarRows({ title, singular, fields, register, actions, append, mont
 
 function EventDates({ timeKind, control, register, messages }: { timeKind: string; control: Control<EditorForm>; register: UseFormRegister<EditorForm>; messages: Map<string, string[]> }) {
   const calendar = getAppState().session?.world.calendar;
-  if (timeKind === "unknown") return <section className="editor-field event-date-builder"><h5>Fecha del acontecimiento</h5><p className="muted">El tiempo queda sin especificar y no necesita fecha.</p></section>;
-  if (!calendar) return <section className="editor-field event-date-builder"><h5>Fecha del acontecimiento</h5><p className="notice info">Este mundo no tiene calendario de presentación. La unidad temporal canónica permanece en Detalles técnicos.</p></section>;
+  if (timeKind === "unknown") return <section className="editor-field event-date-builder grid min-w-0 gap-2 rounded-xl border border-line bg-canvas p-4"><h5>Fecha del acontecimiento</h5><p className="muted text-muted">El tiempo queda sin especificar y no necesita fecha.</p></section>;
+  if (!calendar) return <section className="editor-field event-date-builder grid min-w-0 gap-2 rounded-xl border border-line bg-canvas p-4"><h5>Fecha del acontecimiento</h5><p className={noticeStyles({ tone: "info" })}>Este mundo no tiene calendario de presentación. La unidad temporal canónica permanece en Detalles técnicos.</p></section>;
   return (
-    <section className="editor-field event-date-builder"><h5>Fecha del acontecimiento</h5>
+    <section className="editor-field event-date-builder grid min-w-0 gap-2 rounded-xl border border-line bg-canvas p-4"><h5>Fecha del acontecimiento</h5>
       <DateEndpoint endpoint="startDate" label={timeKind === "instant" ? "Fecha" : "Inicio"} suffix="inicio" calendar={calendar} control={control} register={register} messages={messages.get("start_calendar_date") ?? []} />
       {timeKind === "interval" && <DateEndpoint endpoint="endDate" label="Fin" suffix="fin" calendar={calendar} control={control} register={register} messages={messages.get("end_calendar_date") ?? []} />}
     </section>
@@ -563,7 +564,7 @@ function DateEndpoint({ endpoint, label, suffix, calendar, control, register, me
   const maxDay = calendar?.months[Number(month) - 1]?.days ?? 1;
   const field = endpoint === "startDate" ? "start_calendar_date" : "end_calendar_date";
   return (
-    <fieldset className="event-date-row" data-editor-field={field} aria-invalid={messages.length ? true : undefined} aria-describedby={messages.length ? `${field}-error` : undefined}>
+    <fieldset className="event-date-row grid grid-cols-3 gap-3 border-b border-line py-4 max-mobile:grid-cols-1" data-editor-field={field} aria-invalid={messages.length ? true : undefined} aria-describedby={messages.length ? `${field}-error` : undefined}>
       <legend>{label}</legend>
       <label>Año de {suffix}<input type="number" step="1" {...register(`${endpoint}.year`)} /></label>
       <label>Mes de {suffix}<select {...register(`${endpoint}.month`)}>{calendar?.months.map((item, index) => <option key={`${item.name}-${index}`} value={index + 1}>{item.name}</option>)}</select></label>
@@ -577,15 +578,15 @@ function DateEndpoint({ endpoint, label, suffix, calendar, control, register, me
 function Participants({ fields, register, setValue, actions, append, messages }: { fields: Array<NamedReference & { id: string; role: string }>; register: UseFormRegister<EditorForm>; setValue: UseFormSetValue<EditorForm>; actions: ArrayActions; append: (value: NamedReference & { role: string }) => void; messages: string[] }) {
   const requestObjectPicker = useObjectPicker();
   return (
-    <section className="editor-field composed-list" data-editor-field="participants" tabIndex={messages.length ? -1 : undefined} aria-invalid={messages.length ? true : undefined} aria-describedby={messages.length ? "participants-error" : undefined}>
+    <section className="editor-field composed-list grid min-w-0 gap-2 rounded-xl border border-line bg-canvas p-4" data-editor-field="participants" tabIndex={messages.length ? -1 : undefined} aria-invalid={messages.length ? true : undefined} aria-describedby={messages.length ? "participants-error" : undefined}>
       <h5>Participantes</h5>
-      {fields.map((field, index) => <div className="composed-list-row" key={field.id}>
+      {fields.map((field, index) => <div className="composed-list-row grid gap-3 border-b border-line py-4" key={field.id}>
         <ReferencePicker label={`Participante ${index + 1}`} uri={field.uri} kinds={["entity"]} onChange={(result) => setValue(`participants.${index}.uri`, result.uri, { shouldDirty: true })} />
         <label>Rol<input {...register(`participants.${index}.role`)} /></label>
         <TechnicalReference name={`participants.${index}.uri`} label="Entidad participante" register={register} />
         <RowActions noun="participante" index={index} count={fields.length} actions={actions} />
       </div>)}
-      <button type="button" className="secondary" onClick={(event) => requestObjectPicker({ title: "Agregar participante", kinds: ["entity"], multiple: false, returnFocus: event.currentTarget, apply: ([result]) => append({ uri: result.uri, label: cleanLabel(result), role: "" }) })}>Agregar participante</button>
+      <button type="button" className={buttonStyles({ variant: "secondary" })} onClick={(event) => requestObjectPicker({ title: "Agregar participante", kinds: ["entity"], multiple: false, returnFocus: event.currentTarget, apply: ([result]) => append({ uri: result.uri, label: cleanLabel(result), role: "" }) })}>Agregar participante</button>
       <FieldErrors id="participants-error" messages={messages} />
     </section>
   );
@@ -594,15 +595,15 @@ function Participants({ fields, register, setValue, actions, append, messages }:
 function CausalLinks({ fields, register, setValue, actions, append, messages }: { fields: Array<NamedReference & { id: string; kind: string }>; register: UseFormRegister<EditorForm>; setValue: UseFormSetValue<EditorForm>; actions: ArrayActions; append: (value: NamedReference & { kind: string }) => void; messages: string[] }) {
   const requestObjectPicker = useObjectPicker();
   return (
-    <section className="editor-field composed-list" data-editor-field="causal_links" tabIndex={messages.length ? -1 : undefined} aria-invalid={messages.length ? true : undefined} aria-describedby={messages.length ? "causal-links-error" : undefined}>
+    <section className="editor-field composed-list grid min-w-0 gap-2 rounded-xl border border-line bg-canvas p-4" data-editor-field="causal_links" tabIndex={messages.length ? -1 : undefined} aria-invalid={messages.length ? true : undefined} aria-describedby={messages.length ? "causal-links-error" : undefined}>
       <h5>Vínculos causales</h5>
-      {fields.map((field, index) => <div className="composed-list-row" key={field.id}>
+      {fields.map((field, index) => <div className="composed-list-row grid gap-3 border-b border-line py-4" key={field.id}>
         <ReferencePicker label={`Acontecimiento ${index + 1}`} uri={field.uri} kinds={["event"]} onChange={(result) => setValue(`causalLinks.${index}.uri`, result.uri, { shouldDirty: true })} />
         <label>Tipo de vínculo<select {...register(`causalLinks.${index}.kind`)}>{["enables", "causes", "motivates", "prevents", "terminates", "reveals"].map((kind) => <option key={kind} value={kind}>{choiceLabels[kind]}</option>)}</select></label>
         <TechnicalReference name={`causalLinks.${index}.uri`} label="Acontecimiento" register={register} />
         <RowActions noun="vínculo" index={index} count={fields.length} actions={actions} />
       </div>)}
-      <button type="button" className="secondary" onClick={(event) => requestObjectPicker({ title: "Agregar vínculo causal", kinds: ["event"], multiple: false, returnFocus: event.currentTarget, apply: ([result]) => append({ uri: result.uri, label: cleanLabel(result), kind: "causes" }) })}>Agregar vínculo causal</button>
+      <button type="button" className={buttonStyles({ variant: "secondary" })} onClick={(event) => requestObjectPicker({ title: "Agregar vínculo causal", kinds: ["event"], multiple: false, returnFocus: event.currentTarget, apply: ([result]) => append({ uri: result.uri, label: cleanLabel(result), kind: "causes" }) })}>Agregar vínculo causal</button>
       <FieldErrors id="causal-links-error" messages={messages} />
     </section>
   );
@@ -613,15 +614,15 @@ function ReferenceList({ title, field, kind, fields, register, setValue, actions
   const kinds = kind ? [kind] : allReferenceKinds;
   const backendField = field === "affectedGoals" ? "affected_goal_ids" : field === "documentReferences" ? "content_references" : "sourceUris";
   return (
-    <section className="editor-field composed-list" data-editor-field={backendField} tabIndex={messages.length ? -1 : undefined} aria-invalid={messages.length ? true : undefined} aria-describedby={messages.length ? `${field}-error` : undefined}>
+    <section className="editor-field composed-list grid min-w-0 gap-2 rounded-xl border border-line bg-canvas p-4" data-editor-field={backendField} tabIndex={messages.length ? -1 : undefined} aria-invalid={messages.length ? true : undefined} aria-describedby={messages.length ? `${field}-error` : undefined}>
       <h5>{title}</h5>
-      {fields.length === 0 && <p className="muted">Sin referencias.</p>}
-      {fields.map((item, index) => <div className="composed-list-row reference-list-row" key={item.id}>
+      {fields.length === 0 && <p className="muted text-muted">Sin referencias.</p>}
+      {fields.map((item, index) => <div className="composed-list-row reference-list-row grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-line py-4 [&>.field-picker-row]:col-span-full [&>.technical-details]:col-span-full" key={item.id}>
         <ReferencePicker label={`Referencia ${index + 1}`} uri={item.uri} kinds={kinds} onChange={(result) => setValue(`${field}.${index}.uri`, result.uri, { shouldDirty: true })} />
         <TechnicalReference name={`${field}.${index}.uri`} label="Referencia" register={register} />
         <RowActions noun="referencia" index={index} count={fields.length} actions={actions} />
       </div>)}
-      <button type="button" className="secondary" aria-label={`Agregar en ${title} por nombre`} onClick={(event) => requestObjectPicker({ title, kinds, multiple, returnFocus: event.currentTarget, apply: (results) => {
+      <button type="button" className={buttonStyles({ variant: "secondary" })} aria-label={`Agregar en ${title} por nombre`} onClick={(event) => requestObjectPicker({ title, kinds, multiple, returnFocus: event.currentTarget, apply: (results) => {
         for (const result of results) {
           if (!fields.some((item) => item.uri === result.uri)) append({ uri: result.uri, label: cleanLabel(result) });
         }
@@ -633,15 +634,15 @@ function ReferenceList({ title, field, kind, fields, register, setValue, actions
 
 function ReferencePicker({ label, uri, kinds, onChange }: { label: string; uri: string; kinds: SearchObjectKind[]; onChange: (result: SearchResult) => void }) {
   const requestObjectPicker = useObjectPicker();
-  return <div className="field-picker-row"><span><strong>{label}</strong><br /><ReferenceName uri={referenceUri(uri, kinds[0])} fallback="Sin selección" /></span><button type="button" className="secondary" onClick={(event) => requestObjectPicker({ title: label, kinds, multiple: false, returnFocus: event.currentTarget, apply: ([result]) => onChange(result) })}>Cambiar por nombre</button></div>;
+  return <div className="field-picker-row grid grid-cols-[minmax(0,1fr)_auto_auto] items-end gap-2 max-mobile:grid-cols-1"><span><strong>{label}</strong><br /><ReferenceName uri={referenceUri(uri, kinds[0])} fallback="Sin selección" /></span><button type="button" className={buttonStyles({ variant: "secondary" })} onClick={(event) => requestObjectPicker({ title: label, kinds, multiple: false, returnFocus: event.currentTarget, apply: ([result]) => onChange(result) })}>Cambiar por nombre</button></div>;
 }
 
 function TechnicalReference({ name, label, register }: { name: `participants.${number}.uri` | `causalLinks.${number}.uri` | `affectedGoals.${number}.uri` | `documentReferences.${number}.uri` | `sources.${number}.uri`; label: string; register: UseFormRegister<EditorForm> }) {
-  return <details className="technical-details field-technical-input"><summary>Detalles técnicos</summary><label>{label}, UUID o URI<input {...register(name)} /></label></details>;
+  return <details className="technical-details field-technical-input border-t border-line pt-3"><summary className="text-xs">Detalles técnicos</summary><label className="mt-2">{label}, UUID o URI<input {...register(name)} /></label></details>;
 }
 
 function RowActions({ noun, index, count, actions }: { noun: string; index: number; count: number; actions: ArrayActions }) {
-  return <div className="calendar-row-actions"><button type="button" className="icon-button" aria-label={`Subir ${noun} ${index + 1}`} title={`Subir ${noun}`} disabled={index === 0} onClick={() => actions.move(index, index - 1)}><Icon name="arrow-up" /></button><button type="button" className="icon-button" aria-label={`Bajar ${noun} ${index + 1}`} title={`Bajar ${noun}`} disabled={index === count - 1} onClick={() => actions.move(index, index + 1)}><Icon name="arrow-down" /></button><button type="button" className="icon-button danger-icon" aria-label={`Quitar ${noun} ${index + 1}`} title={`Quitar ${noun}`} onClick={() => actions.remove(index)}><Icon name="trash" /></button></div>;
+  return <div className="calendar-row-actions flex items-end gap-1"><button type="button" className={buttonStyles({ variant: "icon" })} aria-label={`Subir ${noun} ${index + 1}`} title={`Subir ${noun}`} disabled={index === 0} onClick={() => actions.move(index, index - 1)}><Icon name="arrow-up" /></button><button type="button" className={buttonStyles({ variant: "icon" })} aria-label={`Bajar ${noun} ${index + 1}`} title={`Bajar ${noun}`} disabled={index === count - 1} onClick={() => actions.move(index, index + 1)}><Icon name="arrow-down" /></button><button type="button" className={cn(buttonStyles({ variant: "icon" }), "danger-icon text-danger")} aria-label={`Quitar ${noun} ${index + 1}`} title={`Quitar ${noun}`} onClick={() => actions.remove(index)}><Icon name="trash" /></button></div>;
 }
 
 function ReferenceName({ uri, fallback }: { uri: string; fallback: string }) {
@@ -652,17 +653,17 @@ function ReferenceName({ uri, fallback }: { uri: string; fallback: string }) {
     enabled: Boolean(session && normalized),
     retry: false,
   });
-  if (!uri) return <span className="field-picker-status">{fallback}</span>;
-  return <span className="field-picker-status">{query.data ? query.data.result.snippet.replace(/[\[\]]/gu, "") : query.isError ? "Referencia no disponible" : "Referencia seleccionada"}</span>;
+  if (!uri) return <span className="field-picker-status min-h-10 rounded-lg border border-line bg-subtle px-3 py-2 text-sm text-muted">{fallback}</span>;
+  return <span className="field-picker-status min-h-10 rounded-lg border border-line bg-subtle px-3 py-2 text-sm text-muted">{query.data ? query.data.result.snippet.replace(/[\[\]]/gu, "") : query.isError ? "Referencia no disponible" : "Referencia seleccionada"}</span>;
 }
 
 function MarkdownPreview({ value }: { value: string }) {
   const [open, setOpen] = useState(false);
-  return <><button type="button" className="secondary markdown-preview-toggle" aria-expanded={open} onClick={() => setOpen((current) => !current)}>{open ? "Ocultar vista previa" : "Mostrar vista previa segura"}</button>{open && <div className="markdown-preview" data-markdown-mode="safe-preview">{safeMarkdown(value)}</div>}</>;
+  return <><button type="button" className={cn(buttonStyles({ variant: "secondary", size: "compact" }), "markdown-preview-toggle w-fit")} aria-expanded={open} onClick={() => setOpen((current) => !current)}>{open ? "Ocultar vista previa" : "Mostrar vista previa segura"}</button>{open && <div className="markdown-preview rounded-xl border border-line bg-raised p-5 font-serif leading-relaxed" data-markdown-mode="safe-preview">{safeMarkdown(value)}</div>}</>;
 }
 
 function safeMarkdown(value: string): ReactNode {
-  if (!value.trim()) return <p className="muted">La vista previa aparecerá aquí.</p>;
+  if (!value.trim()) return <p className="muted text-muted">La vista previa aparecerá aquí.</p>;
   return value.split(/\r?\n/u).map((line, index) => {
     const heading = /^(#{1,4})\s+(.+)$/u.exec(line);
     const item = /^[-*]\s+(.+)$/u.exec(line);
@@ -684,7 +685,7 @@ function safeInlineMarkdown(value: string): ReactNode[] {
     const label = match[1];
     const target = match[2].trim();
     if (target.startsWith("nirmata://") && objectKindFromUri(target)) {
-      nodes.push(<button key={`${match.index}-${target}`} type="button" className="meta-link" title="Abrir referencia interna" onClick={() => void selectUri(target)}>{label}</button>);
+      nodes.push(<button key={`${match.index}-${target}`} type="button" className="meta-link min-h-0 justify-start border-0 bg-transparent p-0 text-left text-accent" title="Abrir referencia interna" onClick={() => void selectUri(target)}>{label}</button>);
     } else if (/^https:\/\//iu.test(target)) {
       nodes.push(<a key={`${match.index}-${target}`} href={target} target="_blank" rel="noreferrer noopener">{label} (enlace externo)</a>);
     } else {
@@ -698,7 +699,7 @@ function safeInlineMarkdown(value: string): ReactNode[] {
 
 function FieldErrors({ id, messages }: { id: string; messages: string[] }) {
   if (messages.length === 0) return null;
-  return <ul id={id} className="field-error-list">{messages.map((message, index) => <li key={`${message}-${index}`}>{message}</li>)}</ul>;
+  return <ul id={id} className="field-error-list text-sm text-danger">{messages.map((message, index) => <li key={`${message}-${index}`}>{message}</li>)}</ul>;
 }
 
 function cleanLabel(result: SearchResult): string {

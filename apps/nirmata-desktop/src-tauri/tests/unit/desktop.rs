@@ -122,6 +122,15 @@ fn provider_errors_map_to_stable_command_codes() {
         5,
     ))));
     assert_eq!(timeout.code, "provider_timeout");
+    assert!(timeout.message.contains("timed out after 5s"));
+
+    let repair_timeout = CommandError::from(AppError::AiProposalRepairFailed {
+        initial_failure: "change_set_draft contained truncated JSON".to_owned(),
+        source: Box::new(AppError::Ai(AiError::RequestTimedOut(Duration::from_secs(45)))),
+    });
+    assert_eq!(repair_timeout.code, "provider_timeout");
+    assert!(repair_timeout.message.contains("truncated JSON"));
+    assert!(repair_timeout.message.contains("timed out after 45s"));
 
     let cancelled = CommandError::from(AppError::Ai(AiError::RequestCancelled));
     assert_eq!(cancelled.code, "provider_cancelled");

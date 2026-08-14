@@ -4,11 +4,6 @@ function setStatus(message: string): void {
   appActions.setStatus(message);
 }
 
-function setMarkdownText(element: HTMLElement, value: string | null | undefined, fallback: string): void {
-  element.dataset.markdownMode = "plain-text";
-  element.textContent = normalizeText(value, fallback);
-}
-
 function commandMessage(value: unknown): string {
   return commandErrorCopy(value).detail;
 }
@@ -53,31 +48,6 @@ function showError(value: unknown): void {
 
 function clearError(): void {
   clearFeedback();
-}
-
-function button(text: string, className?: string): HTMLButtonElement {
-  const element = document.createElement("button");
-  element.type = "button";
-  element.textContent = text;
-  if (className) {
-    element.className = className;
-  }
-  return element;
-}
-
-function block(className?: string): HTMLDivElement {
-  const element = document.createElement("div");
-  if (className) {
-    element.className = className;
-  }
-  return element;
-}
-
-function badge(text: string, className?: string): HTMLSpanElement {
-  const element = document.createElement("span");
-  element.className = ["badge", className].filter(Boolean).join(" ");
-  element.textContent = text;
-  return element;
 }
 
 function shortId(value: string): string {
@@ -452,9 +422,6 @@ import type {
 } from "./types.js";
 
 export {
-  badge,
-  block,
-  button,
   clearError,
   commandCode,
   commandMessage,
@@ -478,7 +445,6 @@ export {
   previewText,
   retainedDraftHint,
   serializeContentReferences,
-  setMarkdownText,
   setStatus,
   shortId,
   showError,

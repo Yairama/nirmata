@@ -385,7 +385,7 @@ where
             CRITIC_SYSTEM_PROMPT,
             CRITIC_PROMPT_VERSION,
             4_096,
-            None,
+            Some(critique_report_schema()),
             parse_critique_report,
             options,
         )
@@ -573,6 +573,10 @@ fn change_set_draft_schema() -> ResponseJsonSchema {
     generated_response_schema::<ChangeSetDraft>("nirmata_change_set_draft_v2", false)
 }
 
+fn critique_report_schema() -> ResponseJsonSchema {
+    generated_response_schema::<CritiqueReport>("nirmata_critique_report_v1", false)
+}
+
 fn generated_response_schema<T: JsonSchema>(name: &str, strict: bool) -> ResponseJsonSchema {
     let mut schema =
         serde_json::to_value(schema_for!(T)).expect("schemars schemas must serialize to JSON");
@@ -590,8 +594,16 @@ fn remove_provider_unsupported_annotations(value: &mut Value) {
             object.remove("$schema");
             object.remove("title");
             object.remove("format");
-            for nested in object.values_mut() {
-                remove_provider_unsupported_annotations(nested);
+            for (key, nested) in object {
+                if matches!(key.as_str(), "properties" | "definitions" | "$defs") {
+                    if let Value::Object(schemas) = nested {
+                        for schema in schemas.values_mut() {
+                            remove_provider_unsupported_annotations(schema);
+                        }
+                    }
+                } else {
+                    remove_provider_unsupported_annotations(nested);
+                }
             }
         }
         Value::Array(items) => {

@@ -13,9 +13,14 @@ import type {
   ImportReviewPreparation,
 } from "./types.js";
 import { useSession } from "./session-provider.js";
+import { buttonStyles, chipStyles, cn, noticeStyles } from "./ui-styles.js";
 
 type DecisionPoint = ImportReviewPreparation["decisionPoints"][number];
 type ProgressEvent = { requestId: string; progress: { kind: string } };
+
+const loreCandidateFactsStyles = "lore-candidate-facts m-0 grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-2 [&>div]:bg-subtle [&>div]:p-2 [&_dd]:mt-1 [&_dt]:text-xs [&_dt]:text-muted";
+const lorePreviewStyles = "lore-preview rounded-xl border border-line bg-raised p-5 font-serif leading-relaxed";
+const technicalFactsStyles = "technical-facts grid gap-0 [&>div]:grid [&>div]:grid-cols-[minmax(7rem,0.4fr)_minmax(0,1fr)] [&>div]:gap-4 [&>div]:border-b [&>div]:border-line [&>div]:py-2 [&>div]:text-sm [&_dd]:min-w-0 [&_dd]:break-words [&_dt]:text-muted";
 
 function requestId() {
   return crypto.randomUUID();
@@ -43,11 +48,11 @@ function editedCandidate(candidate: ImportCandidate, value: string, authenticati
 
 function CandidateFacts({ candidate }: { candidate: ImportCandidate }) {
   switch (candidate.kind) {
-    case "entity": return <dl className="lore-candidate-facts"><div><dt>Nombre</dt><dd>{candidate.name}</dd></div><div><dt>Tipo</dt><dd>{humanize(candidate.entityKind)}</dd></div><div><dt>Alias</dt><dd>{candidate.aliases.join(", ") || "Sin alias"}</dd></div></dl>;
-    case "relation": return <dl className="lore-candidate-facts"><div><dt>Origen</dt><dd>{candidate.sourceName}</dd></div><div><dt>Destino</dt><dd>{candidate.targetName}</dd></div><div><dt>Dirección</dt><dd>{humanize(candidate.direction)}</dd></div></dl>;
-    case "event": return <dl className="lore-candidate-facts"><div><dt>Resumen</dt><dd>{candidate.summary}</dd></div><div><dt>Participantes</dt><dd>{candidate.participantNames.join(", ") || "Sin participantes"}</dd></div></dl>;
-    case "claim": return <dl className="lore-candidate-facts"><div><dt>Sujeto</dt><dd>{candidate.subjectName}</dd></div><div><dt>Predicado</dt><dd>{candidate.predicateKey || "Prosa"}</dd></div><div><dt>Objeto</dt><dd>{candidate.objectScalar || "No especificado"}</dd></div><div><dt>Polaridad</dt><dd>{humanize(candidate.polarity)}</dd></div></dl>;
-    case "rule": return <dl className="lore-candidate-facts"><div><dt>Alcance</dt><dd>{candidate.scope}</dd></div></dl>;
+    case "entity": return <dl className={loreCandidateFactsStyles}><div><dt>Nombre</dt><dd>{candidate.name}</dd></div><div><dt>Tipo</dt><dd>{humanize(candidate.entityKind)}</dd></div><div><dt>Alias</dt><dd>{candidate.aliases.join(", ") || "Sin alias"}</dd></div></dl>;
+    case "relation": return <dl className={loreCandidateFactsStyles}><div><dt>Origen</dt><dd>{candidate.sourceName}</dd></div><div><dt>Destino</dt><dd>{candidate.targetName}</dd></div><div><dt>Dirección</dt><dd>{humanize(candidate.direction)}</dd></div></dl>;
+    case "event": return <dl className={loreCandidateFactsStyles}><div><dt>Resumen</dt><dd>{candidate.summary}</dd></div><div><dt>Participantes</dt><dd>{candidate.participantNames.join(", ") || "Sin participantes"}</dd></div></dl>;
+    case "claim": return <dl className={loreCandidateFactsStyles}><div><dt>Sujeto</dt><dd>{candidate.subjectName}</dd></div><div><dt>Predicado</dt><dd>{candidate.predicateKey || "Prosa"}</dd></div><div><dt>Objeto</dt><dd>{candidate.objectScalar || "No especificado"}</dd></div><div><dt>Polaridad</dt><dd>{humanize(candidate.polarity)}</dd></div></dl>;
+    case "rule": return <dl className={loreCandidateFactsStyles}><div><dt>Alcance</dt><dd>{candidate.scope}</dd></div></dl>;
   }
 }
 
@@ -98,10 +103,10 @@ function CandidateCard({ item, batch, onChange }: {
   }
 
   return (
-    <article className="lore-candidate">
-      <div className="lore-candidate-heading">
-        <div><p className="panel-eyebrow">{humanize(item.candidate.kind)}</p><h4>{item.candidate.kind === "entity" ? item.candidate.name : item.candidate.kind === "event" ? item.candidate.summary : candidateText(item.candidate).slice(0, 70)}</h4></div>
-        <span className={`status-chip ${item.status === "selected" ? "success" : "info"}`}>{item.status === "selected" ? "Seleccionado" : item.status === "rejected" ? "Rechazado" : "Por decidir"}</span>
+    <article className="lore-candidate mt-4 grid gap-4 rounded-2xl border border-line bg-surface p-5">
+      <div className="lore-candidate-heading flex items-start justify-between gap-4">
+        <div><p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">{humanize(item.candidate.kind)}</p><h4>{item.candidate.kind === "entity" ? item.candidate.name : item.candidate.kind === "event" ? item.candidate.summary : candidateText(item.candidate).slice(0, 70)}</h4></div>
+        <span className={cn(chipStyles({ kind: "status", tone: item.status === "selected" ? "success" : "neutral" }), item.status !== "selected" && "info")}>{item.status === "selected" ? "Seleccionado" : item.status === "rejected" ? "Rechazado" : "Por decidir"}</span>
       </div>
       <CandidateFacts candidate={item.candidate} />
       <label>Contenido editable
@@ -120,12 +125,12 @@ function CandidateCard({ item, batch, onChange }: {
           {item.identitySuggestion === "ambiguous" && <option value="ambiguous">Mantener ambigua</option>}
         </select>
       </label>
-      <div className="lore-citations">
+      <div className="lore-citations grid gap-2">
         <strong>Fuentes</strong>
         {item.candidate.citations.map((citation, index) => {
           const source = batch.sources.find((value) => value.id === citation.sourceId);
           const chunk = source?.chunks.find((value) => value.id === citation.chunkId);
-          return <blockquote key={`${citation.chunkId}-${index}`}><cite>{source?.fileName ?? "Fuente"}{chunk ? `, líneas ${chunk.lineStart}-${chunk.lineEnd}` : ""}</cite><p>{citation.excerpt}</p><button type="button" className="ghost" onClick={async () => {
+          return <blockquote className="m-0 border-l-4 border-accent bg-subtle px-3 py-2.5 [&_p]:mt-1" key={`${citation.chunkId}-${index}`}><cite>{source?.fileName ?? "Fuente"}{chunk ? `, líneas ${chunk.lineStart}-${chunk.lineEnd}` : ""}</cite><p>{citation.excerpt}</p><button type="button" className={buttonStyles({ variant: "ghost" })} onClick={async () => {
             try {
               const location = await invoke<{ chunk: { content: string } }>("open_lore_chunk", { input: { batchId: batch.id, chunkId: citation.chunkId } });
               setOpenedExcerpt(location.chunk.content);
@@ -134,13 +139,13 @@ function CandidateCard({ item, batch, onChange }: {
             }
           }}>Ver fragmento copiado</button></blockquote>;
         })}
-        {openedExcerpt && <pre className="lore-preview">{openedExcerpt}</pre>}
+        {openedExcerpt && <pre className={lorePreviewStyles}>{openedExcerpt}</pre>}
       </div>
       <details><summary>Detalles técnicos</summary><p>Confianza de extracción: {(item.candidate.technicalConfidence * 100).toFixed(0)} %. No representa verdad del mundo.</p></details>
-      <div className="pending-actions">
-        <button type="button" className="secondary" disabled={saving} onClick={saveEdit}>{saving ? "Guardando…" : "Guardar edición"}</button>
+      <div className="pending-actions flex flex-wrap items-center gap-2">
+        <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={saving} onClick={saveEdit}>{saving ? "Guardando…" : "Guardar edición"}</button>
         <button type="button" onClick={() => decide(true)}>{item.status === "selected" ? "Actualizar selección" : "Seleccionar"}</button>
-        <button type="button" className="ghost" onClick={() => decide(false)}>Rechazar</button>
+        <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => decide(false)}>Rechazar</button>
       </div>
     </article>
   );
@@ -347,14 +352,14 @@ export function LoreImportWorkspace({ launchId }: { launchId: number | null }) {
   const selectedCount = candidates.filter((candidate) => candidate.status === "selected").length;
 
   return (
-    <section className="lore-import-workspace" aria-labelledby="lore-import-title">
-      <div className="lore-workspace-heading">
-        <div><p className="panel-eyebrow">Texto externo · todavía no es canon</p><h2 id="lore-import-title">Importar material del mundo</h2></div>
-        <p role="status" className="panel-summary">{status}</p>
+    <section className="lore-import-workspace bg-canvas p-5 lg:p-7" aria-labelledby="lore-import-title">
+      <div className="lore-workspace-heading flex items-start justify-between gap-4">
+        <div><p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Texto externo · todavía no es canon</p><h2 id="lore-import-title">Importar material del mundo</h2></div>
+        <p role="status" className="panel-summary text-xs font-medium text-muted">{status}</p>
       </div>
-      {session.read_only && <p className="notice warning">Estás viendo una versión anterior. Vuelve a la versión actual para crear o continuar lotes.</p>}
-      {stale && <p className="notice warning">Este lote pertenece a otra variante o versión. Sus fuentes siguen guardadas, pero debes volver a esa línea o crear un lote nuevo.</p>}
-      <div className="lore-toolbar">
+      {session.read_only && <p className={noticeStyles({ tone: "warning" })}>Estás viendo una versión anterior. Vuelve a la versión actual para crear o continuar lotes.</p>}
+      {stale && <p className={noticeStyles({ tone: "warning" })}>Este lote pertenece a otra variante o versión. Sus fuentes siguen guardadas, pero debes volver a esa línea o crear un lote nuevo.</p>}
+      <div className="lore-toolbar flex flex-wrap items-end gap-3">
         <label>Lote guardado
           <select value={batch?.id ?? ""} onChange={(event) => {
             const selected = batches.find((item) => item.id === event.target.value);
@@ -364,37 +369,37 @@ export function LoreImportWorkspace({ launchId }: { launchId: number | null }) {
             {batches.map((item) => <option key={item.id} value={item.id}>{new Date(item.createdAtMs).toLocaleString("es")} · {item.sources.map((source) => source.fileName).join(", ")}</option>)}
           </select>
         </label>
-        <div className="pending-actions">
+        <div className="pending-actions flex flex-wrap items-center gap-2">
           <button type="button" disabled={session.read_only || Boolean(activeRequestId)} onClick={chooseSources}>Nuevo lote…</button>
-          <button type="button" className="secondary" disabled={!batch || stale || !providerReady || Boolean(activeRequestId)} onClick={extract}>Extraer candidatos</button>
-          <button type="button" className="secondary" disabled={!activeRequestId} onClick={cancelRequest}>Cancelar</button>
+          <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={!batch || stale || !providerReady || Boolean(activeRequestId)} onClick={extract}>Extraer candidatos</button>
+          <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={!activeRequestId} onClick={cancelRequest}>Cancelar</button>
           <button type="button" disabled={!batch || stale || selectedCount === 0 || !providerReady || Boolean(activeRequestId)} onClick={prepareReview}>Preparar revisión</button>
-          <button type="button" className="ghost" disabled={!batch || Boolean(activeRequestId)} onClick={deleteBatch}>{deleteArmed ? "Confirmar eliminar lote" : "Eliminar lote"}</button>
+          <button type="button" className={buttonStyles({ variant: "ghost" })} disabled={!batch || Boolean(activeRequestId)} onClick={deleteBatch}>{deleteArmed ? "Confirmar eliminar lote" : "Eliminar lote"}</button>
         </div>
       </div>
-      {!batch && <p className="empty-state">Selecciona archivos Markdown o texto. Nirmata guarda una copia temporal que puedes revisar sin modificar los originales.</p>}
+      {!batch && <p className="empty-state grid gap-4 rounded-xl border border-dashed border-line bg-surface p-5 text-sm text-muted">Selecciona archivos Markdown o texto. Nirmata guarda una copia temporal que puedes revisar sin modificar los originales.</p>}
       {batch && (
         <>
-          <div className="lore-source-grid">
+          <div className="lore-source-grid grid grid-cols-2 gap-3 max-mobile:grid-cols-1">
             {batch.sources.map((source) => (
-              <article key={source.id} className="lore-source-card">
+              <article key={source.id} className="lore-source-card mt-4 grid gap-4 rounded-2xl border border-line bg-surface p-5">
                 <div><h3>{source.fileName}</h3><p>{source.sizeBytes.toLocaleString("es")} bytes · {source.chunks.length} fragmentos</p></div>
-                <pre className="lore-preview">{source.preview}</pre>
-                <button type="button" className="secondary" disabled={stale || Boolean(activeRequestId)} onClick={() => replaceSource(source.id, source.path)}>Volver a copiar desde el origen</button>
-                <details><summary>Detalles técnicos</summary><dl className="technical-facts"><div><dt>Hash</dt><dd>{source.contentHash}</dd></div><div><dt>Ruta original</dt><dd className="path">{source.path}</dd></div></dl></details>
+                <pre className={lorePreviewStyles}>{source.preview}</pre>
+                <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={stale || Boolean(activeRequestId)} onClick={() => replaceSource(source.id, source.path)}>Volver a copiar desde el origen</button>
+                <details><summary>Detalles técnicos</summary><dl className={technicalFactsStyles}><div><dt>Hash</dt><dd>{source.contentHash}</dd></div><div><dt>Ruta original</dt><dd className="path font-mono">{source.path}</dd></div></dl></details>
               </article>
             ))}
           </div>
           {decisionPoints.map((point) => (
-            <article key={point.candidateId} className="notice warning lore-decision">
+            <article key={point.candidateId} className={noticeStyles({ tone: "warning" })}>
               <h3>Decisión necesaria</h3><p>{point.prompt}</p>
-              <div className="pending-actions">{point.alternatives.map((alternative) => <button key={alternative} type="button" className={alternative === "reject" ? "ghost" : "secondary"} onClick={() => decideFromPoint(point, alternative)}>{alternative === "new" ? "Crear identidad nueva" : alternative === "mark_canonical" ? "Tratar como hecho canónico" : alternative === "reject" ? "Rechazar candidato" : candidates.flatMap((candidate) => candidate.identityMatches).find((match) => match.uri === alternative)?.name ?? "Enlazar identidad"}</button>)}</div>
+              <div className="pending-actions flex flex-wrap items-center gap-2">{point.alternatives.map((alternative) => <button key={alternative} type="button" className={buttonStyles({ variant: alternative === "reject" ? "ghost" : "secondary" })} onClick={() => decideFromPoint(point, alternative)}>{alternative === "new" ? "Crear identidad nueva" : alternative === "mark_canonical" ? "Tratar como hecho canónico" : alternative === "reject" ? "Rechazar candidato" : candidates.flatMap((candidate) => candidate.identityMatches).find((match) => match.uri === alternative)?.name ?? "Enlazar identidad"}</button>)}</div>
             </article>
           ))}
-          <div className="lore-candidate-list">
+          <div className="lore-candidate-list grid gap-4">
             {candidates.map((item) => <CandidateCard key={item.id} item={item} batch={batch} onChange={(updated, message) => { setCandidates(updated); setDecisionPoints((value) => value.filter((point) => point.candidateId !== item.id)); setStatus(message); }} />)}
           </div>
-          {candidates.length === 0 && <p className="empty-state">Las fuentes están guardadas. Extrae candidatos para comenzar la revisión de identidad y contenido.</p>}
+          {candidates.length === 0 && <p className="empty-state grid gap-4 rounded-xl border border-dashed border-line bg-surface p-5 text-sm text-muted">Las fuentes están guardadas. Extrae candidatos para comenzar la revisión de identidad y contenido.</p>}
         </>
       )}
     </section>

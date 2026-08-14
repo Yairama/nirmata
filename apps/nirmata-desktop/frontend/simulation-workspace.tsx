@@ -19,6 +19,7 @@ import type {
   SimulationTransition,
   SimulationTransitionSelection,
 } from "./types.js";
+import { buttonStyles, cn } from "./ui-styles.js";
 
 type NamedObject = { id: string; label: string };
 type ResourceRow = NamedObject & { unit: string };
@@ -164,7 +165,7 @@ function SelectObjectButton({ title, onApply }: { title: string; onApply: (resul
   return (
     <button
       type="button"
-      className="secondary"
+      className={buttonStyles({ variant: "secondary" })}
       onClick={(event) => requestObjectPicker({
         title,
         kinds: ["entity"],
@@ -275,28 +276,28 @@ function SimulationForm({ form, setForm, selected, onSaved, onDeleted }: {
   }
 
   return (
-    <form className="simulation-form simulation-builder" onSubmit={(event) => void save(event)}>
+    <form className="simulation-form simulation-builder mt-4 grid gap-4 rounded-2xl border border-line bg-surface p-5" onSubmit={(event) => void save(event)}>
       <label>Nombre del escenario
         <input name="scenario-name" autoComplete="off" maxLength={120} required value={form.name} onChange={(event) => patch({ name: event.currentTarget.value })} />
       </label>
 
       <fieldset>
         <legend>Facciones participantes</legend>
-        <p className="muted">Elige entidades del mundo; sus nombres se usan en todas las reglas.</p>
-        <div className="simulation-chip-list">
-          {form.factions.map((faction) => <span className="simulation-chip" key={faction.id}>{faction.label}<button type="button" className="ghost" aria-label={`Quitar ${faction.label}`} onClick={() => removeFaction(faction.id)}>Quitar</button></span>)}
+        <p className="muted text-muted">Elige entidades del mundo; sus nombres se usan en todas las reglas.</p>
+        <div className="simulation-chip-list flex flex-wrap gap-2">
+          {form.factions.map((faction) => <span className="simulation-chip inline-flex items-center gap-1.5 rounded-full border border-line bg-surface py-1 pl-3 pr-1.5" key={faction.id}>{faction.label}<button type="button" className={cn(buttonStyles({ variant: "ghost" }), "min-h-7 px-2 py-0.5")} aria-label={`Quitar ${faction.label}`} onClick={() => removeFaction(faction.id)}>Quitar</button></span>)}
         </div>
-        <button type="button" className="secondary" onClick={(event) => requestObjectPicker({ title: "Facciones participantes", kinds: ["entity"], multiple: true, returnFocus: event.currentTarget, apply: addFactions })}>Añadir facciones</button>
+        <button type="button" className={buttonStyles({ variant: "secondary" })} onClick={(event) => requestObjectPicker({ title: "Facciones participantes", kinds: ["entity"], multiple: true, returnFocus: event.currentTarget, apply: addFactions })}>Añadir facciones</button>
       </fieldset>
 
       <fieldset>
         <legend>Recursos</legend>
-        <div className="simulation-row-list">
+        <div className="simulation-row-list grid min-w-0 gap-3">
           {form.resources.map((resource, index) => (
-            <div className="simulation-builder-row" key={resource.id}>
+            <div className="simulation-builder-row grid grid-cols-[1fr_1fr_auto] gap-3 border-b border-line py-3 max-mobile:grid-cols-1" key={resource.id}>
               <strong>{resource.label}</strong>
               <label>Unidad<input name={`resource-${index}-unit`} value={resource.unit} onChange={(event) => updateResource(index, event.currentTarget.value)} /></label>
-              <button type="button" className="ghost" onClick={() => removeResource(resource.id)}>Quitar</button>
+              <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => removeResource(resource.id)}>Quitar</button>
             </div>
           ))}
         </div>
@@ -305,45 +306,45 @@ function SimulationForm({ form, setForm, selected, onSaved, onDeleted }: {
 
       <fieldset>
         <legend>Existencias iniciales</legend>
-        <div className="simulation-row-list">
+        <div className="simulation-row-list grid min-w-0 gap-3">
           {form.stocks.map((stock, index) => (
-            <div className="simulation-builder-row simulation-stock-row" key={`${index}-${stock.factionId}-${stock.resourceId}`}>
+            <div className="simulation-builder-row grid grid-cols-[1fr_1fr_auto] gap-3 border-b border-line py-3 max-mobile:grid-cols-1" key={`${index}-${stock.factionId}-${stock.resourceId}`}>
               <label>Facción<select name={`stock-${index}-faction`} value={stock.factionId} onChange={(event) => updateStock(index, { factionId: event.currentTarget.value })}>{form.factions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
               <label>Recurso<select name={`stock-${index}-resource`} value={stock.resourceId} onChange={(event) => updateStock(index, { resourceId: event.currentTarget.value })}>{form.resources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
               <label>Cantidad<input name={`stock-${index}-quantity`} type="number" step="1" value={stock.quantity} onChange={(event) => updateStock(index, { quantity: event.currentTarget.value })} /></label>
               <label>Capacidad<input name={`stock-${index}-capacity`} type="number" min="0" step="1" value={stock.capacity} onChange={(event) => updateStock(index, { capacity: event.currentTarget.value })} /></label>
-              <button type="button" className="ghost" onClick={() => patch({ stocks: form.stocks.filter((_, itemIndex) => itemIndex !== index) })}>Quitar</button>
+              <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => patch({ stocks: form.stocks.filter((_, itemIndex) => itemIndex !== index) })}>Quitar</button>
             </div>
           ))}
         </div>
-        <button type="button" className="secondary" disabled={!form.factions.length || !form.resources.length} onClick={() => patch({ stocks: [...form.stocks, { factionId: form.factions[0]!.id, resourceId: form.resources[0]!.id, quantity: "0", capacity: "0" }] })}>Añadir existencia</button>
+        <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={!form.factions.length || !form.resources.length} onClick={() => patch({ stocks: [...form.stocks, { factionId: form.factions[0]!.id, resourceId: form.resources[0]!.id, quantity: "0", capacity: "0" }] })}>Añadir existencia</button>
       </fieldset>
 
       <fieldset>
         <legend>Reglas por paso</legend>
-        <div className="simulation-row-list">
+        <div className="simulation-row-list grid min-w-0 gap-3">
           {form.rules.map((rule, index) => (
-            <div className="simulation-builder-row simulation-rule-row" key={index}>
+            <div className="simulation-builder-row grid grid-cols-[1fr_1fr_auto] gap-3 border-b border-line py-3 max-mobile:grid-cols-1" key={index}>
               <label>Acción<select name={`rule-${index}-action`} value={rule.kind} onChange={(event) => updateRule(index, { kind: event.currentTarget.value as RuleRow["kind"] })}><option value="production">Produce</option><option value="consumption">Consume</option><option value="transfer">Transfiere</option></select></label>
               <label>{rule.kind === "transfer" ? "Origen" : "Facción"}<select name={`rule-${index}-faction`} value={rule.factionId} onChange={(event) => updateRule(index, { factionId: event.currentTarget.value })}>{form.factions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
               {rule.kind === "transfer" && <label>Destino<select name={`rule-${index}-destination`} value={rule.destinationId} onChange={(event) => updateRule(index, { destinationId: event.currentTarget.value })}>{form.factions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
               <label>Recurso<select name={`rule-${index}-resource`} value={rule.resourceId} onChange={(event) => updateRule(index, { resourceId: event.currentTarget.value })}>{form.resources.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
               <label>Cantidad<input name={`rule-${index}-amount`} type="number" min="0" step="1" value={rule.amount} onChange={(event) => updateRule(index, { amount: event.currentTarget.value })} /></label>
-              <button type="button" className="ghost" onClick={() => patch({ rules: form.rules.filter((_, itemIndex) => itemIndex !== index) })}>Quitar</button>
+              <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => patch({ rules: form.rules.filter((_, itemIndex) => itemIndex !== index) })}>Quitar</button>
             </div>
           ))}
         </div>
-        <button type="button" className="secondary" disabled={!form.factions.length || !form.resources.length} onClick={() => patch({ rules: [...form.rules, { kind: "production", factionId: form.factions[0]!.id, destinationId: form.factions[1]?.id ?? form.factions[0]!.id, resourceId: form.resources[0]!.id, amount: "1" }] })}>Añadir regla</button>
+        <button type="button" className={buttonStyles({ variant: "secondary" })} disabled={!form.factions.length || !form.resources.length} onClick={() => patch({ rules: [...form.rules, { kind: "production", factionId: form.factions[0]!.id, destinationId: form.factions[1]?.id ?? form.factions[0]!.id, resourceId: form.resources[0]!.id, amount: "1" }] })}>Añadir regla</button>
       </fieldset>
 
-      <div className="simulation-form-tail">
+      <div className="simulation-form-tail col-span-full grid min-w-0 grid-cols-[minmax(10rem,0.35fr)_minmax(16rem,1fr)] gap-3 max-mobile:grid-cols-1">
         <label>Máximo de pasos<input name="scenario-max-steps" type="number" min="1" max="1000" step="1" required value={form.maxSteps} onChange={(event) => patch({ maxSteps: event.currentTarget.value })} /></label>
         <label>Supuestos, uno por línea<textarea id="simulation-assumptions" name="scenario-assumptions" rows={3} value={form.assumptions} onChange={(event) => patch({ assumptions: event.currentTarget.value })} /></label>
       </div>
-      <div className="pending-actions simulation-actions">
+      <div className="pending-actions simulation-actions col-span-full flex flex-wrap items-center gap-2">
         <button type="submit" disabled={busy}>{selected ? "Guardar cambios" : "Guardar escenario"}</button>
-        {selected && <button type="button" className={deleteArmed ? "danger" : "ghost"} disabled={busy} onClick={() => void remove()}>{deleteArmed ? "Confirmar eliminación" : "Eliminar"}</button>}
-        {deleteArmed && <button type="button" className="ghost" onClick={() => setDeleteArmed(false)}>Cancelar</button>}
+        {selected && <button type="button" className={buttonStyles({ variant: deleteArmed ? "danger" : "ghost" })} disabled={busy} onClick={() => void remove()}>{deleteArmed ? "Confirmar eliminación" : "Eliminar"}</button>}
+        {deleteArmed && <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => setDeleteArmed(false)}>Cancelar</button>}
       </div>
     </form>
   );
@@ -414,18 +415,18 @@ function RunColumn({ run, scenario, labels, allowPromotion, onReviewed }: {
   }
 
   return (
-    <section className="simulation-run-column">
-      <header><p className="panel-eyebrow">{allowPromotion ? "Escenario principal" : "Comparación"}</p><h4>{scenario.name}</h4><p>{run.stepsCompleted} pasos · {run.assumptions.length ? run.assumptions.join(" · ") : "Sin supuestos declarados"}</p></header>
+    <section className="simulation-run-column mt-4 grid gap-4 rounded-2xl border border-line bg-surface p-5">
+      <header><p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">{allowPromotion ? "Escenario principal" : "Comparación"}</p><h4>{scenario.name}</h4><p>{run.stepsCompleted} pasos · {run.assumptions.length ? run.assumptions.join(" · ") : "Sin supuestos declarados"}</p></header>
       {run.transitions.map((transition) => {
         const draft = draftFor(transition);
         return (
-          <article className="simulation-transition" key={`${transition.step}:${transition.ruleIndex}`}>
-            <p className="panel-eyebrow">Paso {transition.step}</p>
+          <article className="simulation-transition grid gap-3 rounded-xl border border-line bg-raised p-4" key={`${transition.step}:${transition.ruleIndex}`}>
+            <p className="panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent">Paso {transition.step}</p>
             <h5>{ruleText(transition.rule)}</h5>
-            <dl className="simulation-transition-values"><div><dt>Antes</dt><dd>{stockText(transition.before)}</dd></div><div><dt>Después</dt><dd>{stockText(transition.after)}</dd></div><div><dt>Resultado</dt><dd>{transition.applied} aplicado · {transition.shortage ? `${transition.shortage} sin cubrir` : "sin faltante"}</dd></div></dl>
+            <dl className="simulation-transition-values grid grid-cols-2 gap-3"><div><dt>Antes</dt><dd>{stockText(transition.before)}</dd></div><div><dt>Después</dt><dd>{stockText(transition.after)}</dd></div><div><dt>Resultado</dt><dd>{transition.applied} aplicado · {transition.shortage ? `${transition.shortage} sin cubrir` : "sin faltante"}</dd></div></dl>
             {allowPromotion && (
-              <div className="simulation-promotion-fields">
-                <label className="check-row"><input type="checkbox" checked={draft.selected} onChange={(event) => updateDraft(transition, { selected: event.currentTarget.checked })} /> Preparar este resultado para revisión</label>
+              <div className="simulation-promotion-fields grid gap-2">
+                <label className="check-row flex grid-cols-none items-center gap-2 [&_input]:size-4 [&_input]:min-h-0 [&_input]:w-4"><input type="checkbox" checked={draft.selected} onChange={(event) => updateDraft(transition, { selected: event.currentTarget.checked })} /> Preparar este resultado para revisión</label>
                 {draft.selected && <>
                   <label>Convertir en<select value={draft.kind} onChange={(event) => updateDraft(transition, { kind: event.currentTarget.value as PromotionDraft["kind"] })}><option value="create_event">Acontecimiento</option><option value="create_claim">Afirmación disputada</option></select></label>
                   {draft.kind === "create_event" ? <label>Resumen<input value={draft.summary} onChange={(event) => updateDraft(transition, { summary: event.currentTarget.value })} /></label> : <><label>Sujeto<select value={draft.subjectEntityId} onChange={(event) => updateDraft(transition, { subjectEntityId: event.currentTarget.value })}>{scenario.factions.map((id, index) => <option key={id} value={id}>{label(id, `Facción ${index + 1}`)}</option>)}</select></label><label>Contenido<input value={draft.content} onChange={(event) => updateDraft(transition, { content: event.currentTarget.value })} /></label></>}
@@ -515,15 +516,15 @@ export function SimulationWorkspace({ active, onOpenReviews }: { active: boolean
   }
 
   return (
-    <section id="simulation-panel" className="simulation-panel" aria-labelledby="simulation-title" hidden={!active}>
-      <div className="assistant-heading">
-        <div><p className="panel-eyebrow simulation-eyebrow">Laboratorio temporal · fuera del canon</p><h2 id="simulation-title" tabIndex={-1}>Simulación</h2></div>
-        <p className="panel-summary">Los escenarios viven solo durante esta sesión. Ejecutarlos nunca escribe el mundo.</p>
+    <section id="simulation-panel" className="simulation-panel min-h-0 min-w-0 overflow-auto bg-canvas p-5 [grid-column:2] [grid-row:2] lg:p-7 max-mobile:[grid-column:1] max-mobile:[grid-row:3]" aria-labelledby="simulation-title" hidden={!active}>
+      <div className="assistant-heading flex items-start justify-between gap-4">
+        <div><p className="panel-eyebrow simulation-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-inference">Laboratorio temporal · fuera del canon</p><h2 id="simulation-title" tabIndex={-1}>Simulación</h2></div>
+        <p className="panel-summary text-xs font-medium text-muted">Los escenarios viven solo durante esta sesión. Ejecutarlos nunca escribe el mundo.</p>
       </div>
-      <div className="simulation-selectors">
+      <div className="simulation-selectors flex flex-wrap items-end gap-3">
         <label>Escenario<select value={selectedId ?? ""} onChange={(event) => selectScenario(event.currentTarget.value)}><option value="">Nuevo escenario</option>{scenarios.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}</select></label>
         <label>Comparar al ejecutar<select value={compareId} disabled={!selected || scenarios.length < 2} onChange={(event) => setCompareId(event.currentTarget.value)}><option value="">Sin comparación</option>{scenarios.filter((scenario) => scenario.id !== selectedId).map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}</select></label>
-        <button type="button" className="secondary" onClick={() => selectScenario("")}>Nuevo escenario</button>
+        <button type="button" className={buttonStyles({ variant: "secondary" })} onClick={() => selectScenario("")}>Nuevo escenario</button>
         <button type="button" disabled={!selected || running} onClick={() => void run()}>{running ? "Ejecutando…" : "Ejecutar una vez"}</button>
       </div>
       <SimulationForm
@@ -533,9 +534,9 @@ export function SimulationWorkspace({ active, onOpenReviews }: { active: boolean
         onSaved={(saved) => { setSelectedId(saved.id); setPrimaryRun(null); setComparisonRun(null); setForm(formFromScenario(saved, labels)); void refresh(saved.id); }}
         onDeleted={() => { selectScenario(""); void refresh(null); }}
       />
-      <div className="simulation-results" aria-live="polite">
-        {!primaryRun && <p className="empty-state">Guarda y ejecuta un escenario para comparar transiciones y existencias finales.</p>}
-        {primaryRun && selected && <div className="simulation-run-grid"><RunColumn run={primaryRun} scenario={selected} labels={labels} allowPromotion onReviewed={onOpenReviews} />{comparisonRun && <RunColumn run={comparisonRun} scenario={scenarios.find((scenario) => scenario.id === comparisonRun.scenarioId)!} labels={labels} allowPromotion={false} onReviewed={onOpenReviews} />}</div>}
+      <div className="simulation-results grid min-w-0 gap-3" aria-live="polite">
+        {!primaryRun && <p className="empty-state grid gap-4 rounded-xl border border-dashed border-line bg-surface p-5 text-sm text-muted">Guarda y ejecuta un escenario para comparar transiciones y existencias finales.</p>}
+        {primaryRun && selected && <div className="simulation-run-grid grid grid-cols-2 gap-3 max-mobile:grid-cols-1"><RunColumn run={primaryRun} scenario={selected} labels={labels} allowPromotion onReviewed={onOpenReviews} />{comparisonRun && <RunColumn run={comparisonRun} scenario={scenarios.find((scenario) => scenario.id === comparisonRun.scenarioId)!} labels={labels} allowPromotion={false} onReviewed={onOpenReviews} />}</div>}
       </div>
     </section>
   );

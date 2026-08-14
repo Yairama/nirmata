@@ -6,10 +6,13 @@ pendiente de hardware real.
 ## Estrategia de estilos
 
 Nirmata usa Tailwind CSS v4 como motor de build mediante `@tailwindcss/vite`.
-Existe una sola entrada `styles.css`: define los tokens semánticos, los expone a
-Tailwind con `@theme inline` y compone las primitivas locales con utilities. No
-hay CDN, configuración JavaScript, pipeline PostCSS alternativo ni una hoja
-heredada paralela.
+Existe una sola entrada `styles.css`: define los tokens semánticos y breakpoints
+con `@theme inline`, temas runtime, defaults globales y los pocos selectores
+avanzados de plataforma o librerías. El wiring visual de cada feature vive en
+su TSX mediante utilities; `cn` combina condiciones y overrides, mientras CVA
+tipa las variantes compartidas de botones, chips y avisos. No hay CDN,
+configuración JavaScript, pipeline PostCSS alternativo ni una hoja heredada
+paralela.
 
 Los tokens `--n-*` siguen siendo la autoridad para light, dark, system, high
 contrast y forced colors. Tailwind no introduce una segunda paleta de producto.

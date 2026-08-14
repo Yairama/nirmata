@@ -1265,7 +1265,7 @@ impl crate::NirmataApp {
                     .get_mut(&run_id)
                     .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
                 let message = error.to_string();
-                run.state = if matches!(error, AppError::Ai(AiError::RequestCancelled)) {
+                run.state = if error.is_ai_cancelled() {
                     AiRunState::Cancelled(message)
                 } else {
                     AiRunState::Failed(message)
@@ -2232,6 +2232,7 @@ impl crate::NirmataApp {
                 }
             }
             Err(CapabilityError::StructuredOutput(error)) => {
+                let initial_failure = parsing_failure(&error);
                 let repair_input = AiRepairInput {
                     mode: AiMode::Propose,
                     request: request.clone(),
@@ -2239,7 +2240,7 @@ impl crate::NirmataApp {
                     context_object_ids: prepared.context_object_ids.clone(),
                     failed_draft: None,
                     repair_report: AiRepairReport::Parsing {
-                        failure: parsing_failure(&error),
+                        failure: initial_failure.clone(),
                     },
                 };
                 let repair_payload = serialize_payload(&repair_input, "repair")?;
@@ -2251,7 +2252,10 @@ impl crate::NirmataApp {
                         options.clone().into_request_options(),
                     )
                     .await
-                    .map_err(map_capability_error)?;
+                    .map_err(|error| AppError::AiProposalRepairFailed {
+                        initial_failure: initial_failure.message,
+                        source: Box::new(map_capability_error(error)),
+                    })?;
                 let repaired_invocation =
                     transform_draft_invocation(repaired_invocation, draft_transform)?;
                 let (repaired_input, repaired_critique) = self

@@ -473,18 +473,7 @@ impl From<AppError> for CommandError {
             }
             AppError::ReviewIssueNotFound { .. } => "review_issue_not_found",
             AppError::CannotWaiveHardIssue { .. } => "cannot_waive_hard_issue",
-            AppError::Ai(AiError::InvalidBaseUrl(_)) => "invalid_provider_base_url",
-            AppError::Ai(AiError::EmptyProviderApiKey | AiError::MissingProviderApiKey) => {
-                "provider_key_missing"
-            }
-            AppError::Ai(AiError::CredentialStoreClearFailed) => "provider_store_error",
-            AppError::Ai(AiError::RequestTimedOut(_)) => "provider_timeout",
-            AppError::Ai(AiError::RequestCancelled) => "provider_cancelled",
-            AppError::Ai(AiError::Transport(_)) => "provider_transport_error",
-            AppError::Ai(AiError::InvalidHttpStatus { .. }) => "provider_http_error",
-            AppError::Ai(AiError::InvalidResponse(_) | AiError::StreamInterrupted) => {
-                "provider_response_error"
-            }
+            AppError::Ai(error) => ai_error_code(error),
             AppError::AiBaseRevisionMismatch { .. } => "ai_context_stale",
             AppError::AiRunNotFound(_) => "ai_run_not_found",
             AppError::InvalidAiProposal(_) => "invalid_ai_proposal",
@@ -498,6 +487,11 @@ impl From<AppError> for CommandError {
             AppError::SimulationScenarioStale { .. } => "simulation_scenario_stale",
             AppError::AiCritiqueIssueNotFound { .. } => "ai_critique_issue_not_found",
             AppError::InvalidAiRunTransition { .. } => "invalid_ai_run_transition",
+            AppError::AiProposalRepairFailed { source, .. } => match source.as_ref() {
+                AppError::Ai(error) => ai_error_code(error),
+                AppError::InvalidAiProposal(_) => "invalid_ai_proposal",
+                _ => "provider_response_error",
+            },
             AppError::Domain(_) => "invalid_world",
             AppError::Storage(StoreError::StaleVersion { .. })
             | AppError::Storage(StoreError::StaleRevision { .. })
@@ -517,6 +511,19 @@ impl From<AppError> for CommandError {
             code,
             message: error.to_string(),
         }
+    }
+}
+
+fn ai_error_code(error: &AiError) -> &'static str {
+    match error {
+        AiError::InvalidBaseUrl(_) => "invalid_provider_base_url",
+        AiError::EmptyProviderApiKey | AiError::MissingProviderApiKey => "provider_key_missing",
+        AiError::CredentialStoreClearFailed => "provider_store_error",
+        AiError::RequestTimedOut(_) => "provider_timeout",
+        AiError::RequestCancelled => "provider_cancelled",
+        AiError::Transport(_) => "provider_transport_error",
+        AiError::InvalidHttpStatus { .. } => "provider_http_error",
+        AiError::InvalidResponse(_) | AiError::StreamInterrupted => "provider_response_error",
     }
 }
 

@@ -5,6 +5,7 @@ import { createContext, useContext, useDeferredValue, useState } from "react";
 import type { ReactNode } from "react";
 import { useSession } from "./session-provider.js";
 import type { SearchObjectKind, SearchResult, SearchWorldResponse } from "./types.js";
+import { buttonStyles, cn, noticeStyles } from "./ui-styles.js";
 import { observedScopeQueryKey } from "./workspace-data.js";
 
 export type ObjectPickerRequest = {
@@ -75,26 +76,26 @@ export function ObjectPickerProvider({ children }: { children: ReactNode }) {
       {children}
       <Dialog.Root open={request !== null} onOpenChange={(open) => !open && close()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="object-picker-dialog" aria-describedby="object-picker-description">
-          <div className="dialog-heading">
+        <Dialog.Overlay className="dialog-overlay fixed inset-0 z-40 bg-overlay" />
+        <Dialog.Content className="object-picker-dialog fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[min(42rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-2xl border border-line bg-raised p-6 shadow-overlay outline-none [&>*+*]:mt-4" aria-describedby="object-picker-description">
+          <div className="dialog-heading flex items-start justify-between gap-4 border-b border-line pb-4">
             <div>
               <Dialog.Title>{request?.title ?? "Elegir objeto"}</Dialog.Title>
               <Dialog.Description id="object-picker-description">Busca por nombre o contenido en la versión observada.</Dialog.Description>
             </div>
-            <Dialog.Close asChild><button type="button" className="ghost">Cerrar</button></Dialog.Close>
+            <Dialog.Close asChild><button type="button" className={buttonStyles({ variant: "ghost" })}>Cerrar</button></Dialog.Close>
           </div>
           <label>Buscar
             <input autoFocus name="object-picker-search" autoComplete="off" type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Escribe para buscar…" />
           </label>
-          <div className="object-picker-results" role="region" aria-label="Objetos disponibles">
-            {results.isFetching && <p role="status" className="muted">Buscando…</p>}
-            {results.isError && <p role="alert" className="notice warning">No se pudo buscar. El formulario se conservó.</p>}
-            {!results.isFetching && deferredQuery && allowed.length === 0 && <p className="empty-state">No hay objetos compatibles.</p>}
+          <div className="object-picker-results grid max-h-[45dvh] gap-1 overflow-auto" role="region" aria-label="Objetos disponibles">
+            {results.isFetching && <p role="status" className="muted text-muted">Buscando…</p>}
+            {results.isError && <p role="alert" className={noticeStyles({ tone: "warning" })}>No se pudo buscar. El formulario se conservó.</p>}
+            {!results.isFetching && deferredQuery && allowed.length === 0 && <p className="empty-state grid gap-4 rounded-xl border border-dashed border-line bg-surface p-5 text-sm text-muted">No hay objetos compatibles.</p>}
             {allowed.map((result) => {
               const active = selected.some((item) => item.uri === result.uri);
               return (
-                <button key={result.uri} type="button" className="object-picker-result" aria-pressed={request?.multiple ? active : undefined} onClick={() => choose(result)}>
+                <button key={result.uri} type="button" className={cn("object-picker-result grid w-full justify-stretch gap-1 rounded-xl border border-transparent bg-transparent p-3 text-left text-ink hover:border-line hover:bg-subtle", active && "border-accent bg-accent-soft text-accent")} aria-pressed={request?.multiple ? active : undefined} onClick={() => choose(result)}>
                   <strong>{result.snippet.replace(/[\[\]]/g, "")}</strong>
                   <small>{kindLabel(result.object_type as SearchObjectKind)} · {result.authority === "canonical" ? "Canon" : "Perspectiva"}</small>
                 </button>
@@ -102,9 +103,9 @@ export function ObjectPickerProvider({ children }: { children: ReactNode }) {
             })}
           </div>
           {request?.multiple && (
-            <div className="dialog-actions object-picker-actions">
+            <div className="dialog-actions object-picker-actions flex flex-wrap items-center justify-between gap-2">
               <span>{selected.length} seleccionado{selected.length === 1 ? "" : "s"}</span>
-              <button type="button" disabled={selected.length === 0} onClick={() => { request.apply(selected); close(); }}>Usar selección</button>
+              <button type="button" className={buttonStyles()} disabled={selected.length === 0} onClick={() => { request.apply(selected); close(); }}>Usar selección</button>
             </div>
           )}
         </Dialog.Content>

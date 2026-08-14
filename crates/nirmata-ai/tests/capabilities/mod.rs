@@ -326,6 +326,24 @@ async fn critic_uses_a_dedicated_prompt() {
         .expect("capture lock")
         .clone()
         .expect("captured request body");
+    assert_eq!(body["text"]["format"]["type"], "json_schema");
+    assert_eq!(body["text"]["format"]["name"], "nirmata_critique_report_v1");
+    assert_eq!(body["text"]["format"]["strict"], false);
+    let critic_schema = &body["text"]["format"]["schema"];
+    let critic_schema_text = critic_schema.to_string();
+    assert!(critic_schema_text.contains("CritiqueIssue"));
+    assert!(critic_schema_text.contains("affectedOperationIds"));
+    assert!(critic_schema_text.contains("suggestedResolution"));
+    assert_eq!(
+        critic_schema.pointer("/definitions/ContentUri/type"),
+        Some(&json!("string"))
+    );
+    assert!(
+        critic_schema
+            .pointer("/definitions/ContentUri/$ref")
+            .is_none()
+    );
+    assert!(critic_schema.pointer("/definitions/ObjectRef").is_none());
     assert_eq!(
         body["instructions"].as_str().expect("system prompt"),
         concat!(
@@ -344,6 +362,24 @@ async fn critic_uses_a_dedicated_prompt() {
     );
     assert_eq!(result.metadata.prompt_version, CRITIC_PROMPT_VERSION);
     assert_eq!(result.output.issues.len(), 1);
+}
+
+#[test]
+fn schema_cleanup_preserves_real_properties_named_title() {
+    let mut schema = json!({
+        "title": "Document",
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+            "title": { "title": "Title", "type": "string" }
+        }
+    });
+
+    remove_provider_unsupported_annotations(&mut schema);
+
+    assert!(schema.get("title").is_none());
+    assert_eq!(schema["properties"]["title"]["type"], "string");
+    assert!(schema["properties"]["title"].get("title").is_none());
 }
 
 #[tokio::test]

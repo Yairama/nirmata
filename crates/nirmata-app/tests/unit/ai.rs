@@ -22,6 +22,7 @@ use std::{
 enum FakeProposalReply {
     Draft(ChangeSetDraft),
     Structured(StructuredOutputError),
+    Timeout(Duration),
 }
 
 #[derive(Clone)]
@@ -207,6 +208,9 @@ impl AiModeClient for FakeClient {
                 }),
                 FakeProposalReply::Structured(error) => {
                     Err(CapabilityError::StructuredOutput(error))
+                }
+                FakeProposalReply::Timeout(timeout) => {
+                    Err(CapabilityError::Ai(AiError::RequestTimedOut(timeout)))
                 }
             }
         })
@@ -1411,7 +1415,11 @@ async fn two_parsing_failures_stop_after_the_single_repair() {
         .await
         .expect_err("second parser failure ends the workflow");
 
-    assert!(matches!(error, AppError::Ai(AiError::InvalidResponse(_))));
+    assert!(matches!(
+        error,
+        AppError::AiProposalRepairFailed { ref source, .. }
+            if matches!(source.as_ref(), AppError::Ai(AiError::InvalidResponse(_)))
+    ));
     let error_output = error.to_string();
     assert!(!error_output.contains("PRIVATE_LORE_BODY"));
     assert!(!error_output.contains("PRIVATE_API_KEY_VALUE"));
@@ -1442,6 +1450,59 @@ async fn two_parsing_failures_stop_after_the_single_repair() {
         2
     );
     drop(reopened);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn structured_output_failure_is_retained_when_repair_times_out() {
+    let path = project_path("ai-proposal-parsing-repair-timeout");
+    let seeded = seed_world(&path);
+    let world = WorldStore::open(&path)
+        .expect("open store")
+        .load_world()
+        .expect("load world");
+    let unused = draft_for_new_faction(
+        &world,
+        ObjectRef::Entity(seeded.mara.id()),
+        "Unused",
+        "unused",
+    );
+    let first = nirmata_ai::contracts::parse_change_set_draft(
+        "{\"objective\":\"PRIVATE_LORE_BODY",
+    )
+    .expect_err("first truncated output");
+    let fake = FakeClient::new(advisory_response(vec![]), unused).with_proposal_replies(vec![
+        FakeProposalReply::Structured(first),
+        FakeProposalReply::Timeout(Duration::from_secs(45)),
+    ]);
+    let app = open_app(&path);
+
+    let error = app
+        .execute_ai_proposal_with(
+            &fake,
+            "Crea una facción menor.".to_owned(),
+            &context_request(ObjectRef::Entity(seeded.mara.id())),
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect_err("repair timeout ends the workflow");
+
+    let AppError::AiProposalRepairFailed { source, .. } = &error else {
+        panic!("expected contextualized repair error: {error}");
+    };
+    assert!(matches!(
+        source.as_ref(),
+        AppError::Ai(AiError::RequestTimedOut(timeout)) if *timeout == Duration::from_secs(45)
+    ));
+    let message = error.to_string();
+    assert!(message.contains("change_set_draft must be valid structured JSON"));
+    assert!(message.contains("request timed out after 45s"));
+    assert!(!message.contains("PRIVATE_LORE_BODY"));
+    assert_eq!(fake.proposal_calls(), 2);
+    assert_eq!(fake.critique_calls(), 0);
+
+    drop(app);
     fs::remove_file(path).expect("remove project");
 }
 

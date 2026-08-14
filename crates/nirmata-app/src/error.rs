@@ -106,6 +106,10 @@ pub enum AppError {
         status: &'static str,
         action: &'static str,
     },
+    AiProposalRepairFailed {
+        initial_failure: String,
+        source: Box<AppError>,
+    },
     Ai(AiError),
     Domain(DomainError),
     Storage(StoreError),
@@ -324,6 +328,13 @@ impl fmt::Display for AppError {
                 formatter,
                 "AI run {run_id} cannot {action} while its status is {status}"
             ),
+            Self::AiProposalRepairFailed {
+                initial_failure,
+                source,
+            } => write!(
+                formatter,
+                "initial structured AI output failed: {initial_failure}; proposal repair failed: {source}"
+            ),
             Self::Ai(error) => error.fmt(formatter),
             Self::Domain(error) => error.fmt(formatter),
             Self::Storage(error) => error.fmt(formatter),
@@ -345,7 +356,18 @@ impl Error for AppError {
             Self::Storage(error) => Some(error),
             Self::SnapshotIo { source, .. } => Some(source),
             Self::SnapshotSerialization(error) => Some(error),
+            Self::AiProposalRepairFailed { source, .. } => Some(source.as_ref()),
             _ => None,
+        }
+    }
+}
+
+impl AppError {
+    pub(crate) fn is_ai_cancelled(&self) -> bool {
+        match self {
+            Self::Ai(AiError::RequestCancelled) => true,
+            Self::AiProposalRepairFailed { source, .. } => source.is_ai_cancelled(),
+            _ => false,
         }
     }
 }

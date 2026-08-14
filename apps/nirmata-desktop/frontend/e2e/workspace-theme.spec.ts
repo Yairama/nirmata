@@ -99,6 +99,9 @@ test.beforeEach(async ({ page }) => {
             current.active_variant = structuredClone(activeVariant);
             current.read_scope.variantId = activeVariant.id;
             Object.assign(current.world, { calendar: configuredCalendar ? structuredClone(configuredCalendar) : null });
+            if (localStorage.getItem("nirmata.fixture.longPremise") === "true") {
+              current.world.premise_md = Array.from({ length: 18 }, (_, index) => `Párrafo ${index + 1}: magia, tecnología y ciudades transforman el mundo.`).join("\n\n");
+            }
             if (localStorage.getItem("nirmata.fixture.readOnly") === "true") {
               return {
                 ...current,
@@ -956,7 +959,7 @@ test("forced colors preserves workspace controls and focus", async ({ page }) =>
   await page.goto("/");
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Mundo", exact: true }).click();
   await expect(page.locator("#world-view")).toBeVisible();
-  const search = page.locator(".world-explorer-search");
+  const search = page.locator('input[name="world-search"]');
   await search.focus();
   await expect(search).toBeFocused();
   const styles = await search.evaluate((element) => {
@@ -1100,7 +1103,7 @@ test("workspace splitters support pointer, keyboard, collapse and persisted desk
   }
 
   const originalExplorerWidth = Number(await explorerSeparator.getAttribute("aria-valuenow"));
-  await page.locator(".world-explorer-search").fill("filtro que debe conservarse");
+  await page.locator('input[name="world-search"]').fill("filtro que debe conservarse");
   await explorerSeparator.focus();
   await page.keyboard.press("ArrowRight");
   await expect(explorerSeparator).toHaveAttribute("aria-valuenow", String(originalExplorerWidth + 16));
@@ -1110,7 +1113,7 @@ test("workspace splitters support pointer, keyboard, collapse and persisted desk
   await expect(page.locator("#navigation-panel")).toBeHidden();
   await page.getByRole("button", { name: "Restaurar Explorador" }).click();
   await expect(page.locator("#navigation-panel")).toBeVisible();
-  await expect(page.locator(".world-explorer-search")).toHaveValue("filtro que debe conservarse");
+  await expect(page.locator('input[name="world-search"]')).toHaveValue("filtro que debe conservarse");
   await expect(explorerSeparator).toHaveAttribute("aria-valuenow", String(originalExplorerWidth + 16));
 
   await contextSeparator.focus();
@@ -1211,11 +1214,11 @@ test("responsive matrix keeps one narrow World region and accessible modal overl
     if (viewport.width <= 1180) {
       await expect(regionTabs).toBeVisible();
       await expect(panels).toHaveCount(1);
-      await page.locator(".world-explorer-search").fill("memoria persistente");
+      await page.locator('input[name="world-search"]').fill("memoria persistente");
       await regionTabs.getByRole("tab", { name: "Editar" }).click();
       await expect(page.locator("#editor-panel")).toBeVisible();
       await regionTabs.getByRole("tab", { name: "Explorar" }).click();
-      await expect(page.locator(".world-explorer-search")).toHaveValue("memoria persistente");
+      await expect(page.locator('input[name="world-search"]')).toHaveValue("memoria persistente");
     } else {
       await expect(regionTabs).toBeHidden();
       await expect(panels).toHaveCount(3);
@@ -1245,6 +1248,47 @@ test("responsive matrix keeps one narrow World region and accessible modal overl
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
     }
   }
+});
+
+test("open shell owns the viewport and Home returns to visible text", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("nirmata.fixture.longPremise", "true"));
+  await page.setViewportSize({ width: 1440, height: 720 });
+  await page.goto("/");
+
+  const geometry = await page.evaluate(() => {
+    const main = document.querySelector("main")!.getBoundingClientRect();
+    const shell = document.querySelector(".open-shell")!.getBoundingClientRect();
+    return { main: { x: main.x, y: main.y, width: main.width, height: main.height }, shell: { x: shell.x, y: shell.y, width: shell.width, height: shell.height }, viewport: { width: innerWidth, height: innerHeight } };
+  });
+  expect(geometry.main).toEqual({ x: 0, y: 0, width: geometry.viewport.width, height: geometry.viewport.height });
+  expect(geometry.shell).toEqual({ x: 0, y: 0, width: geometry.viewport.width, height: geometry.viewport.height });
+
+  const home = page.locator(".open-world-home");
+  await expect(page.getByRole("heading", { name: "Mundo vacío", level: 1 })).toBeVisible();
+  await expect(home.getByText(/Párrafo 1:/u)).toBeVisible();
+  await home.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Mundo", exact: true }).click();
+  await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Inicio", exact: true }).click();
+  await expect.poll(() => home.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect(page.getByRole("heading", { name: "Mundo vacío", level: 1 })).toBeFocused();
+  await expect(home.getByText(/Párrafo 1:/u)).toBeVisible();
+
+  await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Asistente", exact: true }).click();
+  await expect(page.getByRole("navigation", { name: "Áreas del mundo" }).locator('[aria-current="page"]')).toHaveCount(1);
+  await expect(page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Asistente", exact: true })).toHaveAttribute("aria-expanded", "true");
+});
+
+test("high contrast keeps navigation borders neutral", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("nirmata.appearance.theme", "high-contrast"));
+  await page.goto("/");
+  const colors = await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Cronología", exact: true }).evaluate((element) => {
+    const style = getComputedStyle(element);
+    const neutral = getComputedStyle(document.querySelector(".open-shell-sidebar")!).borderRightColor;
+    const action = getComputedStyle(document.querySelector(".world-home-actions button")!).borderTopColor;
+    return { actual: style.borderTopColor, neutral, action };
+  });
+  expect(colors.actual).toBe(colors.neutral);
+  expect(colors.actual).not.toBe(colors.action);
 });
 
 test("Import center distinguishes lore from structured snapshots", async ({ page }) => {

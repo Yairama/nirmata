@@ -22,6 +22,7 @@ import type {
   SearchResult,
   TimelineOverview,
 } from "./types.js";
+import { buttonStyles, cn, noticeStyles } from "./ui-styles.js";
 import { useWorkspaceData } from "./workspace-data.js";
 
 type NarrativeTab = "timeline" | "causal" | "loose" | "documents";
@@ -46,6 +47,11 @@ const documentKinds: Array<{ value: InternalDocumentKind; label: string }> = [
   { value: "short_story", label: "Historia corta" },
 ];
 
+const eyebrowStyles = "panel-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-accent";
+const emptyStateStyles = "empty-state grid gap-4 rounded-xl border border-dashed border-line bg-surface p-5 text-sm text-muted";
+const narrativeResultStyles = "narrative-result mt-4 grid gap-4 rounded-2xl border border-line bg-surface p-5";
+const narrativeItemStyles = "narrative-item grid gap-3 rounded-xl border border-line bg-raised p-4";
+
 function cleanLabel(result: SearchResult): string {
   return result.snippet.replace(/[\[\]]/gu, "").trim() || "Objeto sin nombre";
 }
@@ -53,8 +59,8 @@ function cleanLabel(result: SearchResult): string {
 function sourceButtons(uris: string[], scope: ReadScope, onOpen: (uri: string, scope: ReadScope) => void): ReactNode {
   if (uris.length === 0) return null;
   return (
-    <div className="narrative-sources" aria-label="Fuentes">
-      {uris.map((uri, index) => <button key={uri} type="button" className="ghost" onClick={() => onOpen(uri, scope)}>Abrir fuente {index + 1}</button>)}
+    <div className="narrative-sources grid grid-cols-[repeat(auto-fit,minmax(9rem,max-content))] gap-3" aria-label="Fuentes">
+      {uris.map((uri, index) => <button key={uri} type="button" className={cn(buttonStyles({ variant: "ghost" }), "break-words text-left")} onClick={() => onOpen(uri, scope)}>Abrir fuente {index + 1}</button>)}
     </div>
   );
 }
@@ -349,66 +355,66 @@ export function NarrativeWorkspace({
     ? `Versión actual de ${session.active_variant.name}`
     : session.read_only ? "Versión observada · solo lectura" : "Versión observada · actual";
   return (
-    <section className="narrative-workspace" aria-labelledby="narrative-title" hidden={!active}>
-      <header className="narrative-workspace-heading">
-        <div><p className="panel-eyebrow narrative-eyebrow">Lectura derivada y citada</p><h1 id="narrative-title" tabIndex={-1}>Estudio narrativo</h1><p>Ordena el relato, sigue causas y revisa continuidad sin convertir inferencias en canon.</p></div>
-        <div className="narrative-scope-card">
-          <span>Vista analizada</span>
+    <section className="narrative-workspace min-h-0 min-w-0 overflow-auto bg-canvas p-5 [grid-column:2] [grid-row:2] lg:p-7 max-mobile:[grid-column:1] max-mobile:[grid-row:3]" aria-labelledby="narrative-title" hidden={!active}>
+      <header className="narrative-workspace-heading flex items-start justify-between gap-4">
+        <div><p className="panel-eyebrow narrative-eyebrow text-[0.68rem] font-bold uppercase tracking-[0.14em] text-perspective">Lectura derivada y citada</p><h1 id="narrative-title" tabIndex={-1}>Estudio narrativo</h1><p>Ordena el relato, sigue causas y revisa continuidad sin convertir inferencias en canon.</p></div>
+        <div className="narrative-scope-card grid min-w-[min(100%,20rem)] gap-2 border border-l-[0.3rem] border-line border-l-perspective bg-raised px-4 py-3">
+          <span className="text-xs font-bold text-muted">Vista analizada</span>
           <strong>{scopeCopy}</strong>
-          <div role="group" aria-label="Vista analizada">
-            <button type="button" className={analysisScope === "observed" ? "secondary" : "ghost"} aria-pressed={analysisScope === "observed"} onClick={() => setAnalysisScope("observed")}>Observada</button>
-            <button type="button" className={analysisScope === "current" ? "secondary" : "ghost"} aria-pressed={analysisScope === "current"} onClick={() => setAnalysisScope("current")}>Actual</button>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Vista analizada">
+            <button type="button" className={cn(buttonStyles({ variant: analysisScope === "observed" ? "secondary" : "ghost" }), "aria-pressed:border-accent aria-pressed:bg-accent-soft aria-pressed:text-accent")} aria-pressed={analysisScope === "observed"} onClick={() => setAnalysisScope("observed")}>Observada</button>
+            <button type="button" className={cn(buttonStyles({ variant: analysisScope === "current" ? "secondary" : "ghost" }), "aria-pressed:border-accent aria-pressed:bg-accent-soft aria-pressed:text-accent")} aria-pressed={analysisScope === "current"} onClick={() => setAnalysisScope("current")}>Actual</button>
           </div>
         </div>
       </header>
-      <p className="narrative-status" role="status">{status}</p>
-      <Tabs.Root className="narrative-tabs" value={tab} onValueChange={(value) => setTab(value as NarrativeTab)}>
-        <Tabs.List aria-label="Herramientas narrativas">
-          <Tabs.Trigger value="timeline">Cronología</Tabs.Trigger>
-          <Tabs.Trigger value="causal">Causalidad</Tabs.Trigger>
-          <Tabs.Trigger value="loose">Cabos abiertos</Tabs.Trigger>
-          <Tabs.Trigger value="documents">Documentos</Tabs.Trigger>
+      <p className="narrative-status my-4 border-l-4 border-perspective bg-subtle px-3 py-2.5" role="status">{status}</p>
+      <Tabs.Root className="narrative-tabs flex min-h-0 flex-col" value={tab} onValueChange={(value) => setTab(value as NarrativeTab)}>
+        <Tabs.List className="flex gap-1 overflow-x-auto pb-1" aria-label="Herramientas narrativas">
+          <Tabs.Trigger className={cn(buttonStyles({ size: "compact" }), "shrink-0 rounded-full px-3 data-[state=active]:border-accent data-[state=active]:bg-accent-soft data-[state=active]:text-accent")} value="timeline">Cronología</Tabs.Trigger>
+          <Tabs.Trigger className={cn(buttonStyles({ size: "compact" }), "shrink-0 rounded-full px-3 data-[state=active]:border-accent data-[state=active]:bg-accent-soft data-[state=active]:text-accent")} value="causal">Causalidad</Tabs.Trigger>
+          <Tabs.Trigger className={cn(buttonStyles({ size: "compact" }), "shrink-0 rounded-full px-3 data-[state=active]:border-accent data-[state=active]:bg-accent-soft data-[state=active]:text-accent")} value="loose">Cabos abiertos</Tabs.Trigger>
+          <Tabs.Trigger className={cn(buttonStyles({ size: "compact" }), "shrink-0 rounded-full px-3 data-[state=active]:border-accent data-[state=active]:bg-accent-soft data-[state=active]:text-accent")} value="documents">Documentos</Tabs.Trigger>
         </Tabs.List>
 
-        <Tabs.Content value="timeline" className="narrative-tab-content">
-          <div className="narrative-tool-heading"><div><h2>Orden del mundo y del relato</h2><p>Compara cuándo ocurren los hechos con el orden en que las fuentes los cuentan.</p></div><div><button type="button" onClick={() => void deriveTimeline()}>Derivar órdenes</button>{timelineResult && <button type="button" className="ghost" onClick={() => setTimelineResult(null)}>Limpiar resultado</button>}</div></div>
-          {!timelineResult && <p className="empty-state">Deriva esta vista para separar tiempo conocido, tiempo no especificado y secuencias narradas.</p>}
+        <Tabs.Content value="timeline" className="narrative-tab-content mt-4">
+          <div className="narrative-tool-heading flex items-start justify-between gap-4"><div><h2>Orden del mundo y del relato</h2><p>Compara cuándo ocurren los hechos con el orden en que las fuentes los cuentan.</p></div><div><button type="button" onClick={() => void deriveTimeline()}>Derivar órdenes</button>{timelineResult && <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => setTimelineResult(null)}>Limpiar resultado</button>}</div></div>
+          {!timelineResult && <p className={emptyStateStyles}>Deriva esta vista para separar tiempo conocido, tiempo no especificado y secuencias narradas.</p>}
           {timelineResult && <TimelineResult value={timelineResult} moments={moments.data ?? null} onOpen={onOpen} />}
         </Tabs.Content>
 
-        <Tabs.Content value="causal" className="narrative-tab-content">
-          <div className="narrative-tool-heading"><div><h2>Hilos causales</h2><p>Parte de acontecimientos elegidos por nombre o revisa todos los inicios disponibles.</p></div>{causalResult && <button type="button" className="ghost" onClick={() => { setCausalResult(null); setExploration(null); }}>Limpiar resultado</button>}</div>
-          <div className="narrative-causal-controls">
-            <div><span className="field-label">Acontecimientos iniciales</span><div className="narrative-chip-list">{startEvents.map((item) => <span key={item.uri}>{item.label}<button type="button" className="ghost" aria-label={`Quitar ${item.label}`} onClick={() => setStartEvents((current) => current.filter((event) => event.uri !== item.uri))}>Quitar</button></span>)}</div><button type="button" className="secondary" onClick={(event) => requestObjectPicker({ title: "Acontecimientos iniciales", kinds: ["event"], multiple: true, returnFocus: event.currentTarget, apply: (results) => setStartEvents((current) => [...current, ...results.filter((result) => !current.some((item) => item.uri === result.uri)).map((result) => ({ id: result.object_id, uri: result.uri, label: cleanLabel(result) }))]) })}>Elegir acontecimientos</button></div>
+        <Tabs.Content value="causal" className="narrative-tab-content mt-4">
+          <div className="narrative-tool-heading flex items-start justify-between gap-4"><div><h2>Hilos causales</h2><p>Parte de acontecimientos elegidos por nombre o revisa todos los inicios disponibles.</p></div>{causalResult && <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => { setCausalResult(null); setExploration(null); }}>Limpiar resultado</button>}</div>
+          <div className="narrative-causal-controls flex flex-wrap items-end gap-3">
+            <div><span className="field-label text-sm font-semibold text-muted">Acontecimientos iniciales</span><div className="narrative-chip-list flex flex-wrap gap-2">{startEvents.map((item) => <span key={item.uri}>{item.label}<button type="button" className={buttonStyles({ variant: "ghost" })} aria-label={`Quitar ${item.label}`} onClick={() => setStartEvents((current) => current.filter((event) => event.uri !== item.uri))}>Quitar</button></span>)}</div><button type="button" className={buttonStyles({ variant: "secondary" })} onClick={(event) => requestObjectPicker({ title: "Acontecimientos iniciales", kinds: ["event"], multiple: true, returnFocus: event.currentTarget, apply: (results) => setStartEvents((current) => [...current, ...results.filter((result) => !current.some((item) => item.uri === result.uri)).map((result) => ({ id: result.object_id, uri: result.uri, label: cleanLabel(result) }))]) })}>Elegir acontecimientos</button></div>
             <label>Profundidad<select value={maxDepth} onChange={(event) => setMaxDepth(event.currentTarget.value)}><option value="1">Directa</option><option value="2">Dos niveles</option><option value="3">Tres niveles</option></select></label>
             <label>Máximo de relaciones<input type="number" min="1" max="100" step="1" value={limit} onChange={(event) => setLimit(event.currentTarget.value)} /></label>
             <button type="button" onClick={() => void deriveCausal()}>Derivar causalidad</button>
           </div>
-          {!causalResult && <p className="empty-state">La lectura sigue enlaces explícitos, evita ciclos y nunca inventa una causa ausente.</p>}
+          {!causalResult && <p className={emptyStateStyles}>La lectura sigue enlaces explícitos, evita ciclos y nunca inventa una causa ausente.</p>}
           {causalResult && <CausalResult value={causalResult} names={startEvents} onOpen={onOpen} onExplore={explore} />}
           {exploration && <ContinuityResult value={exploration} disabled={session.read_only || !providerReady || activeRequestId !== null} onOpen={onOpen} onChoose={proposeContinuity} />}
         </Tabs.Content>
 
-        <Tabs.Content value="loose" className="narrative-tab-content">
-          <div className="narrative-tool-heading"><div><h2>Cabos abiertos</h2><p>Reúne sólo metas activas, acontecimientos en curso y afirmaciones disputadas explícitas.</p></div><div><button type="button" onClick={() => void deriveLooseEnds()}>Buscar cabos</button>{looseResult && <button type="button" className="ghost" onClick={() => { setLooseResult(null); setExploration(null); }}>Limpiar resultado</button>}</div></div>
-          {!looseResult && <p className="empty-state">La ausencia de datos no se presenta como problema de continuidad.</p>}
+        <Tabs.Content value="loose" className="narrative-tab-content mt-4">
+          <div className="narrative-tool-heading flex items-start justify-between gap-4"><div><h2>Cabos abiertos</h2><p>Reúne sólo metas activas, acontecimientos en curso y afirmaciones disputadas explícitas.</p></div><div><button type="button" onClick={() => void deriveLooseEnds()}>Buscar cabos</button>{looseResult && <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => { setLooseResult(null); setExploration(null); }}>Limpiar resultado</button>}</div></div>
+          {!looseResult && <p className={emptyStateStyles}>La ausencia de datos no se presenta como problema de continuidad.</p>}
           {looseResult && <LooseEndsResult value={looseResult} onOpen={onOpen} onExplore={explore} />}
           {exploration && <ContinuityResult value={exploration} disabled={session.read_only || !providerReady || activeRequestId !== null} onOpen={onOpen} onChoose={proposeContinuity} />}
         </Tabs.Content>
 
-        <Tabs.Content value="documents" className="narrative-tab-content">
-          <div className="narrative-tool-heading"><div><h2>Documento interno</h2><p>La IA usa una perspectiva y un momento concretos. El resultado será una propuesta, no canon.</p></div>{preview && <button type="button" className="ghost" onClick={() => setPreview(null)}>Limpiar preview</button>}</div>
-          {session.read_only && <p className="read-only-callout">Solo lectura: puedes derivar las otras vistas, pero debes volver a la versión actual para preparar un documento.</p>}
-          <form className="narrative-document-form" onSubmit={(event) => void generateDocument(event)}>
+        <Tabs.Content value="documents" className="narrative-tab-content mt-4">
+          <div className="narrative-tool-heading flex items-start justify-between gap-4"><div><h2>Documento interno</h2><p>La IA usa una perspectiva y un momento concretos. El resultado será una propuesta, no canon.</p></div>{preview && <button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => setPreview(null)}>Limpiar preview</button>}</div>
+          {session.read_only && <p className="read-only-callout border-l-2 border-accent bg-accent-soft px-3 py-2 text-sm font-semibold">Solo lectura: puedes derivar las otras vistas, pero debes volver a la versión actual para preparar un documento.</p>}
+          <form className="narrative-document-form grid gap-4" onSubmit={(event) => void generateDocument(event)}>
             <label>Tipo<select value={documentKind} disabled={session.read_only || activeRequestId !== null} onChange={(event) => setDocumentKind(event.currentTarget.value as InternalDocumentKind)}>{documentKinds.map((kind) => <option key={kind.value} value={kind.value}>{kind.label}</option>)}</select></label>
             <label>Título<input maxLength={200} required disabled={session.read_only || activeRequestId !== null} value={documentTitle} onChange={(event) => setDocumentTitle(event.currentTarget.value)} /></label>
-            <label className="narrative-request-field">Instrucciones<textarea rows={5} maxLength={20_000} required disabled={session.read_only || activeRequestId !== null} value={documentRequest} onChange={(event) => setDocumentRequest(event.currentTarget.value)} placeholder="Qué debe contar y con qué intención" /></label>
-            <div className="narrative-picker-field"><span className="field-label">Perspectiva</span><strong>{perspective?.label ?? "Sin elegir"}</strong><button type="button" className="secondary" disabled={session.read_only || activeRequestId !== null} onClick={(event) => requestObjectPicker({ title: "Perspectiva del documento", kinds: ["entity"], multiple: false, returnFocus: event.currentTarget, apply: ([result]) => { if (result) setPerspective({ id: result.object_id, uri: result.uri, label: cleanLabel(result) }); } })}>{perspective ? "Cambiar perspectiva" : "Elegir por nombre"}</button></div>
+            <label className="narrative-request-field col-span-full">Instrucciones<textarea rows={5} maxLength={20_000} required disabled={session.read_only || activeRequestId !== null} value={documentRequest} onChange={(event) => setDocumentRequest(event.currentTarget.value)} placeholder="Qué debe contar y con qué intención" /></label>
+            <div className="narrative-picker-field grid content-end gap-1.5"><span className="field-label text-sm font-semibold text-muted">Perspectiva</span><strong>{perspective?.label ?? "Sin elegir"}</strong><button type="button" className={buttonStyles({ variant: "secondary" })} disabled={session.read_only || activeRequestId !== null} onClick={(event) => requestObjectPicker({ title: "Perspectiva del documento", kinds: ["entity"], multiple: false, returnFocus: event.currentTarget, apply: ([result]) => { if (result) setPerspective({ id: result.object_id, uri: result.uri, label: cleanLabel(result) }); } })}>{perspective ? "Cambiar perspectiva" : "Elegir por nombre"}</button></div>
             <label>Momento<select required disabled={session.read_only || activeRequestId !== null || moments.isPending} value={momentTick} onChange={(event) => setMomentTick(event.currentTarget.value)}><option value="">Selecciona un acontecimiento fechado</option>{knownMoments.map((event) => <option key={event.uri} value={String(event.time.start_tick)}>{event.startCalendar?.label ?? "Momento registrado"} · {event.summary}</option>)}</select></label>
             {selectedMoment && <details><summary>Detalles técnicos de la fecha</summary><p>Unidad temporal interna: {selectedMoment.time.start_tick}</p></details>}
-            {moments.isError && <p role="alert" className="notice warning">No se pudieron cargar los momentos. El formulario se conservó.</p>}
+            {moments.isError && <p role="alert" className={noticeStyles({ tone: "warning" })}>No se pudieron cargar los momentos. El formulario se conservó.</p>}
             <button type="submit" disabled={session.read_only || !providerReady || activeRequestId !== null || knownMoments.length === 0}>{activeRequestId ? "Preparando…" : "Generar borrador revisable"}</button>
-            {!providerReady && <p className="muted">Verifica la conexión de IA en Ajustes antes de generar.</p>}
+            {!providerReady && <p className="muted text-muted">Verifica la conexión de IA en Ajustes antes de generar.</p>}
           </form>
           {preview && <DocumentPreviewCard value={preview} reviewAttached={reviewAttached} onOpenReviews={onOpenReviews} />}
         </Tabs.Content>
@@ -420,26 +426,26 @@ export function NarrativeWorkspace({
 function TimelineResult({ value, moments, onOpen }: { value: NarrativeTimeline; moments: TimelineOverview | null; onOpen: (uri: string, scope: ReadScope) => void }) {
   const dates = new Map([...(moments?.known ?? []), ...(moments?.unknown ?? [])].map((event) => [event.uri, event.startCalendar?.label ?? (event.time.kind === "unknown" ? "Momento no especificado" : "Momento registrado")]));
   const names = new Map([...value.storyTime, ...value.unknownStoryTime].map((event) => [event.event.uri, event.summary]));
-  return <div className="narrative-columns">
-    <section className="narrative-result"><h3>Orden cronológico</h3>{value.storyTime.map((event) => <article className="narrative-item" key={event.event.uri}><span className="narrative-date">{dates.get(event.event.uri) ?? "Momento registrado"}</span><h4>{event.summary}</h4><button type="button" className="secondary" onClick={() => onOpen(event.event.uri, value.scope)}>Abrir acontecimiento</button>{sourceButtons(event.evidenceUris, value.scope, onOpen)}</article>)}</section>
-    <section className="narrative-result"><h3>Tiempo no especificado</h3>{value.unknownStoryTime.length === 0 && <p className="muted">No hay acontecimientos sin fecha en esta vista.</p>}{value.unknownStoryTime.map((event) => <article className="narrative-item" key={event.event.uri}><h4>{event.summary}</h4><button type="button" className="secondary" onClick={() => onOpen(event.event.uri, value.scope)}>Abrir acontecimiento</button>{sourceButtons(event.evidenceUris, value.scope, onOpen)}</article>)}</section>
-    <section className="narrative-result"><h3>Orden en que se cuenta</h3>{value.discourseOrder.length === 0 && <p className="muted">No hay fuentes con una secuencia narrativa declarada.</p>}{value.discourseOrder.map((sequence, sourceIndex) => <article className="narrative-item" key={sequence.source.uri}><button type="button" className="ghost" onClick={() => onOpen(sequence.source.uri, value.scope)}>Abrir fuente narrativa {sourceIndex + 1}</button><ol>{sequence.events.map((event) => <li key={`${event.event.uri}-${event.ordinal}`}><span>Parte {event.ordinal + 1}</span><button type="button" className="secondary" onClick={() => onOpen(event.event.uri, value.scope)}>{names.get(event.event.uri) ?? "Abrir acontecimiento citado"}</button>{sourceButtons(event.evidenceUris, value.scope, onOpen)}</li>)}</ol></article>)}</section>
+  return <div className="narrative-columns grid grid-cols-2 gap-3 max-mobile:grid-cols-1">
+    <section className={narrativeResultStyles}><h3>Orden cronológico</h3>{value.storyTime.map((event) => <article className={narrativeItemStyles} key={event.event.uri}><span className="narrative-date font-mono text-xs text-muted">{dates.get(event.event.uri) ?? "Momento registrado"}</span><h4>{event.summary}</h4><button type="button" className={buttonStyles({ variant: "secondary" })} onClick={() => onOpen(event.event.uri, value.scope)}>Abrir acontecimiento</button>{sourceButtons(event.evidenceUris, value.scope, onOpen)}</article>)}</section>
+    <section className={narrativeResultStyles}><h3>Tiempo no especificado</h3>{value.unknownStoryTime.length === 0 && <p className="muted text-muted">No hay acontecimientos sin fecha en esta vista.</p>}{value.unknownStoryTime.map((event) => <article className={narrativeItemStyles} key={event.event.uri}><h4>{event.summary}</h4><button type="button" className={buttonStyles({ variant: "secondary" })} onClick={() => onOpen(event.event.uri, value.scope)}>Abrir acontecimiento</button>{sourceButtons(event.evidenceUris, value.scope, onOpen)}</article>)}</section>
+    <section className={narrativeResultStyles}><h3>Orden en que se cuenta</h3>{value.discourseOrder.length === 0 && <p className="muted text-muted">No hay fuentes con una secuencia narrativa declarada.</p>}{value.discourseOrder.map((sequence, sourceIndex) => <article className={narrativeItemStyles} key={sequence.source.uri}><button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => onOpen(sequence.source.uri, value.scope)}>Abrir fuente narrativa {sourceIndex + 1}</button><ol>{sequence.events.map((event) => <li key={`${event.event.uri}-${event.ordinal}`}><span>Parte {event.ordinal + 1}</span><button type="button" className={buttonStyles({ variant: "secondary" })} onClick={() => onOpen(event.event.uri, value.scope)}>{names.get(event.event.uri) ?? "Abrir acontecimiento citado"}</button>{sourceButtons(event.evidenceUris, value.scope, onOpen)}</li>)}</ol></article>)}</section>
   </div>;
 }
 
 function CausalResult({ value, names, onOpen, onExplore }: { value: NarrativeCausalThreads; names: NamedObject[]; onOpen: (uri: string, scope: ReadScope) => void; onExplore: (scope: ReadScope, selection: NarrativeContinuitySelection) => void }) {
   const labels = new Map(names.map((event) => [event.uri, event.label]));
-  return <section className="narrative-result"><h3>Hilos encontrados</h3>{value.threads.length === 0 && <p className="empty-state">No se encontraron enlaces causales explícitos con estos criterios.</p>}{value.threads.map((thread, index) => <article className="narrative-item" key={thread.start.uri}><p className="panel-eyebrow">Hilo {index + 1}</p><h4>{labels.get(thread.start.uri) ?? "Acontecimiento inicial"}</h4><button type="button" className="secondary" onClick={() => onOpen(thread.start.uri, value.scope)}>Abrir inicio</button><ol className="causal-link-list">{thread.links.map((link, linkIndex) => <li key={`${link.source.uri}-${link.target.uri}-${linkIndex}`}><strong>{causalKind(link.kind)}</strong><span>Nivel {link.depth}</span><div><button type="button" className="ghost" onClick={() => onOpen(link.source.uri, value.scope)}>Abrir antecedente</button><button type="button" className="ghost" onClick={() => onOpen(link.target.uri, value.scope)}>Abrir consecuencia</button></div>{sourceButtons(link.evidenceUris, value.scope, onOpen)}</li>)}</ol><button type="button" onClick={() => void onExplore(value.scope, { kind: "causal_thread", startEventId: thread.start.uri.split("/").at(-1) ?? "" })}>Explorar continuidad</button></article>)}</section>;
+  return <section className={narrativeResultStyles}><h3>Hilos encontrados</h3>{value.threads.length === 0 && <p className={emptyStateStyles}>No se encontraron enlaces causales explícitos con estos criterios.</p>}{value.threads.map((thread, index) => <article className={narrativeItemStyles} key={thread.start.uri}><p className={eyebrowStyles}>Hilo {index + 1}</p><h4>{labels.get(thread.start.uri) ?? "Acontecimiento inicial"}</h4><button type="button" className={buttonStyles({ variant: "secondary" })} onClick={() => onOpen(thread.start.uri, value.scope)}>Abrir inicio</button><ol className="causal-link-list m-0 grid gap-2.5 pl-5 [&_li]:grid [&_li]:gap-1.5 [&_li]:border-t [&_li]:border-line [&_li]:pt-2">{thread.links.map((link, linkIndex) => <li key={`${link.source.uri}-${link.target.uri}-${linkIndex}`}><strong>{causalKind(link.kind)}</strong><span>Nivel {link.depth}</span><div className="flex flex-wrap gap-2"><button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => onOpen(link.source.uri, value.scope)}>Abrir antecedente</button><button type="button" className={buttonStyles({ variant: "ghost" })} onClick={() => onOpen(link.target.uri, value.scope)}>Abrir consecuencia</button></div>{sourceButtons(link.evidenceUris, value.scope, onOpen)}</li>)}</ol><button type="button" onClick={() => void onExplore(value.scope, { kind: "causal_thread", startEventId: thread.start.uri.split("/").at(-1) ?? "" })}>Explorar continuidad</button></article>)}</section>;
 }
 
 function LooseEndsResult({ value, onOpen, onExplore }: { value: NarrativeLooseEnds; onOpen: (uri: string, scope: ReadScope) => void; onExplore: (scope: ReadScope, selection: NarrativeContinuitySelection) => void }) {
-  return <section className="narrative-result"><h3>Cabos encontrados</h3>{value.findings.length === 0 && <p className="empty-state">No hay estados explícitos que produzcan cabos abiertos en esta vista.</p>}{value.findings.map((finding, index) => { const copy = looseEndCopy(finding.code); const first = finding.objectRefs[0]; return <article className="narrative-item" key={`${finding.code}-${index}`}><h4>{copy.title}</h4><p>{copy.detail}</p><div className="narrative-object-actions">{finding.objectRefs.map((reference, referenceIndex) => { const uri = formatObjectRef(reference).uri; return <button key={uri} type="button" className="ghost" onClick={() => onOpen(uri, value.scope)}>Abrir objeto relacionado {referenceIndex + 1}</button>; })}</div>{sourceButtons(finding.evidenceUris, value.scope, onOpen)}{first && <button type="button" onClick={() => void onExplore(value.scope, { kind: "loose_end", code: finding.code, objectRef: first })}>Explorar continuidad</button>}</article>; })}</section>;
+  return <section className={narrativeResultStyles}><h3>Cabos encontrados</h3>{value.findings.length === 0 && <p className={emptyStateStyles}>No hay estados explícitos que produzcan cabos abiertos en esta vista.</p>}{value.findings.map((finding, index) => { const copy = looseEndCopy(finding.code); const first = finding.objectRefs[0]; return <article className={narrativeItemStyles} key={`${finding.code}-${index}`}><h4>{copy.title}</h4><p>{copy.detail}</p><div className="narrative-object-actions flex flex-wrap gap-2">{finding.objectRefs.map((reference, referenceIndex) => { const uri = formatObjectRef(reference).uri; return <button key={uri} type="button" className={cn(buttonStyles({ variant: "ghost" }), "break-words text-left")} onClick={() => onOpen(uri, value.scope)}>Abrir objeto relacionado {referenceIndex + 1}</button>; })}</div>{sourceButtons(finding.evidenceUris, value.scope, onOpen)}{first && <button type="button" onClick={() => void onExplore(value.scope, { kind: "loose_end", code: finding.code, objectRef: first })}>Explorar continuidad</button>}</article>; })}</section>;
 }
 
 function ContinuityResult({ value, disabled, onOpen, onChoose }: { value: NarrativeContinuityExploration; disabled: boolean; onOpen: (uri: string, scope: ReadScope) => void; onChoose: (value: NarrativeContinuityExploration, alternativeId: string) => void }) {
-  return <section className="narrative-result continuity-result"><p className="panel-eyebrow">Continuidad · todavía sin escritura</p><h3>¿Cómo debería continuar este hilo?</h3>{sourceButtons(value.sourceUris, value.scope, onOpen)}<div className="continuity-options">{value.alternatives.map((alternative) => <article className="narrative-alternative" key={alternative.id}><h4>{alternative.title}</h4><p>{alternative.consequence}</p><button type="button" disabled={disabled} onClick={() => void onChoose(value, alternative.id)}>Elegir y preparar propuesta</button></article>)}</div>{disabled && <p className="muted">Vuelve a la versión actual y verifica la IA para preparar una propuesta.</p>}</section>;
+  return <section className={cn(narrativeResultStyles, "continuity-result border-l-[0.3rem] border-l-inference")}><p className={eyebrowStyles}>Continuidad · todavía sin escritura</p><h3>¿Cómo debería continuar este hilo?</h3>{sourceButtons(value.sourceUris, value.scope, onOpen)}<div className="continuity-options grid grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))] gap-3">{value.alternatives.map((alternative) => <article className="narrative-alternative grid gap-3 rounded-xl border border-line bg-raised p-4" key={alternative.id}><h4>{alternative.title}</h4><p>{alternative.consequence}</p><button type="button" disabled={disabled} onClick={() => void onChoose(value, alternative.id)}>Elegir y preparar propuesta</button></article>)}</div>{disabled && <p className="muted text-muted">Vuelve a la versión actual y verifica la IA para preparar una propuesta.</p>}</section>;
 }
 
 function DocumentPreviewCard({ value, reviewAttached, onOpenReviews }: { value: DocumentPreview; reviewAttached: boolean; onOpenReviews: () => void }) {
-  return <article className="narrative-document-preview" aria-label="Preview del documento"><p className="panel-eyebrow">Borrador generado por IA · aún no es canon</p><h3>{value.document.title}</h3><dl><div><dt>Tipo</dt><dd>{documentKinds.find((kind) => kind.value === value.document.kind)?.label ?? "Documento"}</dd></div><div><dt>Perspectiva</dt><dd>{value.perspective}</dd></div><div><dt>Momento</dt><dd>{value.moment}</dd></div><div><dt>Fuentes citadas</dt><dd>{value.referenceCount}</dd></div></dl><pre className="narrative-document-body">{value.document.body_md}</pre><button type="button" disabled={!reviewAttached} onClick={onOpenReviews}>Abrir revisión en Cambios</button></article>;
+  return <article className="narrative-document-preview rounded-xl border border-line bg-raised p-5 font-serif leading-relaxed" aria-label="Preview del documento"><p className={eyebrowStyles}>Borrador generado por IA · aún no es canon</p><h3>{value.document.title}</h3><dl><div><dt>Tipo</dt><dd>{documentKinds.find((kind) => kind.value === value.document.kind)?.label ?? "Documento"}</dd></div><div><dt>Perspectiva</dt><dd>{value.perspective}</dd></div><div><dt>Momento</dt><dd>{value.moment}</dd></div><div><dt>Fuentes citadas</dt><dd>{value.referenceCount}</dd></div></dl><pre className="narrative-document-body m-0 max-h-96 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-canvas p-4 font-serif text-ink">{value.document.body_md}</pre><button type="button" disabled={!reviewAttached} onClick={onOpenReviews}>Abrir revisión en Cambios</button></article>;
 }

@@ -12,6 +12,7 @@ import { ObjectPickerProvider } from "./object-picker.js";
 import { SessionProvider, useSession } from "./session-provider.js";
 import { appActions, invoke, listen, useAppState } from "./state.js";
 import type { AiActivitySnapshot, WorldSession } from "./types.js";
+import { cn, noticeStyles } from "./ui-styles.js";
 import { closeSession, confirmDiscardPending, hasPendingWork } from "./workspace.js";
 import { WorkspaceDataProvider } from "./workspace-data.js";
 import { WorldShell } from "./world-shell.js";
@@ -30,7 +31,7 @@ class RootErrorBoundary extends Component<{ children: ReactNode }, { failed: boo
   render() {
     if (this.state.failed) {
       return (
-        <section className="notice warning" role="alert">
+        <section className={noticeStyles({ tone: "warning" })} role="alert">
           <h2>No se pudo mostrar esta vista</h2>
           <p>Tu proyecto no cambió. Intenta mostrar la interfaz otra vez sin recargar la aplicación.</p>
           <button type="button" onClick={() => this.setState({ failed: false })}>Reintentar mostrar</button>
@@ -120,7 +121,10 @@ function App() {
   }
 
   return (
-    <main>
+    <main className={cn(
+      "mx-auto min-h-dvh w-full max-w-[96rem] p-5 lg:p-8 max-mobile:p-0",
+      session && "world-session-main m-0 h-dvh min-h-0 max-w-none overflow-hidden p-0 lg:p-0",
+    )}>
       {session === null ? (
         <ClosedView
           desktopAction={desktopAction}

@@ -117,8 +117,7 @@ impl Error for StructuredOutputError {}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "String", into = "String")]
-#[schemars(with = "String")]
-pub struct ContentUri(ObjectRef);
+pub struct ContentUri(#[schemars(with = "String")] ObjectRef);
 
 impl ContentUri {
     pub fn object_ref(self) -> ObjectRef {
@@ -207,7 +206,7 @@ pub enum SpecialistRole {
     PerspectivesAuditor,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InternalDocumentKind {
     Chronicle,
@@ -768,7 +767,7 @@ impl AdvisoryResponse {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CritiqueCategory {
     CanonContradiction,
@@ -780,21 +779,21 @@ pub enum CritiqueCategory {
     InsufficientEvidence,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CritiqueAttackType {
     Rebuts,
     Undercuts,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CritiqueEvidence {
     pub source_uri: ContentUri,
     pub excerpt_md: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CritiqueIssue {
     pub issue_id: ContractId,
@@ -810,7 +809,7 @@ pub struct CritiqueIssue {
     pub suggested_resolution: Option<ReferencedMarkdown>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CritiqueReport {
     pub issues: Vec<CritiqueIssue>,
