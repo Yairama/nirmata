@@ -1,26 +1,18 @@
 import * as Tabs from "@radix-ui/react-tabs";
-import { useEffect, useState } from "react";
-import { state } from "./state.js";
+import { useAppState } from "./state.js";
 import type { JumpLink, RelatedContextEntry, TimelineEventEntry } from "./types.js";
 import { selectUri } from "./workspace.js";
+import { useWorkspaceData } from "./workspace-data.js";
 
 export function WorldContext() {
-  const [, rerender] = useState(0);
-  useEffect(() => {
-    const sync = () => rerender((value) => value + 1);
-    window.addEventListener("nirmata:context-changed", sync);
-    window.addEventListener("nirmata:selection-changed", sync);
-    return () => {
-      window.removeEventListener("nirmata:context-changed", sync);
-      window.removeEventListener("nirmata:selection-changed", sync);
-    };
-  }, []);
+  const workspaceData = useWorkspaceData();
+  const state = useAppState();
 
-  const context = state.context;
-  const links = state.editorMode?.links ?? [];
-  const warnings = state.editorMode?.warnings ?? [];
-  const knownEvents = state.timeline?.known ?? [];
-  const unknownEvents = state.timeline?.unknown ?? [];
+  const context = workspaceData.relatedContext.data;
+  const links = state.structuredEditor?.links ?? [];
+  const warnings = state.structuredEditor?.warnings ?? [];
+  const knownEvents = workspaceData.timeline.data?.known ?? [];
+  const unknownEvents = workspaceData.timeline.data?.unknown ?? [];
   return (
     <div className="world-context">
       <div className="panel-header">
@@ -36,18 +28,18 @@ export function WorldContext() {
           <Tabs.Trigger value="warnings">Avisos</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="canon" className="context-scroll">
-          <ContextGroup title="Relaciones del objeto" entries={links} />
-          <ContextGroup title="Canon relacionado" entries={context?.canon ?? []} />
-          <ContextGroup title="Fuentes relacionadas" entries={context?.search_evidence ?? []} />
+          <ContextGroup title="Relaciones del objeto" entries={links} selectedUri={state.selectedUri} />
+          <ContextGroup title="Canon relacionado" entries={context?.canon ?? []} selectedUri={state.selectedUri} />
+          <ContextGroup title="Fuentes relacionadas" entries={context?.search_evidence ?? []} selectedUri={state.selectedUri} />
           {links.length === 0 && (context?.canon.length ?? 0) === 0 && (context?.search_evidence.length ?? 0) === 0 && <ContextEmpty text="No hay evidencia canónica adicional alrededor de esta selección." />}
         </Tabs.Content>
         <Tabs.Content value="perspectives" className="context-scroll">
-          <ContextGroup title="Conocimiento situado" entries={context?.perspectives ?? []} />
+          <ContextGroup title="Conocimiento situado" entries={context?.perspectives ?? []} selectedUri={state.selectedUri} />
           {(context?.perspectives.length ?? 0) === 0 && <ContextEmpty text="No hay rumores, creencias o perspectivas relacionadas." />}
         </Tabs.Content>
         <Tabs.Content value="goals" className="context-scroll">
-          <ContextGroup title="Deseos y metas" entries={context?.desires ?? []} />
-          <ContextGroup title="Obligaciones" entries={context?.obligations ?? []} />
+          <ContextGroup title="Deseos y metas" entries={context?.desires ?? []} selectedUri={state.selectedUri} />
+          <ContextGroup title="Obligaciones" entries={context?.obligations ?? []} selectedUri={state.selectedUri} />
           {(context?.desires.length ?? 0) === 0 && (context?.obligations.length ?? 0) === 0 && <ContextEmpty text="No hay metas u obligaciones relacionadas." />}
         </Tabs.Content>
         <Tabs.Content value="timeline" className="context-scroll">
@@ -64,7 +56,7 @@ export function WorldContext() {
   );
 }
 
-function ContextGroup({ title, entries }: { title: string; entries: Array<JumpLink | RelatedContextEntry> }) {
+function ContextGroup({ title, entries, selectedUri }: { title: string; entries: Array<JumpLink | RelatedContextEntry>; selectedUri: string | null }) {
   if (entries.length === 0) return null;
   return (
     <section className="context-group">
@@ -75,7 +67,7 @@ function ContextGroup({ title, entries }: { title: string; entries: Array<JumpLi
           const uri = result?.uri ?? (entry as JumpLink).uri;
           const label = result?.snippet.replace(/[\[\]]/g, "") ?? (entry as JumpLink).label;
           return (
-            <button key={`${title}-${uri}`} type="button" className="context-entry" aria-current={uri === state.selectedUri ? "true" : undefined} onClick={() => void selectUri(uri)}>
+            <button key={`${title}-${uri}`} type="button" className="context-entry" aria-current={uri === selectedUri ? "true" : undefined} onClick={() => void selectUri(uri)}>
               <strong>{label}</strong>
               {result && <span className="badge-row"><span className={`badge ${result.authority === "canonical" ? "ready" : "context"}`}>{result.authority === "canonical" ? "Canon" : "Perspectiva"}</span><span className="badge info">{classificationLabel(result.classification)}</span></span>}
             </button>

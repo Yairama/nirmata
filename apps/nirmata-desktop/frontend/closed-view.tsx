@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { SoftwareDialogs } from "./software-dialogs.js";
 import type { SoftwareDialog } from "./software-dialogs.js";
+import type { DesktopActionRequest } from "./desktop-actions.js";
+import { commandErrorCopy } from "./feedback.js";
 import { useSession } from "./session-provider.js";
 import type { AiProviderDiagnosticStatus, RecentProject, WorldSession } from "./types.js";
 import { openSession } from "./workspace.js";
@@ -27,10 +29,7 @@ const recentProjectsKey = ["desktop", "recent-projects"] as const;
 const providerStatusKey = ["desktop", "provider-status"] as const;
 
 function errorMessage(value: unknown): string {
-  if (typeof value === "object" && value !== null && "message" in value) {
-    return String((value as { message: unknown }).message);
-  }
-  return String(value);
+  return commandErrorCopy(value).detail;
 }
 
 function commandCode(value: unknown): string {
@@ -56,7 +55,7 @@ function formatRecentDate(timestamp: number): string {
   return new Intl.DateTimeFormat("es", { dateStyle: "medium" }).format(new Date(timestamp));
 }
 
-export function ClosedView() {
+export function ClosedView({ desktopAction, onStartProposal, onStartImport }: { desktopAction?: DesktopActionRequest | null; onStartProposal: (request: string) => void; onStartImport: () => void }) {
   const session = useSession();
   const queryClient = useQueryClient();
   const [creationPath, setCreationPath] = useState<CreationPath | null>(null);
@@ -118,6 +117,15 @@ export function ClosedView() {
     if (creationPath && step === 1) nameInput.current?.focus();
     if (!creationPath) manualButton.current?.focus();
   }, [creationPath, step]);
+
+  useEffect(() => {
+    if (!desktopAction || session) return;
+    if (desktopAction.action === "project.new") startCreation("manual");
+    if (desktopAction.action === "project.open") void openWorld();
+    if (desktopAction.action === "settings.open") setDialog("settings");
+    if (desktopAction.action === "help.open") setDialog("help");
+    if (desktopAction.action === "help.about") setDialog("about");
+  }, [desktopAction?.id, session]);
 
   if (session) return null;
 
@@ -210,11 +218,9 @@ export function ClosedView() {
           data.restrictions.trim() ? `Restricciones: ${data.restrictions.trim()}.` : null,
           "Limita la propuesta a premisa, reglas fundamentales y pocos lugares, facciones o personajes iniciales.",
         ].filter(Boolean).join("\n");
-        window.dispatchEvent(new CustomEvent("nirmata:start-proposal", { detail: { request } }));
-        window.setTimeout(() => window.dispatchEvent(new CustomEvent("nirmata:open-area", { detail: { area: "assistant" } })));
+        onStartProposal(request);
       } else if (creationPath === "import") {
-        window.dispatchEvent(new CustomEvent("nirmata:start-lore-import"));
-        window.setTimeout(() => window.dispatchEvent(new CustomEvent("nirmata:open-area", { detail: { area: "imports" } })));
+        onStartImport();
       }
     } catch (value) {
       setError(errorMessage(value));
@@ -328,7 +334,7 @@ export function ClosedView() {
             <div className="creation-step-heading">
               <div>
                 <p className="panel-eyebrow">Nuevo mundo · Paso {visibleStep} de {totalSteps}</p>
-                <h2>{pathTitle(creationPath)}</h2>
+                <h2 id="create-title">{pathTitle(creationPath)}</h2>
                 <p>{pathDescription(creationPath)}</p>
               </div>
               <button type="button" className="ghost" onClick={() => { setCreationPath(null); setError(""); }}>Cancelar</button>
@@ -401,7 +407,7 @@ export function ClosedView() {
       )}
       <p className="creation-status" role="status" aria-live="polite">{status}</p>
       {error && <p className="creation-error" role="alert">{error}</p>}
-      <SoftwareDialogs active={dialog} onActiveChange={setDialog} returnFocus={dialogTrigger} />
+      <SoftwareDialogs active={dialog} onActiveChange={setDialog} returnFocus={dialogTrigger} onOpenBackups={() => undefined} onShowOnboarding={() => undefined} />
     </>
   );
 }

@@ -331,6 +331,31 @@ mod tests {
     }
 
     #[test]
+    fn renaming_display_labels_does_not_change_tick_round_trips() {
+        let original = calendar();
+        let renamed = WorldCalendar::new(
+            "Calendario revisado",
+            100,
+            10,
+            vec!["Alba".to_owned(), "Cenit".to_owned(), "Ocaso".to_owned()],
+            vec![
+                CalendarMonth::new("Brasa", 2).expect("month"),
+                CalendarMonth::new("Lluvia", 3).expect("month"),
+            ],
+        )
+        .expect("renamed calendar");
+
+        for tick in -250..=450 {
+            let original_date = original.tick_to_date(tick).expect("original date");
+            let renamed_date = renamed.tick_to_date(tick).expect("renamed date");
+            assert_eq!(original_date, renamed_date);
+            assert_eq!(renamed.date_to_tick(renamed_date).expect("tick"), tick);
+        }
+        assert_ne!(original.months()[1].name(), renamed.months()[1].name());
+        assert_ne!(original.weekday_names()[0], renamed.weekday_names()[0]);
+    }
+
+    #[test]
     fn rejects_invalid_configuration_dates_and_overflow() {
         assert!(WorldCalendar::new("", 0, 1, vec!["Day".to_owned()], vec![]).is_err());
         assert!(

@@ -8,15 +8,16 @@
 |---|---|
 | General | Sin preferencias configurables por ahora. |
 | Apariencia | Tema del sistema, claro, oscuro o alto contraste, persistido en el equipo. |
-| IA | Microsoft Foundry, estado de credencial, persistencia, secure store, endpoint/modelo, probar conexion, reemplazar y borrar clave. |
-| Proyecto | Ruta, nombre, variante activa, version observada y solo lectura si hay mundo. |
+| IA | Microsoft Foundry, endpoint y modelo editables, estado de credencial, persistencia, secure store, probar conexion, reemplazar y borrar clave. |
+| Proyecto | Ruta, nombre, schema, integridad, variante activa, version observada, solo lectura y acceso a backups si hay mundo. |
 | Accesibilidad | Sin preferencias hasta implementar comportamiento real. |
 | Avanzado | IDs, URI, revision, variante y detalles tecnicos copiables. |
 
 No se inventan selector de proveedor, temperatura, prompts, telemetria,
 preferencias de autosave ni configuracion directa de SQLite. `BASE_URL` y el
-modelo pueden reportarse como configurados, faltantes o invalidos, pero no se
-expone la clave ni se devuelve su valor a JavaScript.
+modelo se guardan como configuracion local no sensible y se devuelven a la
+interfaz para editarlos. La clave se conserva por separado: no se expone ni se
+devuelve su valor a JavaScript.
 
 ## About
 

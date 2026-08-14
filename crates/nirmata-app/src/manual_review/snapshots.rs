@@ -71,36 +71,46 @@ fn decision_label(decision: OperationDecision) -> &'static str {
 }
 
 fn world_snapshot(world: &World) -> ManualReviewObjectSnapshot {
+    let calendar_lines = world.calendar().map_or_else(
+        || vec![line_item("Calendario", "Sin calendario")],
+        |calendar| {
+            vec![
+                line_item("Calendario", calendar.name()),
+                line_item("Días de la semana", calendar.weekday_names().join(", ")),
+                line_item(
+                    "Meses",
+                    calendar
+                        .months()
+                        .iter()
+                        .map(|month| format!("{} ({} días)", month.name(), month.days()))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
+                line_item(
+                    "Detalles técnicos del calendario",
+                    format!(
+                        "epoch {} · {} unidades por día",
+                        calendar.epoch_tick(),
+                        calendar.ticks_per_day()
+                    ),
+                ),
+            ]
+        },
+    );
+    let mut lines = vec![
+        line_item("Premisa", preview(world.premise_md())),
+        line_item("Origen del calendario", preview(world.epoch_label())),
+    ];
+    lines.extend(calendar_lines);
+    lines.push(line_item(
+        "Detalles técnicos de la revisión",
+        world.current_revision().to_string(),
+    ));
     ManualReviewObjectSnapshot {
         title: world.name().to_owned(),
         object_type: "world".to_owned(),
         target_uri: ObjectRef::World(world.id()).to_string(),
-        lines: vec![
-            line_item("Premisa", preview(world.premise_md())),
-            line_item("Epoch", preview(world.epoch_label())),
-            line_item(
-                "Calendario",
-                world
-                    .calendar()
-                    .map(|calendar| {
-                        format!(
-                            "{} · epoch {} · {} ticks/día · weekdays {} · meses {}",
-                            calendar.name(),
-                            calendar.epoch_tick(),
-                            calendar.ticks_per_day(),
-                            calendar.weekday_names().join(", "),
-                            calendar
-                                .months()
-                                .iter()
-                                .map(|month| format!("{}|{}", month.name(), month.days()))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    })
-                    .unwrap_or_else(|| "Sin calendario".to_owned()),
-            ),
-            line_item("Revisión", world.current_revision().to_string()),
-        ],
+        lines,
     }
 }
 
@@ -144,7 +154,8 @@ fn event_snapshot(event: &EventAggregate) -> ManualReviewObjectSnapshot {
         target_uri: ObjectRef::Event(event.event().id()).to_string(),
         lines: vec![
             line_item("Tipo", event.event().kind().to_owned()),
-            line_item("Tiempo", format_event_time(event.event().time())),
+            line_item("Tipo de tiempo", event_time_kind_label(event.event().time().kind())),
+            line_item("Detalles técnicos del tiempo", format_event_time(event.event().time())),
             line_item(
                 "Participantes",
                 event.event().participants().len().to_string(),
@@ -289,5 +300,14 @@ fn format_event_time(time: &nirmata_core::time::EventTime) -> String {
             )
         }
         _ => format!("{:?}", time.kind()),
+    }
+}
+
+fn event_time_kind_label(kind: nirmata_core::time::EventTimeKind) -> &'static str {
+    match kind {
+        nirmata_core::time::EventTimeKind::Unknown => "Desconocido",
+        nirmata_core::time::EventTimeKind::Instant => "Instante",
+        nirmata_core::time::EventTimeKind::Interval => "Intervalo",
+        nirmata_core::time::EventTimeKind::Ongoing => "En curso",
     }
 }

@@ -93,6 +93,7 @@ pub struct ImportBatchSnapshot {
     pub target_revision: String,
     pub variant_id: String,
     pub status: String,
+    pub created_at_ms: i64,
     pub sources: Vec<ImportSourceSnapshot>,
 }
 
@@ -191,6 +192,16 @@ struct ImportExtractionInput {
 }
 
 impl NirmataApp {
+    pub fn list_import_batches(&self) -> Result<Vec<ImportBatchSnapshot>, AppError> {
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        active
+            .store
+            .list_import_batches()?
+            .into_iter()
+            .map(|batch| self.read_import_batch(&batch.id))
+            .collect()
+    }
+
     pub fn create_import_batch(
         &mut self,
         input: CreateImportBatchInput,
@@ -324,10 +335,6 @@ impl NirmataApp {
     }
 
     pub fn delete_import_batch(&mut self, batch_id: &str) -> Result<(), AppError> {
-        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
-        if !active.store.delete_import_batch(batch_id)? {
-            return Err(AppError::LoreImportBatchNotFound(batch_id.to_owned()));
-        }
         let review_keys = self
             .import_review_traces
             .iter()
@@ -336,6 +343,22 @@ impl NirmataApp {
             })
             .map(|(review_key, _)| review_key.clone())
             .collect::<Vec<_>>();
+        let pending_reviews = review_keys
+            .iter()
+            .map(|review_key| {
+                self.manual_reviews
+                    .get(review_key)
+                    .map(|stored| (stored.review.variant_id(), review_key.clone()))
+                    .ok_or_else(|| AppError::ReviewSessionNotFound(review_key.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        if !active
+            .store
+            .delete_import_batch_with_pending_reviews(batch_id, &pending_reviews)?
+        {
+            return Err(AppError::LoreImportBatchNotFound(batch_id.to_owned()));
+        }
         for review_key in review_keys {
             self.manual_reviews.remove(&review_key);
             self.import_review_traces.remove(&review_key);
@@ -696,6 +719,13 @@ impl NirmataApp {
                 "traces": traces,
             });
             self.import_review_traces.insert(review_key.clone(), trace);
+            let mut stored = self
+                .manual_reviews
+                .get(review_key)
+                .cloned()
+                .ok_or_else(|| AppError::ReviewSessionNotFound(review_key.clone()))?;
+            stored.origin = crate::PendingReviewOrigin::LoreImport;
+            self.replace_pending_review(review_key.clone(), stored)?;
         }
         Ok(ImportReviewPreparation {
             batch_id: batch_id.to_owned(),
@@ -1575,6 +1605,7 @@ fn snapshot(batch: StoredImportBatch, sources: Vec<PreparedSource>) -> ImportBat
         target_revision: batch.target_revision.to_string(),
         variant_id: batch.variant_id.to_string(),
         status: batch.status,
+        created_at_ms: batch.created_at_ms,
         sources: sources
             .into_iter()
             .map(|source| ImportSourceSnapshot {

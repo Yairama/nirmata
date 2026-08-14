@@ -47,6 +47,11 @@ rechaza sin cambiar canon. Las pruebas enfocadas existentes completan la matriz
 sin duplicarla en el escenario unido: base stale no confirmable ni rebasable,
 hashes, rutas, IDs, referencias, tipos, binarios y entradas extra manipuladas.
 
+La superficie React usa un nombre controlado, presenta mundo, variante,
+revision, conteos y hash antes de entregar el resultado a Cambios. Playwright
+comprueba que el diff aparece antes de abrir la revision y que nunca se invoca
+`confirm_manual_review` durante la importacion.
+
 ## Métricas
 
 El benchmark `nir-053-v1` se volvió a ejecutar por la ruta activa:

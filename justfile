@@ -22,13 +22,13 @@ frontend-build:
 build: frontend-build
     cargo build -p nirmata-desktop
 
-# Build the optimized executable. Installer bundling is not enabled yet.
+# Build the optimized executable and unsigned Windows installer.
 release: frontend-build
-    cargo build --release -p nirmata-desktop
+    npm exec --prefix {{frontend}} -- tauri build --config apps/nirmata-desktop/src-tauri/tauri.conf.json --bundles nsis --ci --no-sign
 
-# Build the frontend and run the desktop application.
-run: frontend-build
-    cargo run -p nirmata-desktop
+# Start Vite and run the desktop application with Tauri hot reload.
+run:
+    npm exec --prefix {{frontend}} -- tauri dev --config apps/nirmata-desktop/src-tauri/tauri.conf.json
 
 # Run fast static checks without executing the test suites.
 check:

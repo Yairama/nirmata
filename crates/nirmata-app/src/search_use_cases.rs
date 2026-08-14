@@ -1,5 +1,6 @@
 use crate::{
     AppError, ContextBudgetUsage, ContextBundleRequest, ContextEntry, ContextStage,
+    app::{EventCalendarPresentation, calendar_tick_presentation},
     context_bundle::citation_for_object,
 };
 use nirmata_core::{
@@ -129,6 +130,8 @@ pub struct SearchWorldResponse {
 pub struct OpenUriResponse {
     pub result: SearchResult,
     pub object: ResolvedObject,
+    #[serde(rename = "eventCalendar")]
+    pub event_calendar: Option<EventCalendarPresentation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -221,6 +224,21 @@ pub(crate) fn open_uri(
         .world()
         .calendar()
         .cloned();
+    let event_calendar = match &object {
+        ResolvedObject::Event(aggregate) => Some(EventCalendarPresentation {
+            start: aggregate
+                .event()
+                .time()
+                .start_tick()
+                .and_then(|tick| calendar_tick_presentation(calendar.as_ref(), tick)),
+            end: aggregate
+                .event()
+                .time()
+                .end_tick()
+                .and_then(|tick| calendar_tick_presentation(calendar.as_ref(), tick)),
+        }),
+        _ => None,
+    };
     Ok(OpenUriResponse {
         result: SearchResult::from_object(
             &object,
@@ -232,6 +250,7 @@ pub(crate) fn open_uri(
             "explicit URI resolution".to_owned(),
         ),
         object,
+        event_calendar,
     })
 }
 

@@ -13,6 +13,7 @@ Cada archivo cubre una sola responsabilidad y puede referenciarse por su ruta.
 - [`product/creation-and-ai-journeys.md`](product/creation-and-ai-journeys.md): creacion, preguntas y propuestas.
 - [`product/settings-and-about.md`](product/settings-and-about.md): inventario real de software de escritorio.
 - [`product/visual-system.md`](product/visual-system.md): tokens, densidad, estados y responsive.
+- [`product/user-manual.md`](product/user-manual.md): manual orientado a tareas, privacidad y atajos.
 
 ### Dominio
 

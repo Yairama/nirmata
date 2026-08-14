@@ -1,4 +1,4 @@
-use crate::ai::{AiRun, AiRunId, AiRunStatus};
+use crate::ai::{AiRun, AiRunId, AiRunStatus, PersistedAiRun};
 use crate::context_bundle::{build_context_bundle_scoped, calendar_tick_label};
 use crate::deep_review::{DeepReviewRun, DeepReviewRunId};
 use crate::manual_review::{
@@ -7,8 +7,8 @@ use crate::manual_review::{
 };
 use crate::variants::apply_variant_merge_review_action;
 use crate::{
-    AppError, ContextBundle, ContextBundleRequest, LogicalVfsDirectory, ManualDraftRequest,
-    ManualDraftResponse, ManualReviewAction, ManualReviewActionRequest,
+    AiContextSnapshot, AppError, ContextBundle, ContextBundleRequest, LogicalVfsDirectory,
+    ManualDraftRequest, ManualDraftResponse, ManualReviewAction, ManualReviewActionRequest,
     ManualReviewFreshnessStatus, ManualReviewInput, ManualReviewObjectSnapshot,
     ManualReviewSession, ManualReviewSnapshot, ManualReviewWaiverSnapshot, OpenUriResponse,
     ProviderCredentialStatus, RelatedContextRequest, RelatedContextResponse, RevisionId,
@@ -69,6 +69,19 @@ pub struct CalendarTickPresentation {
     pub tick: i64,
     pub label: String,
     pub date_input: String,
+    pub year: i64,
+    pub month: u32,
+    pub month_name: String,
+    pub day: u32,
+    pub tick_in_day: i64,
+    pub weekday_name: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventCalendarPresentation {
+    pub start: Option<CalendarTickPresentation>,
+    pub end: Option<CalendarTickPresentation>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -76,6 +89,7 @@ pub struct CalendarTickPresentation {
 pub struct TimelineOverview {
     pub known: Vec<TimelineEventEntry>,
     pub unknown: Vec<TimelineEventEntry>,
+    pub calendar_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -115,6 +129,17 @@ pub struct RevisionAuditOperationSnapshot {
     pub waivers: Vec<ManualReviewWaiverSnapshot>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariantSummary {
+    pub variant: Variant,
+    pub origin_variant_name: Option<String>,
+    pub origin_summary: String,
+    pub origin_created_at_ms: i64,
+    pub latest_summary: String,
+    pub latest_created_at_ms: i64,
+}
+
 pub(crate) struct ActiveWorld {
     pub(crate) store: WorldStore,
     pub(crate) session: WorldSession,
@@ -128,6 +153,80 @@ pub(crate) struct StoredManualReview {
     pub(crate) ai_run_id: Option<AiRunId>,
     pub(crate) revalidation_allowed: bool,
     pub(crate) merge_source_revision: Option<RevisionId>,
+    pub(crate) origin: PendingReviewOrigin,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingReviewOrigin {
+    Manual,
+    Ai,
+    LoreImport,
+    Simulation,
+    VersionsMerge,
+    Snapshot,
+}
+
+impl PendingReviewOrigin {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Ai => "ai",
+            Self::LoreImport => "lore_import",
+            Self::Simulation => "simulation",
+            Self::VersionsMerge => "versions_merge",
+            Self::Snapshot => "snapshot",
+        }
+    }
+}
+
+impl FromStr for PendingReviewOrigin {
+    type Err = StoreError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "manual" => Ok(Self::Manual),
+            "ai" => Ok(Self::Ai),
+            "lore_import" => Ok(Self::LoreImport),
+            "simulation" => Ok(Self::Simulation),
+            "versions_merge" => Ok(Self::VersionsMerge),
+            "snapshot" => Ok(Self::Snapshot),
+            _ => Err(StoreError::InvalidChangeSet(format!(
+                "invalid pending review origin: {value}"
+            ))),
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedPendingReview {
+    format_version: u32,
+    review: crate::manual_review::PersistedManualReviewSession,
+    revalidation_allowed: bool,
+    merge_source_revision: Option<RevisionId>,
+    import_trace: Option<Value>,
+    ai_run: Option<PersistedAiRun>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingReviewSnapshot {
+    pub review: ManualReviewSnapshot,
+    pub origin: PendingReviewOrigin,
+    pub editor_request: ManualDraftRequest,
+    pub ai_run_id: Option<String>,
+    pub title: String,
+    pub merge: Option<PendingMergeSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingMergeSnapshot {
+    pub source_name: String,
+    pub destination_name: String,
+    pub automatic_count: usize,
+    pub decision_count: usize,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -146,6 +245,13 @@ pub struct NirmataApp {
     pub(crate) simulation_scenarios:
         BTreeMap<crate::SimulationScenarioId, crate::SimulationScenario>,
     pub(crate) provider_credentials: ProviderCredentialStore,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDiagnostics {
+    pub schema_version: i64,
+    pub integrity: &'static str,
 }
 
 impl Default for NirmataApp {
@@ -170,6 +276,7 @@ impl StoredManualReview {
             ai_run_id: None,
             revalidation_allowed: true,
             merge_source_revision: None,
+            origin: PendingReviewOrigin::Manual,
         }
     }
 
@@ -180,6 +287,7 @@ impl StoredManualReview {
             ai_run_id: None,
             revalidation_allowed: false,
             merge_source_revision: None,
+            origin: PendingReviewOrigin::Snapshot,
         }
     }
 
@@ -190,6 +298,7 @@ impl StoredManualReview {
             ai_run_id: Some(ai_run_id),
             revalidation_allowed: true,
             merge_source_revision: None,
+            origin: PendingReviewOrigin::Ai,
         }
     }
 
@@ -277,6 +386,15 @@ impl NirmataApp {
         Ok(Some(active.session.clone()))
     }
 
+    pub fn get_project_diagnostics(&self) -> Result<ProjectDiagnostics, AppError> {
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let diagnostics = active.store.diagnose_project()?;
+        Ok(ProjectDiagnostics {
+            schema_version: diagnostics.schema_version,
+            integrity: "ok",
+        })
+    }
+
     pub fn build_context_bundle(
         &self,
         request: &ContextBundleRequest,
@@ -333,13 +451,10 @@ impl NirmataApp {
             now_ms()?,
         )?;
         if let (Some(review), Some(snapshot)) = (&outcome.review, &outcome.response.review) {
-            if self.manual_reviews.contains_key(&snapshot.review_key) {
-                return Err(AppError::ReviewSessionConflict(snapshot.review_key.clone()));
-            }
-            self.manual_reviews.insert(
+            self.insert_pending_review(
                 snapshot.review_key.clone(),
                 StoredManualReview::new(review.clone()),
-            );
+            )?;
         }
         Ok(outcome.response)
     }
@@ -357,6 +472,52 @@ impl NirmataApp {
     pub fn list_variants(&self) -> Result<Vec<Variant>, AppError> {
         let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
         active.store.list_variants().map_err(Into::into)
+    }
+
+    pub fn list_variant_summaries(&self) -> Result<Vec<VariantSummary>, AppError> {
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let variants = active.store.list_variants()?;
+        let names = variants
+            .iter()
+            .map(|variant| (variant.id, variant.name.clone()))
+            .collect::<HashMap<_, _>>();
+        variants
+            .into_iter()
+            .map(|variant| {
+                let origin = active
+                    .store
+                    .get_revision(variant.created_from_revision_id)?
+                    .ok_or_else(|| {
+                        StoreError::InvalidChangeSet(format!(
+                            "variant {} is missing its origin revision",
+                            variant.id
+                        ))
+                    })?;
+                let latest = active
+                    .store
+                    .get_revision(variant.head_revision_id)?
+                    .ok_or_else(|| {
+                        StoreError::InvalidChangeSet(format!(
+                            "variant {} is missing its latest revision",
+                            variant.id
+                        ))
+                    })?;
+                let origin_variant_id = active
+                    .store
+                    .revision_variant_id(variant.created_from_revision_id)?;
+                let origin_variant_name = (origin_variant_id != variant.id)
+                    .then(|| names.get(&origin_variant_id).cloned())
+                    .flatten();
+                Ok(VariantSummary {
+                    variant,
+                    origin_variant_name,
+                    origin_summary: origin.summary().to_owned(),
+                    origin_created_at_ms: origin.created_at_ms(),
+                    latest_summary: latest.summary().to_owned(),
+                    latest_created_at_ms: latest.created_at_ms(),
+                })
+            })
+            .collect()
     }
 
     pub fn create_variant(
@@ -407,10 +568,15 @@ impl NirmataApp {
         active.session.read_scope = active.read_scope;
         active.session.read_only = false;
         refresh_active_world(active)?;
-        self.manual_reviews.clear();
-        self.ai_runs.clear();
+        let (manual_reviews, ai_runs, import_review_traces) = restore_pending_reviews(
+            &active.store,
+            active.session.active_variant.id,
+            active.session.current_revision,
+        )?;
+        self.manual_reviews = manual_reviews;
+        self.ai_runs = ai_runs;
         self.deep_review_runs.clear();
-        self.import_review_traces.clear();
+        self.import_review_traces = import_review_traces;
         Ok(active.session.clone())
     }
 
@@ -504,13 +670,14 @@ impl NirmataApp {
             (None, true) => StoredManualReview::new(updated_review),
         };
         updated.merge_source_revision = review.merge_source_revision;
+        updated.origin = review.origin;
         updated.sync_with_revision(active.session.current_revision);
-        self.manual_reviews.insert(review_key.to_owned(), updated);
         if let Some(run_id) = review.ai_run_id
             && let Some(run) = self.ai_runs.get_mut(&run_id)
         {
             run.mark_review_changed();
         }
+        self.replace_pending_review(review_key.to_owned(), updated)?;
         let snapshot = self
             .manual_reviews
             .get(review_key)
@@ -544,12 +711,43 @@ impl NirmataApp {
         ))
     }
 
+    pub fn list_pending_reviews(&mut self) -> Result<Vec<PendingReviewSnapshot>, AppError> {
+        let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+        refresh_active_world(active)?;
+        let current_revision = active.session.current_revision;
+        for review in self.manual_reviews.values_mut() {
+            review.sync_with_revision(current_revision);
+        }
+        self.manual_reviews
+            .iter()
+            .map(|(review_key, stored)| {
+                pending_review_snapshot(
+                    &active.store,
+                    &active.session,
+                    review_key,
+                    stored,
+                    stored
+                        .ai_run_id
+                        .and_then(|run_id| self.ai_runs.get(&run_id).map(AiRun::status)),
+                )
+            })
+            .collect()
+    }
+
     pub fn discard_stored_manual_review(&mut self, review_key: &str) -> Result<(), AppError> {
         validate_review_key(review_key)?;
-        self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
-        self.manual_reviews
-            .remove(review_key)
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let review = self
+            .manual_reviews
+            .get(review_key)
             .ok_or_else(|| AppError::ReviewSessionNotFound(review_key.to_owned()))?;
+        if !active
+            .store
+            .delete_pending_review(review.review.variant_id(), review_key)?
+        {
+            return Err(AppError::ReviewSessionNotFound(review_key.to_owned()));
+        }
+        self.manual_reviews.remove(review_key);
         self.import_review_traces.remove(review_key);
         Ok(())
     }
@@ -567,7 +765,11 @@ impl NirmataApp {
             .get_mut(review_key)
             .ok_or_else(|| AppError::ReviewSessionNotFound(review_key.to_owned()))?;
         review.sync_with_revision(active.session.current_revision);
-        crate::manual_forms::manual_request_for_review_operation(&review.review, operation_id)
+        crate::manual_forms::manual_request_for_review_operation(
+            &review.review,
+            operation_id,
+            active.session.world.calendar(),
+        )
     }
 
     pub fn apply_stored_manual_review_edit(
@@ -627,14 +829,15 @@ impl NirmataApp {
             now_ms()?,
             &active.store,
         )?;
-        *stored = match (ai_run_id, revalidation_allowed) {
+        let mut updated = match (ai_run_id, revalidation_allowed) {
             (Some(run_id), _) => StoredManualReview::from_ai(updated, run_id),
             (None, false) => StoredManualReview::from_snapshot_import(updated),
             (None, true) => StoredManualReview::new(updated),
         };
-        stored.merge_source_revision = merge_source_revision;
-        stored.sync_with_revision(active.session.current_revision);
-        let snapshot = stored.snapshot(review_key);
+        updated.merge_source_revision = merge_source_revision;
+        updated.origin = stored.origin;
+        updated.sync_with_revision(active.session.current_revision);
+        let snapshot = updated.snapshot(review_key);
         let response = ManualDraftResponse {
             draft: None,
             review: Some(snapshot),
@@ -645,6 +848,8 @@ impl NirmataApp {
         {
             run.mark_review_changed();
         }
+        let _ = active;
+        self.replace_pending_review(review_key.to_owned(), updated)?;
         Ok(ManualDraftResponse {
             review: response.review.map(|snapshot| {
                 gate_ai_review_snapshot(
@@ -673,7 +878,8 @@ impl NirmataApp {
         refresh_active_world(active)?;
         let review = self
             .manual_reviews
-            .get_mut(review_key)
+            .get(review_key)
+            .cloned()
             .ok_or_else(|| AppError::ReviewSessionNotFound(review_key.to_owned()))?;
         if !review.revalidation_allowed {
             return Err(AppError::ManualReviewRevalidationFailed);
@@ -684,10 +890,14 @@ impl NirmataApp {
             | StoredManualReviewFreshness::RefreshRestartRequired { current_revision }
                 if current_revision != live_head =>
             {
+                let mut review = review;
                 review.freshness = StoredManualReviewFreshness::RefreshRestartRequired {
                     current_revision: live_head,
                 };
-                return Ok(review.snapshot(review_key));
+                let snapshot = review.snapshot(review_key);
+                let _ = active;
+                self.replace_pending_review(review_key.to_owned(), review)?;
+                return Ok(snapshot);
             }
             _ => {}
         }
@@ -697,15 +907,23 @@ impl NirmataApp {
             .revalidate_at_revision(live_head, &active.store)?;
         refresh_active_world(active)?;
         if active.session.current_revision != live_head {
+            let mut review = review;
             review.freshness = StoredManualReviewFreshness::RefreshRestartRequired {
                 current_revision: active.session.current_revision,
             };
-            return Ok(review.snapshot(review_key));
+            let snapshot = review.snapshot(review_key);
+            let _ = active;
+            self.replace_pending_review(review_key.to_owned(), review)?;
+            return Ok(snapshot);
         }
 
+        let mut review = review;
         review.review = refreshed;
         review.sync_with_revision(live_head);
-        Ok(review.snapshot(review_key))
+        let snapshot = review.snapshot(review_key);
+        let _ = active;
+        self.replace_pending_review(review_key.to_owned(), review)?;
+        Ok(snapshot)
     }
 
     pub fn confirm_stored_manual_review(
@@ -763,6 +981,7 @@ impl NirmataApp {
             None,
             import_trace.or(ai_trace),
             merge_source_revision,
+            Some(review_key),
         )?;
         if let Some(run_id) = ai_run_id {
             self.ai_runs
@@ -811,7 +1030,11 @@ impl NirmataApp {
                 .cmp(&timeline_sort_key(&right.time, &right.summary))
         });
         unknown.sort_by(|left, right| left.summary.cmp(&right.summary));
-        Ok(TimelineOverview { known, unknown })
+        Ok(TimelineOverview {
+            known,
+            unknown,
+            calendar_name: calendar.map(|value| value.name().to_owned()),
+        })
     }
 
     pub fn list_revision_history(&mut self) -> Result<RevisionHistorySnapshot, AppError> {
@@ -908,6 +1131,7 @@ impl NirmataApp {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -930,6 +1154,7 @@ impl NirmataApp {
             "undo",
             "undo",
             Some(target.revision.id()),
+            None,
             None,
             None,
         )
@@ -960,6 +1185,7 @@ impl NirmataApp {
             Some(target.revision.id()),
             None,
             None,
+            None,
         )
     }
 
@@ -976,12 +1202,14 @@ impl NirmataApp {
         store: WorldStore,
         world: World,
     ) -> Result<WorldSession, AppError> {
-        self.manual_reviews.clear();
-        self.ai_runs.clear();
-        self.deep_review_runs.clear();
-        self.import_review_traces.clear();
-        self.simulation_scenarios.clear();
         let active_variant = store.active_variant()?;
+        let (manual_reviews, ai_runs, import_review_traces) =
+            restore_pending_reviews(&store, active_variant.id, world.current_revision())?;
+        self.manual_reviews = manual_reviews;
+        self.ai_runs = ai_runs;
+        self.deep_review_runs.clear();
+        self.import_review_traces = import_review_traces;
+        self.simulation_scenarios.clear();
         let read_scope = ReadScope::head(active_variant.id);
         let session = WorldSession {
             path,
@@ -999,9 +1227,218 @@ impl NirmataApp {
         });
         Ok(session)
     }
+
+    pub(crate) fn insert_pending_review(
+        &mut self,
+        review_key: String,
+        stored: StoredManualReview,
+    ) -> Result<(), AppError> {
+        if self.manual_reviews.contains_key(&review_key) {
+            return Err(AppError::ReviewSessionConflict(review_key));
+        }
+        self.persist_pending_review(&review_key, &stored)?;
+        self.manual_reviews.insert(review_key, stored);
+        Ok(())
+    }
+
+    pub(crate) fn replace_pending_review(
+        &mut self,
+        review_key: String,
+        stored: StoredManualReview,
+    ) -> Result<(), AppError> {
+        self.persist_pending_review(&review_key, &stored)?;
+        self.manual_reviews.insert(review_key, stored);
+        Ok(())
+    }
+
+    pub(crate) fn persist_pending_review(
+        &self,
+        review_key: &str,
+        stored: &StoredManualReview,
+    ) -> Result<(), AppError> {
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let ai_run = stored
+            .ai_run_id
+            .map(|run_id| {
+                self.ai_runs
+                    .get(&run_id)
+                    .and_then(AiRun::persisted)
+                    .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))
+            })
+            .transpose()?;
+        let payload = PersistedPendingReview {
+            format_version: 1,
+            review: stored.review.persisted(),
+            revalidation_allowed: stored.revalidation_allowed,
+            merge_source_revision: stored.merge_source_revision,
+            import_trace: self.import_review_traces.get(review_key).cloned(),
+            ai_run,
+        };
+        let payload_json = serde_json::to_string(&payload).map_err(|error| {
+            StoreError::InvalidChangeSet(format!(
+                "pending review {review_key} could not be serialized: {error}"
+            ))
+        })?;
+        active.store.upsert_pending_review(
+            review_key,
+            stored.review.variant_id(),
+            stored.review.draft().base_revision(),
+            stored.origin.as_str(),
+            &payload_json,
+            now_ms()?,
+        )?;
+        Ok(())
+    }
 }
 
-fn calendar_tick_presentation(
+type RestoredPendingReviews = (
+    HashMap<String, StoredManualReview>,
+    HashMap<AiRunId, AiRun>,
+    HashMap<String, Value>,
+);
+
+fn restore_pending_reviews(
+    store: &WorldStore,
+    variant_id: nirmata_core::VariantId,
+    current_revision: RevisionId,
+) -> Result<RestoredPendingReviews, AppError> {
+    let mut reviews = HashMap::new();
+    let mut ai_runs = HashMap::new();
+    let mut import_traces = HashMap::new();
+    for record in store.list_pending_reviews(variant_id)? {
+        let payload: PersistedPendingReview =
+            serde_json::from_str(&record.payload_json).map_err(|error| {
+                StoreError::InvalidChangeSet(format!(
+                    "pending review {} contains invalid typed data: {error}",
+                    record.review_key
+                ))
+            })?;
+        if payload.format_version != 1 {
+            return Err(StoreError::InvalidChangeSet(format!(
+                "pending review {} uses unsupported format {}",
+                record.review_key, payload.format_version
+            ))
+            .into());
+        }
+        let origin = PendingReviewOrigin::from_str(&record.origin)?;
+        let review = ManualReviewSession::restore_persisted(payload.review, store)?;
+        if review.variant_id() != record.variant_id
+            || review.draft().world_id() != record.world_id
+            || review.draft().base_revision() != record.base_revision_id
+        {
+            return Err(StoreError::InvalidChangeSet(format!(
+                "pending review {} metadata does not match its typed payload",
+                record.review_key
+            ))
+            .into());
+        }
+        store.resolve_scope(ReadScope::historical(
+            review.variant_id(),
+            review.draft().base_revision(),
+        ))?;
+        let mut stored = StoredManualReview {
+            review,
+            freshness: StoredManualReviewFreshness::Current,
+            ai_run_id: None,
+            revalidation_allowed: payload.revalidation_allowed,
+            merge_source_revision: payload.merge_source_revision,
+            origin,
+        };
+        if let Some(trace) = payload.import_trace {
+            import_traces.insert(record.review_key.clone(), trace);
+        }
+        if let Some(ai_run) = payload.ai_run {
+            let mut request = ContextBundleRequest::new(crate::ContextIntent::ContradictionCheck);
+            request.anchors = stored.review.draft().sources().to_vec();
+            request.include_perspectives = true;
+            let scope = if stored.review.draft().base_revision() == current_revision {
+                ReadScope::head(stored.review.variant_id())
+            } else {
+                ReadScope::historical(
+                    stored.review.variant_id(),
+                    stored.review.draft().base_revision(),
+                )
+            };
+            let snapshot = AiContextSnapshot {
+                world_id: stored.review.draft().world_id(),
+                base_revision: stored.review.draft().base_revision(),
+                read_scope: scope,
+                context: build_context_bundle_scoped(store, scope, &request)?,
+            };
+            let run = AiRun::restore_pending(
+                ai_run,
+                record.review_key.clone(),
+                stored.review.original_draft().clone(),
+                snapshot,
+            );
+            let run_id = run.snapshot().id;
+            stored.ai_run_id = Some(run_id);
+            ai_runs.insert(run_id, run);
+        }
+        stored.sync_with_revision(current_revision);
+        reviews.insert(record.review_key, stored);
+    }
+    Ok((reviews, ai_runs, import_traces))
+}
+
+fn pending_review_snapshot(
+    store: &WorldStore,
+    session: &WorldSession,
+    review_key: &str,
+    stored: &StoredManualReview,
+    ai_status: Option<AiRunStatus>,
+) -> Result<PendingReviewSnapshot, AppError> {
+    let mut review = stored.snapshot(review_key);
+    review = gate_ai_review_snapshot(review, ai_status);
+    let operation = stored.review.operations().first().ok_or_else(|| {
+        StoreError::InvalidChangeSet("pending review has no operations".to_owned())
+    })?;
+    let editor_request = crate::manual_forms::manual_request_for_review_operation(
+        &stored.review,
+        operation.operation_id(),
+        session.world.calendar(),
+    )?;
+    let operation_snapshot = review
+        .operations
+        .first()
+        .expect("review operation was checked above");
+    let title = operation_snapshot
+        .after
+        .as_ref()
+        .or(operation_snapshot.before.as_ref())
+        .map(|value| value.title.clone())
+        .unwrap_or_else(|| review.objective.clone());
+    let merge = stored
+        .merge_source_revision
+        .map(|source_revision| {
+            let source_variant_id = store.revision_variant_id(source_revision)?;
+            let source = store.get_variant(source_variant_id)?.ok_or_else(|| {
+                StoreError::InvalidVariant("pending merge source variant was not found".to_owned())
+            })?;
+            let decision_count = review
+                .operations
+                .iter()
+                .filter(|operation| !operation.decision_points.is_empty())
+                .count();
+            Ok::<PendingMergeSnapshot, AppError>(PendingMergeSnapshot {
+                source_name: source.name,
+                destination_name: session.active_variant.name.clone(),
+                automatic_count: review.operations.len().saturating_sub(decision_count),
+                decision_count,
+            })
+        })
+        .transpose()?;
+    Ok(PendingReviewSnapshot {
+        review,
+        origin: stored.origin,
+        editor_request,
+        ai_run_id: stored.ai_run_id.map(|value| value.to_string()),
+        title,
+        merge,
+    })
+}
+
+pub(crate) fn calendar_tick_presentation(
     calendar: Option<&nirmata_core::calendar::WorldCalendar>,
     tick: i64,
 ) -> Option<CalendarTickPresentation> {
@@ -1014,6 +1451,19 @@ fn calendar_tick_presentation(
             "{}|{}|{}|{}",
             date.year, date.month, date.day, date.tick_in_day
         ),
+        year: date.year,
+        month: date.month,
+        month_name: calendar
+            .months()
+            .get(date.month as usize - 1)?
+            .name()
+            .to_owned(),
+        day: date.day,
+        tick_in_day: date.tick_in_day,
+        weekday_name: calendar
+            .weekday_names()
+            .get(date.weekday_index as usize)?
+            .to_owned(),
     })
 }
 
@@ -1073,6 +1523,7 @@ fn commit_review(
     undone_revision_id: Option<RevisionId>,
     deterministic_report: Option<Value>,
     source_revision: Option<RevisionId>,
+    pending_review_key: Option<&str>,
 ) -> Result<WorldSession, AppError> {
     ensure_active_write_scope(active)?;
     if review.variant_id() != active.session.active_variant.id {
@@ -1151,7 +1602,11 @@ fn commit_review(
     )?;
     active
         .store
-        .commit_change_set_from_source(&record, source_revision)?;
+        .commit_change_set_from_source_and_delete_pending(
+            &record,
+            source_revision,
+            pending_review_key.map(|key| (review.variant_id(), key)),
+        )?;
     refresh_active_world(active)?;
     Ok(active.session.clone())
 }

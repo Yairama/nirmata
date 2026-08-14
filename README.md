@@ -20,7 +20,7 @@ El corte incluye:
 - identidad y validacion minima de `World`;
 - esquema SQLite versionado con revision inicial;
 - casos de uso `create_world`, `open_world` y `close_world`;
-- frontend TypeScript, HTML y CSS nativos.
+- frontend React + TypeScript, Vite, Radix y CSS semántico.
 
 Empieza por [`docs/README.md`](docs/README.md).
 
@@ -37,8 +37,9 @@ La primera version debe permitir:
 - revisar, aceptar, editar o rechazar cada operacion;
 - conservar revisiones lineales, auditoria y undo.
 
-No incluye multiagentes autonomos, colaboracion, ramas, base vectorial, base de
-grafos, calendarios configurables ni un motor logico general.
+No incluye multiagentes autonomos, colaboracion, base vectorial, base de grafos
+ni un motor logico general. Variantes editoriales y calendarios configurables ya
+forman parte del corte actual.
 
 ## Arquitectura prevista
 
@@ -70,15 +71,15 @@ Las tareas habituales estan disponibles desde la raiz mediante
 
 ```powershell
 just setup     # instala dependencias frontend exactas
-just dev       # inicia Vite
+just dev       # inicia solo Vite
 just build     # frontend + ejecutable debug
+just run       # inicia Vite y la aplicacion Tauri
 just test      # unit, E2E, safety y workspace Rust
-just release   # frontend + ejecutable Rust optimizado
+just release   # frontend + ejecutable e instalador NSIS sin firma
 ```
 
-`just release` genera el ejecutable en `target\release`; no crea un instalador
-mientras `bundle.active` permanezca deshabilitado en Tauri. Usa `just --list`
-para ver las recetas separadas de check y test.
+`just release` genera el ejecutable y un instalador NSIS current-user sin firma.
+Usa `just --list` para ver las recetas separadas de check y test.
 
 Validacion del corte actual:
 
@@ -92,38 +93,41 @@ cargo build -p nirmata-desktop
 Para probar la frontera Tauri manualmente:
 
 ```powershell
-cargo run -p nirmata-desktop
+npm exec --prefix apps\nirmata-desktop\frontend -- tauri dev --config apps\nirmata-desktop\src-tauri\tauri.conf.json
 ```
 
 ## Compilacion de produccion
 
 Desde la raiz del repositorio, instala las dependencias exactas del frontend,
-genera los assets y compila el ejecutable optimizado:
+genera los assets, compila el ejecutable optimizado y crea el instalador:
 
 ```powershell
 npm ci --prefix apps\nirmata-desktop\frontend
 npm run build --prefix apps\nirmata-desktop\frontend
-cargo build --release -p nirmata-desktop
+npm exec --prefix apps\nirmata-desktop\frontend -- tauri build --config apps\nirmata-desktop\src-tauri\tauri.conf.json --bundles nsis --ci --no-sign
 ```
 
 El ejecutable resultante queda en:
 
 ```text
 target\release\nirmata-desktop.exe
+target\release\bundle\nsis\Nirmata_0.1.0_x64-setup.exe
 ```
 
-`cargo build` no ejecuta el `beforeBuildCommand` de Tauri CLI, por eso el build
-del frontend es un paso explicito. El empaquetado de instaladores no esta
-habilitado actualmente (`bundle.active` es `false` en `tauri.conf.json`).
+El instalador inicial es current-user y sin firma. La firma y el iconset final
+son gates de distribución posteriores; el artefacto local sirve para smoke de
+instalación, reapertura y desinstalación.
 
 En la ventana, crea un `.nirmata`, cierralo y abre el mismo archivo. La revision
 mostrada debe conservarse.
 
-Para desarrollo con Azure AI Foundry, configura en el proceso `BASE_URL`,
-`PROVIDER_API_KEY` y `AZURE_FOUNDRY_MODEL` (el test también acepta
-`GPT-5.6-SOL`). El repositorio ignora `.env`, pero no lo carga automáticamente.
-El cliente usa `POST /openai/v1/responses`, autenticación Bearer y `store: false`;
-el nombre del modelo/deployment se envía en cada solicitud.
+Microsoft Foundry se configura desde **Settings > IA**: el endpoint HTTPS y el
+nombre del modelo/deployment se guardan como preferencias locales, mientras la
+clave API usa el almacén seguro disponible. Para desarrollo, `BASE_URL`,
+`PROVIDER_API_KEY` y `AZURE_FOUNDRY_MODEL` continúan disponibles como valores de
+entorno o desde el `.env` ignorado de la raíz (el test también acepta
+`GPT-5.6-SOL`). El cliente usa `POST /openai/v1/responses`, autenticación Bearer
+y `store: false`; el nombre del modelo/deployment se envía en cada solicitud.
 
 Principio rector:
 

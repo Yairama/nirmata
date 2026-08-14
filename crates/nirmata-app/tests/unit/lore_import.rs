@@ -108,6 +108,15 @@ fn nir_065_ingests_confined_utf8_sources_with_inert_preview_and_hash() {
         .unwrap();
     assert_eq!(before, after, "staging must not modify canon");
 
+    let batch_id = batch.id.clone();
+    app.close_world().unwrap();
+    let mut app = NirmataApp::default();
+    app.open_world(root.join("world.nirmata")).unwrap();
+    let resumed = app.list_import_batches().expect("list persisted batches");
+    assert_eq!(resumed.len(), 1);
+    assert_eq!(resumed[0].id, batch_id);
+    assert_eq!(resumed[0].sources.len(), 2);
+
     app.delete_import_batch(&batch.id).expect("delete batch");
     assert!(matches!(
         app.read_import_batch(&batch.id),
@@ -580,6 +589,11 @@ async fn nir_068_only_explicitly_selected_identity_decisions_become_typed_review
         .await
         .unwrap();
     assert!(prepared.decision_points.is_empty());
+    app.close_world().unwrap();
+    app.open_world(root.join("world.nirmata")).unwrap();
+    let pending = app.list_pending_reviews().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].origin, crate::PendingReviewOrigin::LoreImport);
     let review = app
         .read_stored_manual_review(prepared.review_key.as_deref().unwrap())
         .unwrap();

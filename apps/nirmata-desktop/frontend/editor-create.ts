@@ -1,18 +1,19 @@
 import {
-  createEditorMode,
+  createStructuredEditorState,
   createField,
   currentWorldUri,
   enumOptions,
 } from "./editor-model.js";
-import { humanize, objectKindFromUri } from "./helpers.js";
-import { state } from "./state.js";
+import { objectKindFromUri } from "./helpers.js";
+import { getAppState } from "./state.js";
 import type {
   EditorField,
-  EditorMode,
+  StructuredEditorState,
   SearchObjectKind,
 } from "./types.js";
 
 function defaultCreateValues(kind: SearchObjectKind): Record<string, string> {
+  const state = getAppState();
   const selectedEntityUri =
     state.selectedUri && objectKindFromUri(state.selectedUri) === "entity" ? state.selectedUri : "";
   switch (kind) {
@@ -110,8 +111,19 @@ function defaultCreateValues(kind: SearchObjectKind): Record<string, string> {
 
 }
 
-export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
+export function buildCreateEditor(kind: SearchObjectKind): StructuredEditorState {
+  const state = getAppState();
   const values = defaultCreateValues(kind);
+  const label = ({
+    entity: "entidad",
+    relation: "relación",
+    event: "evento",
+    claim: "afirmación",
+    rule: "regla",
+    goal: "meta",
+    document: "documento",
+  } as const)[kind];
+  const article = ["entity", "relation", "claim", "rule", "goal"].includes(kind) ? "Nueva" : "Nuevo";
   const sourceUrisText = state.selectedUri ?? "";
   const fields: EditorField[] = [];
 
@@ -180,8 +192,8 @@ export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
         }),
         createField("start_tick", "Tick inicio", "number", values.start_tick),
         createField("end_tick", "Tick fin", "number", values.end_tick),
-        createField("start_calendar_date", "Fecha inicio (año|mes|día|sub-tick)", "text", values.start_calendar_date),
-        createField("end_calendar_date", "Fecha fin (año|mes|día|sub-tick)", "text", values.end_calendar_date),
+        createField("start_calendar_date", "Fecha de inicio", "text", values.start_calendar_date),
+        createField("end_calendar_date", "Fecha de fin", "text", values.end_calendar_date),
         createField("location_entity", "Entidad lugar", "text", values.location_entity, {
           help: "UUID o nirmata://entity/...",
         }),
@@ -331,20 +343,20 @@ export function buildCreateEditor(kind: SearchObjectKind): EditorMode {
   }
 
 
-  return createEditorMode({
+  return createStructuredEditorState({
     mode: "create",
     objectType: kind,
     existingUri: null,
     targetUri: null,
-    title: `Nuevo ${humanize(kind).toLowerCase()}`,
-    subtitle: `Propuesta manual · ${humanize(kind)}`,
-    description: `Completa un formulario mínimo para proponer un nuevo ${humanize(kind).toLowerCase()}.`,
+    title: `${article} ${label}`,
+    subtitle: `Propuesta manual · ${label}`,
+    description: `Completa el formulario para proponer ${article.toLowerCase()} ${label}.`,
     logicalPath: null,
     fields,
     metadata: state.session ? [{ label: "Mundo", value: state.session.world.name }] : [],
     warnings: [],
     links: [],
-    objective: `Crear ${humanize(kind).toLowerCase()}`,
+    objective: `Crear ${label}`,
     sourceUrisText,
     assumptionsText: "",
   });

@@ -288,7 +288,8 @@ impl StoredRevision {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChangeSetWaiver {
     operation_id: ChangeOperationId,
     issue_code: String,
@@ -363,7 +364,8 @@ impl ChangeSetWaiver {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OperationDecision {
     Accept,
     Edit,
@@ -635,6 +637,15 @@ impl WorldStore {
         record: &CommittedChangeSetRecord,
         source_revision: Option<RevisionId>,
     ) -> Result<StoredRevision, StoreError> {
+        self.commit_change_set_from_source_and_delete_pending(record, source_revision, None)
+    }
+
+    pub fn commit_change_set_from_source_and_delete_pending(
+        &mut self,
+        record: &CommittedChangeSetRecord,
+        source_revision: Option<RevisionId>,
+        pending_review: Option<(nirmata_core::VariantId, &str)>,
+    ) -> Result<StoredRevision, StoreError> {
         ensure_world(self, record.change_set().world_id())?;
         let transaction = self
             .connection
@@ -767,6 +778,20 @@ impl WorldStore {
             record.revision().id(),
             &snapshot,
         )?;
+        if let Some((variant_id, review_key)) = pending_review {
+            let changed = transaction
+                .execute(
+                    "DELETE FROM pending_reviews WHERE variant_id = ?1 AND review_key = ?2",
+                    params![variant_id.to_string(), review_key],
+                )
+                .map_err(|error| map_database_error(&self.path, error))?;
+            if changed != 1 {
+                return Err(StoreError::ObjectNotFound {
+                    object: "pending review",
+                    id: review_key.to_owned(),
+                });
+            }
+        }
         transaction
             .commit()
             .map_err(|error| map_database_error(&self.path, error))?;

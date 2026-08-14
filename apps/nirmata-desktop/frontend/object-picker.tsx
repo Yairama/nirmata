@@ -1,23 +1,30 @@
 import { invoke } from "@tauri-apps/api/core";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
-import { useDeferredValue, useEffect, useState } from "react";
+import { createContext, useContext, useDeferredValue, useState } from "react";
+import type { ReactNode } from "react";
 import { useSession } from "./session-provider.js";
 import type { SearchObjectKind, SearchResult, SearchWorldResponse } from "./types.js";
+import { observedScopeQueryKey } from "./workspace-data.js";
 
-type ObjectPickerRequest = {
+export type ObjectPickerRequest = {
   title: string;
   kinds: SearchObjectKind[];
   multiple: boolean;
   returnFocus: HTMLElement | null;
   apply: (results: SearchResult[]) => void;
+  allowedUris?: string[];
 };
 
-export function requestObjectPicker(request: ObjectPickerRequest): void {
-  window.dispatchEvent(new CustomEvent("nirmata:pick-object", { detail: request }));
+const ObjectPickerContext = createContext<((request: ObjectPickerRequest) => void) | null>(null);
+
+export function useObjectPicker() {
+  const request = useContext(ObjectPickerContext);
+  if (!request) throw new Error("ObjectPickerProvider is missing.");
+  return request;
 }
 
-export function ObjectPicker() {
+export function ObjectPickerProvider({ children }: { children: ReactNode }) {
   const session = useSession();
   const [request, setRequest] = useState<ObjectPickerRequest | null>(null);
   const [query, setQuery] = useState("");
@@ -25,10 +32,10 @@ export function ObjectPicker() {
   const deferredQuery = useDeferredValue(query.trim());
   const kind = request?.kinds.length === 1 ? request.kinds[0] : "all";
   const scopeKey = session
-    ? [session.world_id, session.active_variant.id, session.read_scope.revisionId ?? session.current_revision]
-    : ["closed", "closed", "closed"];
+    ? observedScopeQueryKey(session)
+    : ["world", "closed", "closed", "closed"] as const;
   const results = useQuery({
-    queryKey: ["world", ...scopeKey, "object-picker", kind, deferredQuery],
+    queryKey: [...scopeKey, "object-picker", kind, deferredQuery],
     queryFn: () => invoke<SearchWorldResponse>("search_world", {
       input: { queryText: deferredQuery, kind, limit: 50 },
     }),
@@ -37,15 +44,11 @@ export function ObjectPicker() {
     placeholderData: (previous) => previous,
   });
 
-  useEffect(() => {
-    function onRequest(event: Event) {
-      setRequest((event as CustomEvent<ObjectPickerRequest>).detail);
-      setQuery("");
-      setSelected([]);
-    }
-    window.addEventListener("nirmata:pick-object", onRequest);
-    return () => window.removeEventListener("nirmata:pick-object", onRequest);
-  }, []);
+  function openPicker(next: ObjectPickerRequest) {
+    setRequest(next);
+    setQuery("");
+    setSelected([]);
+  }
 
   function close() {
     const focus = request?.returnFocus;
@@ -65,9 +68,12 @@ export function ObjectPicker() {
       : [...current, result]);
   }
 
-  const allowed = (results.data?.hits ?? []).filter((result) => request?.kinds.includes(result.object_type as SearchObjectKind));
+  const allowed = (results.data?.hits ?? []).filter((result) => request?.kinds.includes(result.object_type as SearchObjectKind)
+    && (!request.allowedUris || request.allowedUris.includes(result.uri)));
   return (
-    <Dialog.Root open={request !== null} onOpenChange={(open) => !open && close()}>
+    <ObjectPickerContext.Provider value={openPicker}>
+      {children}
+      <Dialog.Root open={request !== null} onOpenChange={(open) => !open && close()}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content className="object-picker-dialog" aria-describedby="object-picker-description">
@@ -79,7 +85,7 @@ export function ObjectPicker() {
             <Dialog.Close asChild><button type="button" className="ghost">Cerrar</button></Dialog.Close>
           </div>
           <label>Buscar
-            <input autoFocus type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Escribe para buscar…" />
+            <input autoFocus name="object-picker-search" autoComplete="off" type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Escribe para buscar…" />
           </label>
           <div className="object-picker-results" role="region" aria-label="Objetos disponibles">
             {results.isFetching && <p role="status" className="muted">Buscando…</p>}
@@ -103,7 +109,8 @@ export function ObjectPicker() {
           )}
         </Dialog.Content>
       </Dialog.Portal>
-    </Dialog.Root>
+      </Dialog.Root>
+    </ObjectPickerContext.Provider>
   );
 }
 

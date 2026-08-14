@@ -1,4 +1,5 @@
 import { Command } from "cmdk";
+import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useRef } from "react";
 import type { SearchResult } from "./types.js";
 
@@ -37,6 +38,7 @@ export function CommandPalette({
   const wasOpen = useRef(false);
 
   useEffect(() => {
+    if (isTauri()) return;
     function onKeyDown(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -59,7 +61,8 @@ export function CommandPalette({
   }
 
   async function selectResult(result: SearchResult) {
-    if (await onSelectResult(result)) onOpenChange(false);
+    onOpenChange(false);
+    await onSelectResult(result);
   }
 
   const hasWorldQuery = query.trim().length >= 2;

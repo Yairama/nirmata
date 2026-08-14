@@ -22,18 +22,20 @@ pub(crate) fn prepare_manual_operation(
 pub(crate) fn manual_request_for_review_operation(
     review: &ManualReviewSession,
     operation_id: ChangeOperationId,
+    calendar: Option<&WorldCalendar>,
 ) -> Result<ManualDraftRequest, AppError> {
     let operation = review
         .operations()
         .iter()
         .find(|operation| operation.operation_id() == operation_id)
         .ok_or(AppError::UnknownReviewOperation(operation_id))?;
-    Ok(operation_request(review, operation.current()))
+    Ok(operation_request(review, operation.current(), calendar))
 }
 
 fn operation_request(
     review: &ManualReviewSession,
     operation: &ChangeOperation,
+    calendar: Option<&WorldCalendar>,
 ) -> ManualDraftRequest {
     let (object_type, existing_uri, values) = match operation {
         ChangeOperation::UpdateWorld { after, .. } => (
@@ -68,17 +70,17 @@ fn operation_request(
             relation_values(before),
         ),
         ChangeOperation::CreateEvent { after, .. } => {
-            ("event".to_owned(), None, event_values(after))
+            ("event".to_owned(), None, event_values(after, calendar))
         }
         ChangeOperation::UpdateEvent { after, .. } => (
             "event".to_owned(),
             Some(ObjectRef::Event(after.event().id()).to_string()),
-            event_values(after),
+            event_values(after, calendar),
         ),
         ChangeOperation::DeleteEvent { before, .. } => (
             "event".to_owned(),
             Some(ObjectRef::Event(before.event().id()).to_string()),
-            event_values(before),
+            event_values(before, calendar),
         ),
         ChangeOperation::CreateGoal { after, .. } => ("goal".to_owned(), None, goal_values(after)),
         ChangeOperation::UpdateGoal { after, .. } => (

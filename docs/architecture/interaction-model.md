@@ -43,6 +43,16 @@ solicitud en propuesta. No cambia de modo silenciosamente.
 
 El area de cambios pendientes es distinta del transcript conversacional. Una
 respuesta no debe perderse entre mensajes ni aplicarse desde un boton ambiguo.
+La cola se recupera desde SQLite al abrir el mundo o cambiar de variante. Una
+tarjeta conserva el mismo origen, editor y acciones tras reiniciar; stale sigue
+visible pero nunca se vuelve aplicable por el mero hecho de reabrir.
+
+`PendingReviews` y `ReviewDrawer` son el único owner visual React de esa cola.
+TanStack Query llama `list_pending_reviews` y `read_manual_review` con claves de
+mundo, variante y revisión; los productores solo persisten mediante su caso de
+uso e invalidan esa consulta. No existe un mapa frontend paralelo ni un host DOM
+imperativo. El asistente invalida la query después de que Rust ya persistió la
+revisión y nunca recibe ni transporta capacidad de commit.
 
 ## Modo consultar
 
@@ -74,6 +84,18 @@ Fuentes:
 Si la solicitud es ambigua o amplia, la aplicacion presenta antes un
 `IntentBrief` editable con objetivo, alcance, entidades y restricciones.
 Solicitudes pequenas no agregan este paso.
+
+El modo Proponer ofrece exactamente seis plantillas reutilizables: faccion,
+ciudad, personaje, conflicto, cronologia y consecuencias. No existe una
+plantilla de novela. Preparar una plantilla es determinista y local: crea un
+run `IntentBriefReady`, captura la revision y el contexto y no requiere
+credencial. Si no hay seleccion, el mundo es su ancla y fuente explicita.
+
+La escala pequena admite como maximo tres operaciones y la mediana seis. Rust
+aplica el limite tanto a la primera salida como a una reparacion, exige fuentes
+no vacias y rechaza cualquier fuente fuera del contexto capturado. Continuar el
+brief reutiliza el mismo run, revision y contexto; no consulta la seleccion
+actual de la interfaz ni crea una ejecucion huerfana.
 
 Debe producir:
 
@@ -152,6 +174,25 @@ Comparar dos scopes lista diferencias por ID con acciones para abrir cada lado.
 Preparar merge siempre toma otra variante como fuente y la cabeza activa como
 destino. Operaciones independientes y `DecisionPoint`s aparecen en el panel de
 cambios normal; no existe un boton que aplique directamente la comparacion.
+
+El area Versiones es el unico owner visual del linaje y del historial editorial.
+La cola global Cambios contiene propuestas pendientes, incluido un merge
+preparado, pero no duplica versiones historicas. Deshacer solo actua sobre el
+ultimo cambio logico de la variante activa y crea una nueva version inversa.
+
+## Edicion manual estructurada
+
+El area Mundo monta un unico `StructuredEditor` React para World, Entity,
+Relation, Event, Claim, Rule, Goal y Document. React Hook Form conserva dirty,
+reset y errores por campo; las listas compuestas usan field arrays y el
+`ObjectPicker` resuelve referencias por nombre. UUID, URI, JSON y unidades
+temporales permanecen disponibles solo en detalles tecnicos.
+
+El formulario no valida el dominio por segunda vez ni escribe canon. Convierte
+controles humanos al `ManualDraftRequest` existente y `preview_manual_draft`
+sigue siendo la autoridad para construir y validar la propuesta. Crear, editar y
+`begin_manual_review_edit`/`apply_manual_review_edit` recorren el mismo editor;
+el resultado vuelve siempre a Cambios para revision estandar.
 
 ## Streaming
 

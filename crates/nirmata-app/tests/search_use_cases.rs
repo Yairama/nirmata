@@ -104,6 +104,7 @@ fn search_world_result_opens_the_exact_source_uri() {
                 document.clone(),
                 vec![],
             )),
+            event_calendar: None,
         }
     );
 

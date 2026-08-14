@@ -525,6 +525,10 @@ impl NirmataApp {
             ],
             reason: "El usuario eligió una alternativa explícita de continuidad narrativa."
                 .to_owned(),
+            authority: "La IA solo prepara una propuesta revisable; no aplica cambios al canon."
+                .to_owned(),
+            template: None,
+            scale: None,
         };
         let mut context_request = ContextBundleRequest::new(ContextIntent::ImpactAnalysis);
         context_request.anchors = source_refs.clone();

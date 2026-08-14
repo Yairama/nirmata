@@ -30,7 +30,7 @@ use nirmata_core::{
     validation::{ValidationReport, ValidationSeverity},
 };
 use nirmata_store::{ReadScope, StructuredSearchTemporal};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -55,7 +55,47 @@ pub enum AiMode {
     Audit,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiProposalTemplate {
+    Faction,
+    City,
+    Character,
+    Conflict,
+    Chronology,
+    Consequences,
+}
+
+impl AiProposalTemplate {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Faction => "facción",
+            Self::City => "ciudad",
+            Self::Character => "personaje",
+            Self::Conflict => "conflicto",
+            Self::Chronology => "cronología",
+            Self::Consequences => "consecuencias",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiProposalScale {
+    Small,
+    Medium,
+}
+
+impl AiProposalScale {
+    pub const fn max_operations(self) -> usize {
+        match self {
+            Self::Small => 3,
+            Self::Medium => 6,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AiRunId(ChangeSetId);
 
@@ -151,8 +191,17 @@ impl AiContextSnapshot {
 pub struct AiQueryInput {
     pub mode: AiMode,
     pub request: String,
+    pub conversation_history: Vec<AiConversationTurn>,
     pub snapshot: AiContextSnapshot,
     pub context_object_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiConversationTurn {
+    pub user_request: String,
+    pub assistant_response: String,
+    pub source_uris: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -334,6 +383,11 @@ pub struct IntentBrief {
     pub entities: Vec<SearchResult>,
     pub restrictions: Vec<String>,
     pub reason: String,
+    pub authority: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<AiProposalTemplate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale: Option<AiProposalScale>,
 }
 
 impl IntentBrief {
@@ -357,9 +411,18 @@ impl IntentBrief {
                 .join("\n")
         };
 
+        let operation_limit = self
+            .scale
+            .map(|scale| {
+                format!(
+                    "\nMáximo de operaciones para esta escala: {}.",
+                    scale.max_operations()
+                )
+            })
+            .unwrap_or_default();
         format!(
-            "Objetivo: {}\nAlcance: {}\nEntidades:\n{}\nRestricciones:\n{}\nSolicitud original: {}",
-            self.objective, self.scope, entities, restrictions, self.user_request
+            "Objetivo: {}\nAlcance: {}\nEntidades:\n{}\nRestricciones:\n{}{}\nSolicitud original: {}",
+            self.objective, self.scope, entities, restrictions, operation_limit, self.user_request
         )
     }
 }
@@ -450,6 +513,7 @@ pub(crate) struct AiRun {
     mode: AiMode,
     request: String,
     context: AiContextSnapshot,
+    template: Option<AiProposalTemplate>,
     critique_acknowledgements: BTreeMap<String, String>,
     state: AiRunState,
 }
@@ -497,7 +561,70 @@ struct AiRunReview {
     review_key: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PersistedAiRun {
+    id: AiRunId,
+    request: String,
+    generator_metadata: InvocationMetadata,
+    initial_critique_report: CritiqueReport,
+    initial_critique_metadata: InvocationMetadata,
+    repair_count: u8,
+}
+
 impl AiRun {
+    pub(crate) fn persisted(&self) -> Option<PersistedAiRun> {
+        let review = self.review()?;
+        Some(PersistedAiRun {
+            id: self.id,
+            request: self.request.clone(),
+            generator_metadata: review.proposal.metadata.clone(),
+            initial_critique_report: review.proposal.critique_report.clone(),
+            initial_critique_metadata: review.proposal.critique_metadata.clone(),
+            repair_count: review.proposal.repair_count,
+        })
+    }
+
+    pub(crate) fn restore_pending(
+        persisted: PersistedAiRun,
+        review_key: String,
+        draft: ChangeSetDraft,
+        context: AiContextSnapshot,
+    ) -> Self {
+        let proposal = AiProposalDraftResponse {
+            request: persisted.request.clone(),
+            snapshot: context.clone(),
+            assumptions: draft.assumptions().to_vec(),
+            draft,
+            metadata: persisted.generator_metadata,
+            sources: vec![],
+            affected_objects: vec![],
+            operations: vec![],
+            consequences: vec![],
+            validation_report: ValidationReport::default(),
+            critique_report: persisted.initial_critique_report,
+            critique_metadata: persisted.initial_critique_metadata,
+            repair_count: persisted.repair_count,
+            repair_output_failure: None,
+            ready_for_review: true,
+        };
+        let review = AiRunReview {
+            proposal,
+            review_key,
+        };
+        Self {
+            id: persisted.id,
+            world_id: context.world_id,
+            base_revision: context.base_revision,
+            mode: AiMode::Propose,
+            request: persisted.request,
+            context,
+            template: None,
+            critique_acknowledgements: BTreeMap::new(),
+            state: AiRunState::AwaitingFinalCritique(review),
+        }
+    }
+
     fn running(request: String, context: AiContextSnapshot) -> Self {
         Self {
             id: AiRunId::new(),
@@ -506,6 +633,7 @@ impl AiRun {
             mode: AiMode::Propose,
             request,
             context,
+            template: None,
             critique_acknowledgements: BTreeMap::new(),
             state: AiRunState::Running,
         }
@@ -947,12 +1075,20 @@ impl crate::NirmataApp {
             run.review().map(|review| review.review_key.clone())
         };
         if let Some(review_key) = review_key {
-            if self
+            if let Some(stored) = self
                 .manual_reviews
                 .get(&review_key)
-                .is_some_and(|stored| stored.ai_run_id == Some(run_id))
+                .filter(|stored| stored.ai_run_id == Some(run_id))
             {
+                let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+                if !active
+                    .store
+                    .delete_pending_review(stored.review.variant_id(), &review_key)?
+                {
+                    return Err(AppError::ReviewSessionNotFound(review_key));
+                }
                 self.manual_reviews.remove(&review_key);
+                self.import_review_traces.remove(&review_key);
             }
         }
         let run = self
@@ -1009,16 +1145,19 @@ impl crate::NirmataApp {
                 &active.store,
             )?;
         }
-        self.manual_reviews.insert(
+        let snapshot = {
+            let run = self
+                .ai_runs
+                .get_mut(&run_id)
+                .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+            run.acknowledge_critique(issue_id, judgment.trim())?;
+            run.snapshot()
+        };
+        self.replace_pending_review(
             review_key,
             crate::app::StoredManualReview::from_ai(review, run_id),
-        );
-        let run = self
-            .ai_runs
-            .get_mut(&run_id)
-            .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
-        run.acknowledge_critique(issue_id, judgment.trim())?;
-        Ok(run.snapshot())
+        )?;
+        Ok(snapshot)
     }
 
     pub async fn execute_ai_proposal_run<F>(
@@ -1044,30 +1183,76 @@ impl crate::NirmataApp {
         .await
     }
 
-    pub async fn execute_ai_proposal_run_from_intent_brief<F>(
+    pub async fn continue_ai_proposal_run_from_intent_brief<F>(
         &mut self,
         provider: &AiProviderConfig,
+        run_id: AiRunId,
         brief: &IntentBrief,
-        context_request: &ContextBundleRequest,
         options: AiRequestOptions,
         on_progress: F,
     ) -> Result<AiRunSnapshot, AppError>
     where
         F: FnMut(AiProposalProgress) + Send,
     {
-        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
+        self.validate_ai_proposal_run_continuation(run_id, brief)?;
+        let client = self.provider_client(provider)?;
+        self.continue_ai_proposal_run_from_intent_brief_with(
+            run_id,
+            &client,
+            brief,
+            options,
+            on_progress,
+        )
+        .await
+    }
+
+    pub(crate) async fn continue_ai_proposal_run_from_intent_brief_with<C, F>(
+        &mut self,
+        run_id: AiRunId,
+        client: &C,
+        brief: &IntentBrief,
+        options: AiRequestOptions,
+        mut on_progress: F,
+    ) -> Result<AiRunSnapshot, AppError>
+    where
+        C: AiModeClient,
+        F: FnMut(AiProposalProgress) + Send,
+    {
+        self.validate_ai_proposal_run_continuation(run_id, brief)?;
+        let run = self
+            .ai_runs
+            .get(&run_id)
+            .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+        let snapshot = run.context.clone();
+        let template = run.template;
         let request = brief.render_request();
-        let prepared = self.prepare_ai_proposal(request.clone(), context_request)?;
-        let run = AiRun::running(request, prepared.snapshot);
-        let run_id = run.id;
-        self.ai_runs.insert(run_id, run);
+        let prepared = AiProposalInput {
+            mode: AiMode::Propose,
+            request: request.clone(),
+            context_object_ids: snapshot.context_object_ids(),
+            snapshot: snapshot.clone(),
+        };
+        let context_request = captured_context_request(&snapshot);
+        let allowed_sources = snapshot
+            .context_object_ids()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let scale = brief.scale;
+        let validate_template = |draft: ChangeSetDraft| {
+            if template.is_some() {
+                validate_template_draft(&draft, scale, &allowed_sources)?;
+            }
+            Ok(draft)
+        };
         let result = self
-            .execute_ai_proposal_from_intent_brief(
-                provider,
-                brief,
-                context_request,
+            .execute_ai_proposal_input_with(
+                client,
+                request,
+                prepared,
+                &context_request,
                 options,
-                on_progress,
+                Some(&validate_template),
+                &mut on_progress,
             )
             .await;
         match result {
@@ -1088,6 +1273,71 @@ impl crate::NirmataApp {
                 return Err(error);
             }
         }
+        self.read_ai_run(run_id)
+    }
+
+    fn validate_ai_proposal_run_continuation(
+        &self,
+        run_id: AiRunId,
+        brief: &IntentBrief,
+    ) -> Result<(), AppError> {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let run = self
+            .ai_runs
+            .get(&run_id)
+            .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+        if !matches!(run.state, AiRunState::IntentBriefReady(_)) {
+            return Err(AppError::InvalidAiRunTransition {
+                run_id: run_id.to_string(),
+                status: run.status_label(),
+                action: "continue an intent brief",
+            });
+        }
+        if active.session.current_revision != run.base_revision
+            || active.session.world_id != run.world_id
+        {
+            return Err(AppError::AiBaseRevisionMismatch {
+                draft_base_revision: run.base_revision,
+                current_revision: active.session.current_revision,
+            });
+        }
+        validate_edited_brief(run, brief)
+    }
+
+    pub fn prepare_ai_proposal_template(
+        &mut self,
+        template: AiProposalTemplate,
+        scale: AiProposalScale,
+        context_request: &ContextBundleRequest,
+    ) -> Result<AiRunSnapshot, AppError> {
+        crate::app::ensure_active_write_scope(self.active.as_ref().ok_or(AppError::NoWorldOpen)?)?;
+        let active = self.active.as_ref().ok_or(AppError::NoWorldOpen)?;
+        let mut captured_request = context_request.clone();
+        if captured_request.anchors.is_empty() {
+            captured_request.anchors = vec![ObjectRef::World(active.session.world_id)];
+        }
+        let user_request = format!("Expandir {} del mundo", template.label());
+        let prepared = self.prepare_ai_proposal(user_request.clone(), &captured_request)?;
+        let reason = format!(
+            "La plantilla de {} delimita una expansión reutilizable antes de llamar al proveedor.",
+            template.label()
+        );
+        let mut brief =
+            build_intent_brief(&active.store, &prepared.snapshot, &user_request, reason)?;
+        brief.objective = template_objective(template).to_owned();
+        brief.scope = template_scope(template).to_owned();
+        brief.template = Some(template);
+        brief.scale = Some(scale);
+        brief.restrictions.insert(
+            0,
+            format!("No superar {} operaciones.", scale.max_operations()),
+        );
+        let mut run = AiRun::running(user_request, prepared.snapshot);
+        run.template = Some(template);
+        run.state = AiRunState::IntentBriefReady(brief);
+        let run_id = run.id;
+        self.ai_runs.insert(run_id, run);
         self.read_ai_run(run_id)
     }
 
@@ -1398,36 +1648,40 @@ impl crate::NirmataApp {
         });
         let base_ready = refreshed.ready_to_confirm() && effective_final_report.is_ok();
         let ready = base_ready && !unresolved_critique;
-        self.manual_reviews.insert(
-            review.review_key.clone(),
-            crate::app::StoredManualReview::from_ai(refreshed, run_id),
-        );
-        let run = self
-            .ai_runs
-            .get_mut(&run_id)
-            .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
-        run.base_revision = live_head;
-        run.context = critique_input.snapshot;
-        run.state = if ready {
-            AiRunState::ReadyToCommit {
-                review,
-                reviewed_draft,
-                validation_report: final_report,
-                critique_report: critique.output,
-                critique_metadata: critique.metadata,
-            }
-        } else {
-            AiRunState::FinalCritiqueBlocked {
-                review,
-                reviewed_draft,
-                validation_report: final_report,
-                critique_report: critique.output,
-                critique_metadata: critique.metadata,
-                base_ready,
-            }
+        let review_key = review.review_key.clone();
+        let snapshot = {
+            let run = self
+                .ai_runs
+                .get_mut(&run_id)
+                .ok_or_else(|| AppError::AiRunNotFound(run_id.to_string()))?;
+            run.base_revision = live_head;
+            run.context = critique_input.snapshot;
+            run.state = if ready {
+                AiRunState::ReadyToCommit {
+                    review,
+                    reviewed_draft,
+                    validation_report: final_report,
+                    critique_report: critique.output,
+                    critique_metadata: critique.metadata,
+                }
+            } else {
+                AiRunState::FinalCritiqueBlocked {
+                    review,
+                    reviewed_draft,
+                    validation_report: final_report,
+                    critique_report: critique.output,
+                    critique_metadata: critique.metadata,
+                    base_ready,
+                }
+            };
+            run.snapshot()
         };
+        self.replace_pending_review(
+            review_key,
+            crate::app::StoredManualReview::from_ai(refreshed, run_id),
+        )?;
         on_progress(AiProposalProgress::Completed);
-        Ok(run.snapshot())
+        Ok(snapshot)
     }
 
     pub(crate) fn complete_ai_proposal_run(
@@ -1468,10 +1722,6 @@ impl crate::NirmataApp {
                     ));
                     return Err(AppError::ReviewSessionConflict(review_key));
                 }
-                self.manual_reviews.insert(
-                    review_key.clone(),
-                    crate::app::StoredManualReview::from_ai(review, run_id),
-                );
                 let run = self
                     .ai_runs
                     .get_mut(&run_id)
@@ -1480,8 +1730,13 @@ impl crate::NirmataApp {
                 run.context = proposal.snapshot.clone();
                 run.state = AiRunState::AwaitingReview(AiRunReview {
                     proposal,
-                    review_key,
+                    review_key: review_key.clone(),
                 });
+                let _ = run;
+                self.insert_pending_review(
+                    review_key,
+                    crate::app::StoredManualReview::from_ai(review, run_id),
+                )?;
             }
         }
         Ok(())
@@ -1492,11 +1747,21 @@ impl crate::NirmataApp {
         request: impl Into<String>,
         context_request: &ContextBundleRequest,
     ) -> Result<AiQueryInput, AppError> {
+        self.prepare_ai_query_with_history(request, Vec::new(), context_request)
+    }
+
+    pub fn prepare_ai_query_with_history(
+        &self,
+        request: impl Into<String>,
+        conversation_history: Vec<AiConversationTurn>,
+        context_request: &ContextBundleRequest,
+    ) -> Result<AiQueryInput, AppError> {
         let snapshot = self.build_ai_context_snapshot(context_request)?;
         let context_object_ids = snapshot.context_object_ids();
         Ok(AiQueryInput {
             mode: AiMode::Query,
             request: request.into(),
+            conversation_history,
             snapshot,
             context_object_ids,
         })
@@ -1615,10 +1880,34 @@ impl crate::NirmataApp {
     where
         F: FnMut(AiQueryProgress) + Send,
     {
+        self.execute_ai_query_with_history(
+            provider,
+            request,
+            Vec::new(),
+            context_request,
+            options,
+            on_progress,
+        )
+        .await
+    }
+
+    pub async fn execute_ai_query_with_history<F>(
+        &self,
+        provider: &AiProviderConfig,
+        request: impl Into<String>,
+        conversation_history: Vec<AiConversationTurn>,
+        context_request: &ContextBundleRequest,
+        options: AiRequestOptions,
+        on_progress: F,
+    ) -> Result<AiQueryResponse, AppError>
+    where
+        F: FnMut(AiQueryProgress) + Send,
+    {
         let client = self.provider_client(provider)?;
         self.execute_ai_query_with(
             &client,
             request.into(),
+            conversation_history,
             context_request,
             options,
             on_progress,
@@ -1676,6 +1965,7 @@ impl crate::NirmataApp {
         &self,
         client: &C,
         request: String,
+        conversation_history: Vec<AiConversationTurn>,
         context_request: &ContextBundleRequest,
         options: AiRequestOptions,
         mut on_progress: F,
@@ -1685,7 +1975,11 @@ impl crate::NirmataApp {
         F: FnMut(AiQueryProgress) + Send,
     {
         on_progress(AiQueryProgress::PreparingContext);
-        let prepared = self.prepare_ai_query(request.clone(), context_request)?;
+        let prepared = self.prepare_ai_query_with_history(
+            request.clone(),
+            conversation_history,
+            context_request,
+        )?;
         let payload = serialize_payload(&prepared, "query")?;
         let request_options = options.clone().into_request_options();
 
@@ -2496,7 +2790,127 @@ fn build_intent_brief(
         entities: entity_results,
         restrictions,
         reason,
+        authority: "La IA solo preparará una propuesta para Cambios; no puede aplicarla ni convertirla en canon.".to_owned(),
+        template: None,
+        scale: None,
     })
+}
+
+fn template_objective(template: AiProposalTemplate) -> &'static str {
+    match template {
+        AiProposalTemplate::Faction => {
+            "Crear o profundizar una facción conectada al canon existente."
+        }
+        AiProposalTemplate::City => {
+            "Crear o profundizar una ciudad con función, tensiones y vínculos concretos."
+        }
+        AiProposalTemplate::Character => {
+            "Crear o profundizar un personaje con motivación y relaciones verificables."
+        }
+        AiProposalTemplate::Conflict => {
+            "Plantear un conflicto acotado entre actores y compromisos existentes."
+        }
+        AiProposalTemplate::Chronology => {
+            "Añadir una secuencia breve de acontecimientos conectados."
+        }
+        AiProposalTemplate::Consequences => {
+            "Proponer consecuencias directas y trazables de la selección."
+        }
+    }
+}
+
+fn template_scope(template: AiProposalTemplate) -> &'static str {
+    match template {
+        AiProposalTemplate::Faction => "Una facción y sus vínculos inmediatos.",
+        AiProposalTemplate::City => "Una ciudad y los actores directamente relacionados.",
+        AiProposalTemplate::Character => "Un personaje, una motivación y relaciones inmediatas.",
+        AiProposalTemplate::Conflict => "Un conflicto y sus participantes directos.",
+        AiProposalTemplate::Chronology => {
+            "Acontecimientos necesarios para una secuencia temporal breve."
+        }
+        AiProposalTemplate::Consequences => {
+            "Efectos inmediatos sobre objetos presentes en el contexto."
+        }
+    }
+}
+
+fn captured_context_request(snapshot: &AiContextSnapshot) -> ContextBundleRequest {
+    let mut request = ContextBundleRequest::new(crate::ContextIntent::ImpactAnalysis);
+    request.anchors = snapshot
+        .context
+        .all_entries()
+        .into_iter()
+        .map(|entry| entry.object_ref())
+        .collect();
+    request.include_perspectives = true;
+    request.budget = crate::ContextBudget {
+        max_objects: snapshot.context.usage.max_objects,
+        max_chars: snapshot.context.usage.max_chars,
+    };
+    request
+}
+
+fn validate_edited_brief(run: &AiRun, brief: &IntentBrief) -> Result<(), AppError> {
+    if brief.objective.trim().is_empty() || brief.scope.trim().is_empty() {
+        return Err(AppError::InvalidAiProposal(
+            "intent brief objective and scope cannot be empty".to_owned(),
+        ));
+    }
+    if run.template != brief.template {
+        return Err(AppError::InvalidAiProposal(
+            "intent brief template cannot change while continuing a run".to_owned(),
+        ));
+    }
+    if run.template.is_some() && brief.scale.is_none() {
+        return Err(AppError::InvalidAiProposal(
+            "template intent brief requires an explicit scale".to_owned(),
+        ));
+    }
+    let allowed = run
+        .context
+        .context_object_ids()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    if brief
+        .entities
+        .iter()
+        .any(|entity| !allowed.contains(&entity.uri))
+    {
+        return Err(AppError::InvalidAiProposal(
+            "intent brief contains an entity outside its captured context".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_template_draft(
+    draft: &ChangeSetDraft,
+    scale: Option<AiProposalScale>,
+    allowed_sources: &BTreeSet<String>,
+) -> Result<(), AppError> {
+    let scale = scale
+        .ok_or_else(|| AppError::InvalidAiProposal("template proposal has no scale".to_owned()))?;
+    if draft.operations().len() > scale.max_operations() {
+        return Err(AppError::InvalidAiProposal(format!(
+            "template proposal exceeds the {} operation limit",
+            scale.max_operations()
+        )));
+    }
+    if draft.sources().is_empty() {
+        return Err(AppError::InvalidAiProposal(
+            "template proposal requires at least one captured source".to_owned(),
+        ));
+    }
+    if draft
+        .sources()
+        .iter()
+        .any(|source| !allowed_sources.contains(&source.to_string()))
+    {
+        return Err(AppError::InvalidAiProposal(
+            "template proposal contains a source outside its captured context".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn proposal_brief_reason(request: &str, context_request: &ContextBundleRequest) -> Option<String> {

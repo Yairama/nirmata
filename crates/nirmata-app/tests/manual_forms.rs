@@ -330,6 +330,15 @@ fn calendar_configuration_and_exact_date_input_flow_through_review() {
         .expect("event date preview");
     assert!(event.field_issues.is_empty());
     let event_review = event.review.expect("event review");
+    let event_operation_id = ChangeOperationId::from_str(&event_review.operations[0].operation_id)
+        .expect("event operation id");
+    let projected_edit = app
+        .begin_stored_manual_review_edit(&event_review.review_key, event_operation_id)
+        .expect("project event date for review edit");
+    assert_eq!(
+        projected_edit.values.get("start_calendar_date"),
+        Some(&"0|2|1|0".to_owned())
+    );
     app.confirm_stored_manual_review(&event_review.review_key)
         .expect("commit dated event");
     let timeline = app.list_timeline_events().expect("timeline");
@@ -352,6 +361,89 @@ fn calendar_configuration_and_exact_date_input_flow_through_review() {
         .expect("open cited event");
     assert!(citation.result.snippet.contains("Imperial"));
     assert!(citation.result.snippet.contains("tick 120"));
+    let projected = citation
+        .event_calendar
+        .expect("structured event calendar projection")
+        .start
+        .expect("start projection");
+    assert_eq!(projected.year, 0);
+    assert_eq!(projected.month, 2);
+    assert_eq!(projected.month_name, "Rain");
+    assert_eq!(projected.day, 1);
+    assert_eq!(projected.tick_in_day, 0);
+
+    let configured_world = app
+        .get_current_world()
+        .expect("session")
+        .expect("world")
+        .world;
+    let renamed = app
+        .preview_manual_draft(ManualDraftRequest {
+            object_type: "world".to_owned(),
+            objective: Some("Renombrar presentación del calendario".to_owned()),
+            source_uris: vec![],
+            assumptions: vec![],
+            existing_uri: Some(world_uri),
+            values: BTreeMap::from([
+                ("name".to_owned(), configured_world.name().to_owned()),
+                (
+                    "premise_md".to_owned(),
+                    configured_world.premise_md().to_owned(),
+                ),
+                (
+                    "epoch_label".to_owned(),
+                    configured_world.epoch_label().to_owned(),
+                ),
+                ("calendar_mode".to_owned(), "fixed".to_owned()),
+                ("calendar_name".to_owned(), "Imperial revisado".to_owned()),
+                ("calendar_epoch_tick".to_owned(), "100".to_owned()),
+                ("calendar_ticks_per_day".to_owned(), "10".to_owned()),
+                (
+                    "calendar_weekdays".to_owned(),
+                    "Alba\nCenit\nOcaso".to_owned(),
+                ),
+                ("calendar_months".to_owned(), "Brasa|2\nLluvia|3".to_owned()),
+            ]),
+        })
+        .expect("renamed calendar preview")
+        .review
+        .expect("renamed calendar review");
+    let world_after = renamed.operations[0].after.as_ref().expect("world after");
+    assert_eq!(
+        world_after
+            .lines
+            .iter()
+            .find(|line| line.label == "Días de la semana")
+            .expect("human weekdays")
+            .value,
+        "Alba, Cenit, Ocaso"
+    );
+    assert_eq!(
+        world_after
+            .lines
+            .iter()
+            .find(|line| line.label == "Meses")
+            .expect("human months")
+            .value,
+        "Brasa (2 días), Lluvia (3 días)"
+    );
+    app.confirm_stored_manual_review(&renamed.review_key)
+        .expect("commit display rename");
+    let renamed_timeline = app.list_timeline_events().expect("renamed timeline");
+    let renamed_festival = renamed_timeline
+        .known
+        .iter()
+        .find(|entry| entry.summary == "Festival de la lluvia")
+        .expect("renamed festival");
+    assert_eq!(renamed_festival.time.start_tick(), Some(120));
+    assert!(
+        renamed_festival
+            .start_calendar
+            .as_ref()
+            .expect("renamed label")
+            .label
+            .contains("Lluvia 1")
+    );
 
     let invalid = app
         .preview_manual_draft(ManualDraftRequest {

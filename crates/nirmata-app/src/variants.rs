@@ -242,8 +242,9 @@ impl NirmataApp {
         }
         let mut stored = StoredManualReview::new(review);
         stored.merge_source_revision = Some(source_revision);
+        stored.origin = crate::PendingReviewOrigin::VersionsMerge;
         let review = stored.snapshot(&review_key);
-        self.manual_reviews.insert(review_key, stored);
+        self.insert_pending_review(review_key, stored)?;
         Ok(MergeReviewResult {
             source_scope: ReadScope::historical(source_scope.variant_id, source_revision),
             destination_scope,

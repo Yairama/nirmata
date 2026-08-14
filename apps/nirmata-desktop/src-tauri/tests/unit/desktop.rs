@@ -1,18 +1,21 @@
 use super::{
-    AiCancellations, CommandError, DeriveCausalThreadsCommand, DeriveNarrativeTimelineCommand,
+    AiCancellations, AiIntentBriefCommand, AiProviderSettings, AiQueryCommand, AiTemplateCommand,
+    CommandError, DeriveCausalThreadsCommand, DeriveNarrativeTimelineCommand,
     GenerateInternalDocumentCommand, NarrativeContinuitySelectionCommand,
     ProposeNarrativeContinuityCommand, RecentProject, SimulationScenarioCommand,
     apply_manual_review_action, apply_manual_review_edit, begin_manual_review_edit, close_world,
     common_source_root, confirm_manual_review, create_world, current_ai_activity,
     derive_causal_threads, derive_loose_ends, derive_narrative_timeline, dotenv_value,
     explore_narrative_continuity, get_current_world, get_provider_credential_status,
-    get_related_context, list_revision_history, list_simulation_scenarios, list_timeline_events,
-    open_uri, open_world, parse_ai_run_id, parse_deep_review_mode, parse_entity_id, parse_event_id,
-    parse_internal_document_kind, parse_narrative_scope, parse_object_uri, parse_project_path,
-    parse_revision_id, parse_simulation_scenario_id, parse_snapshot_directory, parse_snapshot_name,
-    parse_snapshot_parent, preview_manual_draft, provider_diagnostic_status_from_config,
-    read_logical_vfs, read_manual_review, read_recent_projects, revalidate_manual_review,
-    run_simulation_scenario, same_project_path, search_world, undo_revision, write_recent_projects,
+    get_related_context, list_pending_reviews, list_revision_history, list_simulation_scenarios,
+    list_timeline_events, open_uri, open_world, parse_ai_run_id, parse_deep_review_mode,
+    parse_entity_id, parse_event_id, parse_internal_document_kind, parse_narrative_scope,
+    parse_object_uri, parse_project_path, parse_revision_id, parse_simulation_scenario_id,
+    parse_snapshot_directory, parse_snapshot_name, parse_snapshot_parent, preview_manual_draft,
+    provider_diagnostic_status_from_config, read_ai_provider_settings, read_logical_vfs,
+    read_manual_review, read_recent_projects, revalidate_manual_review, run_simulation_scenario,
+    same_project_path, search_world, undo_revision, validate_ai_provider_settings,
+    write_ai_provider_settings, write_recent_projects,
 };
 use nirmata_app::{
     AiError, AppError, CancellationToken, CredentialPersistence, CredentialSource, NirmataApp,
@@ -86,6 +89,25 @@ fn rejecting_invalid_object_uris_happens_before_dispatch() {
         parse_object_uri("javascript:alert(1)").expect_err("only nirmata:// URIs are accepted");
     assert_eq!(error.code, "invalid_object_uri");
     assert!(error.message.contains("invalid nirmata URI"));
+}
+
+#[test]
+fn manual_review_command_dtos_reject_unknown_fields() {
+    assert!(
+        serde_json::from_value::<super::ReviewKeyCommand>(json!({
+            "reviewKey": "nirmata://world/10000000-0000-4000-8000-000000000001",
+            "unexpected": true
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<super::ManualReviewActionCommand>(json!({
+            "reviewKey": "nirmata://world/10000000-0000-4000-8000-000000000001",
+            "action": { "kind": "reject", "operationId": "20000000-0000-4000-8000-000000000001" },
+            "unexpected": true
+        }))
+        .is_err()
+    );
 }
 
 #[test]
@@ -196,8 +218,7 @@ fn provider_diagnostic_distinguishes_missing_configuration() {
             limitation: None,
         },
         false,
-        None,
-        None,
+        AiProviderSettings::default(),
     );
     assert_eq!(missing_credential.state, "credential_missing");
 
@@ -211,26 +232,64 @@ fn provider_diagnostic_distinguishes_missing_configuration() {
     let missing_endpoint = provider_diagnostic_status_from_config(
         configured.clone(),
         false,
-        None,
-        Some("model".to_owned()),
+        AiProviderSettings {
+            base_url: String::new(),
+            model: "model".to_owned(),
+        },
     );
     assert_eq!(missing_endpoint.state, "endpoint_missing");
     let missing_model = provider_diagnostic_status_from_config(
         configured.clone(),
         false,
-        Some("https://example.test".to_owned()),
-        None,
+        AiProviderSettings {
+            base_url: "https://example.test".to_owned(),
+            model: String::new(),
+        },
     );
     assert_eq!(missing_model.state, "model_missing");
     let unchecked = provider_diagnostic_status_from_config(
         configured,
         false,
-        Some("https://example.test".to_owned()),
-        Some("model".to_owned()),
+        AiProviderSettings {
+            base_url: "https://example.test".to_owned(),
+            model: "model".to_owned(),
+        },
     );
     assert_eq!(unchecked.state, "connection_unchecked");
     assert!(unchecked.can_check_connection);
     assert!(!unchecked.connected);
+    assert_eq!(unchecked.base_url, "https://example.test");
+    assert_eq!(unchecked.model, "model");
+}
+
+#[test]
+fn ai_provider_settings_are_validated_and_persisted_as_plain_config() {
+    let path = std::env::temp_dir().join(format!(
+        "nirmata-ai-provider-{}-{}.json",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    let settings = validate_ai_provider_settings(AiProviderSettings {
+        base_url: " https://example.services.ai.azure.com/ ".to_owned(),
+        model: " deployment-name ".to_owned(),
+    })
+    .expect("valid provider settings");
+    write_ai_provider_settings(&path, &settings).expect("write provider settings");
+    let stored = read_ai_provider_settings(&path).expect("read provider settings");
+    assert_eq!(stored.base_url, "https://example.services.ai.azure.com");
+    assert_eq!(stored.model, "deployment-name");
+    fs::remove_file(path).expect("remove temp settings");
+
+    let invalid = validate_ai_provider_settings(AiProviderSettings {
+        base_url: "http://example.test?key=value".to_owned(),
+        model: "deployment-name".to_owned(),
+    })
+    .err()
+    .expect("provider endpoints must be clean HTTPS URLs");
+    assert_eq!(invalid.code, "invalid_provider_base_url");
 }
 
 #[test]
@@ -396,6 +455,89 @@ fn deep_review_mode_is_explicit_and_closed() {
             .expect_err("standard proposal cannot become deep silently")
             .code,
         "invalid_deep_review_mode"
+    );
+}
+
+#[test]
+fn ai_query_history_dto_is_structured_and_strict() {
+    let command = serde_json::from_value::<AiQueryCommand>(json!({
+        "requestId": "query-1",
+        "request": "¿Y después?",
+        "anchorUri": null,
+        "history": [{
+            "userRequest": "¿Qué ocurrió?",
+            "assistantResponse": "La ciudad perdió el puerto.",
+            "sourceUris": ["nirmata://world/10000000-0000-4000-8000-000000000001"]
+        }]
+    }))
+    .expect("structured query history");
+    assert_eq!(command.history.len(), 1);
+    assert_eq!(command.history[0].user_request, "¿Qué ocurrió?");
+    assert!(
+        serde_json::from_value::<AiQueryCommand>(json!({
+            "requestId": "query-1",
+            "request": "¿Y después?",
+            "anchorUri": null,
+            "history": [],
+            "transcript": "free text must not cross the boundary"
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn ai_template_and_continuation_dtos_are_closed_and_keep_context_server_owned() {
+    let id = "1f2c8be0-093a-4f31-b6b4-c8db7c1fa2da";
+    assert!(
+        serde_json::from_value::<AiTemplateCommand>(json!({
+            "template": "faction",
+            "scale": "small",
+            "anchorUri": null
+        }))
+        .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<AiTemplateCommand>(json!({
+            "template": "novel",
+            "scale": "small",
+            "anchorUri": null
+        }))
+        .is_err(),
+        "novel is not a proposal template"
+    );
+    assert!(
+        serde_json::from_value::<AiTemplateCommand>(json!({
+            "template": "city",
+            "scale": "large",
+            "anchorUri": null
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<AiIntentBriefCommand>(json!({
+            "requestId": "request-1",
+            "runId": id,
+            "objective": "Expandir la ciudad",
+            "scope": "Puerto y actores directos",
+            "entityUris": [],
+            "restrictions": ["Conservar fuentes"],
+            "scale": "medium"
+        }))
+        .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<AiIntentBriefCommand>(json!({
+            "requestId": "request-1",
+            "runId": id,
+            "objective": "Expandir la ciudad",
+            "scope": "Puerto y actores directos",
+            "entityUris": [],
+            "restrictions": [],
+            "scale": "small",
+            "anchorUri": "nirmata://world/10000000-0000-4000-8000-000000000001"
+        }))
+        .is_err(),
+        "continuation must use the context captured by runId"
     );
 }
 
@@ -632,6 +774,7 @@ fn acceptance_webview() -> (tauri::App<MockRuntime>, WebviewWindow<MockRuntime>)
             get_provider_credential_status,
             preview_manual_draft,
             apply_manual_review_action,
+            list_pending_reviews,
             read_manual_review,
             begin_manual_review_edit,
             apply_manual_review_edit,
@@ -710,6 +853,10 @@ fn foundation_acceptance_traverses_frontend_ipc_commands_and_persisted_app_workf
     let second_operation = second_preview["review"]["operations"][0]["operationId"]
         .as_str()
         .expect("second entity operation id");
+    let pending = invoke_ok(&webview, "list_pending_reviews", json!({}));
+    assert_eq!(pending.as_array().expect("pending array").len(), 1);
+    assert_eq!(pending[0]["origin"], "manual");
+    assert_eq!(pending[0]["review"]["reviewKey"], second_key);
     let mut edit_request = invoke_ok(
         &webview,
         "begin_manual_review_edit",

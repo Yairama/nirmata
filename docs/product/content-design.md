@@ -1,6 +1,6 @@
 # Lenguaje de producto
 
-**Estado:** especificacion aprobada; migracion de copy en progreso.
+**Estado:** especificacion aplicada y cubierta por el gate de copy del frontend.
 
 ## Principios
 
@@ -41,14 +41,17 @@
 | holder | Quien la sostiene |
 | goal | Meta |
 | epoch | Origen del calendario |
+| tick / sub-tick | Unidad temporal, solo en detalles técnicos |
+| weekdays | Días de la semana |
+| `nombre|días` | Filas de mes con campos Nombre y Días |
 | Story time | Orden cronologico |
 | discourse | Orden en que se cuenta |
 | Loose ends | Cabos abiertos |
 
-Campos visibles como `Kind`, `Request`, `Scope`, `Factions`, `Resources`,
+Los antiguos campos `Kind`, `Request`, `Scope`, `Factions`, `Resources`,
 `Stocks`, `Rules`, `Assumptions`, `Max steps`, `Mapping`, `Before`, `After`,
-`Requested`, `Applied` y `Final stocks` deben traducirse durante la migracion de
-su superficie.
+`Requested`, `Applied` y `Final stocks` ya se presentan con lenguaje de producto
+en sus superficies React.
 
 ## Versiones
 
@@ -73,3 +76,8 @@ El flujo basico no puede contener `FTS`, `VFS`, `head`, `stale`, `waiver`,
 `DecisionPoint`, `Create`, `Update`, `Story time`, `Loose ends`, `Factions`,
 `Resources`, `Stocks` ni `Max steps`. Una aparicion en `Detalles tecnicos` debe
 estar justificada y no ser necesaria para completar la tarea.
+
+En calendario y eventos, el flujo básico usa filas reordenables y campos
+separados de año, mes, día y unidad. La cronología sin calendario dice `Tiempo
+conocido sin calendario de presentación`; no inventa una fecha ni muestra el
+tick canónico.

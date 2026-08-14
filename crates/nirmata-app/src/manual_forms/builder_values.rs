@@ -267,10 +267,16 @@ impl<'a> Builder<'a> {
         let start_date_tick = self.parse_calendar_date("start_calendar_date");
         let end_date_tick = self.parse_calendar_date("end_calendar_date");
         if start_tick.is_some() && start_date_tick.is_some() && start_tick != start_date_tick {
-            self.issue("start_calendar_date", "la fecha no coincide con start_tick");
+            self.issue(
+                "start_calendar_date",
+                "la fecha no coincide con la unidad temporal técnica",
+            );
         }
         if end_tick.is_some() && end_date_tick.is_some() && end_tick != end_date_tick {
-            self.issue("end_calendar_date", "la fecha no coincide con end_tick");
+            self.issue(
+                "end_calendar_date",
+                "la fecha no coincide con la unidad temporal técnica",
+            );
         }
         let start_tick = start_date_tick.or(start_tick);
         let end_tick = end_date_tick.or(end_tick);
@@ -315,7 +321,7 @@ impl<'a> Builder<'a> {
             .map(str::trim)
             .collect::<Vec<_>>();
         if parts.len() != 4 {
-            self.issue(field, "usa año|mes|día|sub-tick");
+            self.issue(field, "completa año, mes, día y unidad");
             return None;
         }
         let parsed = (
@@ -325,13 +331,13 @@ impl<'a> Builder<'a> {
             parts[3].parse::<i64>(),
         );
         let (Ok(year), Ok(month), Ok(day), Ok(tick_in_day)) = parsed else {
-            self.issue(field, "año, mes, día y sub-tick deben ser enteros");
+            self.issue(field, "año, mes, día y unidad deben ser números enteros");
             return None;
         };
         match calendar.date_to_tick(CalendarDate::new(year, month, day, tick_in_day)) {
             Ok(tick) => Some(tick),
             Err(error) => {
-                self.issue(field, error.to_string());
+                self.issue(field, calendar_error_message(&error));
                 None
             }
         }

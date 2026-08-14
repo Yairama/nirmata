@@ -269,6 +269,7 @@ fn calendar_variant_simulation_and_narrative_derivation_remain_read_only() {
         .expect("create variant");
     let scenario = app
         .create_simulation_scenario(SimulationScenarioInput {
+            name: "Acceptance harvest".to_owned(),
             world_id: world.id(),
             variant_id: branch.id,
             base_revision,

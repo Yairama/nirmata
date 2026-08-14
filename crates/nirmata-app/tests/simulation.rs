@@ -1,11 +1,12 @@
 use nirmata_app::{
     AppError, CreateWorldInput, DraftOperationInput, ManualReviewActionRequest, ManualReviewInput,
-    NirmataApp, SimulationPromotionInput, SimulationResource, SimulationRule,
+    NirmataApp, PendingReviewOrigin, SimulationPromotionInput, SimulationResource, SimulationRule,
     SimulationScenarioInput, SimulationStock, SimulationTransitionSelection,
 };
 use nirmata_core::{
     EntityId, RevisionId, WorldId,
     change_set::RetconKind,
+    claim::ClaimAuthentication,
     entity::{Entity, EntityKind},
 };
 use nirmata_store::WorldStore;
@@ -102,6 +103,7 @@ fn scenario_input(fixture: &mut Fixture) -> SimulationScenarioInput {
         .expect("session")
         .expect("open world");
     SimulationScenarioInput {
+        name: "Cosecha del norte".to_owned(),
         world_id: fixture.world_id,
         variant_id: session.active_variant.id,
         base_revision: session.current_revision,
@@ -306,11 +308,16 @@ fn scenario_lifecycle_uses_its_variant_revision_and_never_changes_canon() {
     input.variant_id = branch.id;
     input.base_revision = before.current_revision;
 
+    let mut unnamed = input.clone();
+    unnamed.name = "   ".to_owned();
+    assert_invalid(fixture.app.create_simulation_scenario(unnamed));
+
     let scenario = fixture
         .app
         .create_simulation_scenario(input.clone())
         .expect("create branch-based scenario");
     assert_eq!(scenario.variant_id, branch.id);
+    assert_eq!(scenario.name, "Cosecha del norte");
     assert_eq!(scenario.base_revision, before.current_revision);
     assert_eq!(
         fixture.app.list_simulation_scenarios().unwrap(),
@@ -343,12 +350,14 @@ fn scenario_lifecycle_uses_its_variant_revision_and_never_changes_canon() {
         "an invalid update must not replace the last complete scenario"
     );
 
+    input.name = "Cosecha alternativa".to_owned();
     input.max_steps = 2;
     let updated = fixture
         .app
         .update_simulation_scenario(scenario.id, input)
         .expect("update scenario");
     assert_eq!(updated.id, scenario.id);
+    assert_eq!(updated.name, "Cosecha alternativa");
     let run = fixture
         .app
         .run_simulation_scenario(scenario.id)
@@ -506,6 +515,15 @@ fn selected_transitions_prepare_exact_operations_without_changing_canon() {
     assert_eq!(fixture.app.list_simulation_scenarios().unwrap(), [scenario]);
 
     fixture.app.close_world().expect("close world");
+    fixture
+        .app
+        .open_world(fixture.path.clone())
+        .expect("reopen promoted review");
+    let pending = fixture.app.list_pending_reviews().expect("pending review");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].origin, PendingReviewOrigin::Simulation);
+    assert_eq!(pending[0].review.operations.len(), 2);
+    fixture.app.close_world().expect("close reopened world");
     fs::remove_file(fixture.path).expect("remove project");
 }
 
@@ -663,6 +681,11 @@ fn standard_confirmation_applies_and_discard_keeps_the_scenario() {
     let canon = store.read_canon_snapshot().expect("read committed canon");
     assert_eq!(canon.events().len(), 1);
     assert_eq!(canon.claims().len(), 1);
+    assert_eq!(
+        canon.claims()[0].authentication(),
+        ClaimAuthentication::Disputed,
+        "simulation findings are not canonical by default"
+    );
     assert_eq!(
         canon.events()[0].event().summary(),
         "The harvest fills the northern stores"

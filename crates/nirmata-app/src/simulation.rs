@@ -91,6 +91,7 @@ pub enum SimulationRule {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SimulationScenarioInput {
+    pub name: String,
     pub world_id: WorldId,
     pub variant_id: VariantId,
     pub base_revision: RevisionId,
@@ -106,6 +107,7 @@ pub struct SimulationScenarioInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SimulationScenario {
     pub id: SimulationScenarioId,
+    pub name: String,
     pub world_id: WorldId,
     pub variant_id: VariantId,
     pub base_revision: RevisionId,
@@ -296,7 +298,10 @@ impl NirmataApp {
                 scenario.world_id,
                 scenario.base_revision,
                 ManualReviewInput {
-                    objective: format!("Promote selected transitions from simulation {id}"),
+                    objective: format!(
+                        "Promover transiciones seleccionadas de la simulación «{}»",
+                        scenario.name
+                    ),
                     sources: vec![],
                     assumptions,
                     operations,
@@ -316,9 +321,10 @@ impl NirmataApp {
         if self.manual_reviews.contains_key(&review_key) {
             return Err(AppError::ReviewSessionConflict(review_key));
         }
-        let stored = StoredManualReview::new(review);
+        let mut stored = StoredManualReview::new(review);
+        stored.origin = crate::PendingReviewOrigin::Simulation;
         let snapshot = stored.snapshot(&review_key);
-        self.manual_reviews.insert(review_key, stored);
+        self.insert_pending_review(review_key, stored)?;
         Ok(snapshot)
     }
 }
@@ -387,7 +393,7 @@ impl SimulationTransitionSelection {
                     None,
                     None,
                     ClaimPolarity::Positive,
-                    ClaimAuthentication::Canonical,
+                    ClaimAuthentication::Disputed,
                     None,
                     None,
                     None,
@@ -435,6 +441,7 @@ impl SimulationScenario {
     fn from_input(id: SimulationScenarioId, input: SimulationScenarioInput) -> Self {
         Self {
             id,
+            name: input.name,
             world_id: input.world_id,
             variant_id: input.variant_id,
             base_revision: input.base_revision,
@@ -449,6 +456,7 @@ impl SimulationScenario {
 
     fn as_input(&self) -> SimulationScenarioInput {
         SimulationScenarioInput {
+            name: self.name.clone(),
             world_id: self.world_id,
             variant_id: self.variant_id,
             base_revision: self.base_revision,
@@ -466,6 +474,9 @@ fn validate_scenario(
     active: &crate::app::ActiveWorld,
     scenario: &SimulationScenarioInput,
 ) -> Result<(), AppError> {
+    if scenario.name.trim().is_empty() || scenario.name.chars().count() > 120 {
+        return invalid("name must contain between 1 and 120 characters");
+    }
     if scenario.world_id != active.session.world_id {
         return invalid("world_id does not match the open world");
     }

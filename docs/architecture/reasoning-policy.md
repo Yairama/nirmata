@@ -174,6 +174,12 @@ DecisionTrace
 No se guarda reasoning oculto del proveedor ni texto innecesario que pueda
 contener datos sensibles.
 
+La interfaz puede mostrar una traza operativa resumida sin presentarla como
+cadena de pensamiento: fase del workflow, tiempo transcurrido, fragmentos
+recibidos, validaciones y reintentos. Antes del primer fragmento no puede
+distinguir si el proveedor sigue razonando o quedo bloqueado; debe declarar esa
+incertidumbre en lugar de inventar una explicacion.
+
 Las metricas locales distinguen aceptar, editar y rechazar; sirven para detectar
 automatizacion excesiva y fatiga de revision.
 

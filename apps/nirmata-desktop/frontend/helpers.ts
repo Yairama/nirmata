@@ -1,5 +1,7 @@
+import { clearFeedback, commandErrorCopy, showCommandError } from "./feedback.js";
+
 function setStatus(message: string): void {
-  statusElement.textContent = message;
+  appActions.setStatus(message);
 }
 
 function setMarkdownText(element: HTMLElement, value: string | null | undefined, fallback: string): void {
@@ -8,10 +10,7 @@ function setMarkdownText(element: HTMLElement, value: string | null | undefined,
 }
 
 function commandMessage(value: unknown): string {
-  if (typeof value === "object" && value !== null && "message" in value) {
-    return String((value as { message: unknown }).message);
-  }
-  return String(value);
+  return commandErrorCopy(value).detail;
 }
 
 function commandCode(value: unknown): string | null {
@@ -21,14 +20,37 @@ function commandCode(value: unknown): string | null {
   return null;
 }
 
+function validationIssueMessage(issue: ValidationIssue): string {
+  const exact: Record<string, string> = {
+    "change_set.objective_empty": "Explica el objetivo de esta propuesta.",
+    "change_set.operations_empty": "La propuesta no contiene operaciones para aplicar.",
+    "change_set.operation.target_missing": "El objeto que se intenta modificar ya no existe.",
+    "change_set.operation.target_exists": "Ya existe un objeto con esa identidad.",
+    "change_set.operation.world_revision_changed": "El mundo avanzó desde que se preparó esta operación.",
+    "change_set.dependency_order": "Ordena primero las operaciones de las que depende este cambio.",
+    "reference.cross_world": "La referencia pertenece a otro mundo.",
+    "version.mismatch": "La versión esperada ya no coincide con la actual.",
+    "period.inverted": "El final del período ocurre antes que el inicio.",
+    "event.time_invalid": "El tiempo del acontecimiento no es válido.",
+  };
+  if (exact[issue.code]) return exact[issue.code];
+  if (issue.code.includes("missing")) return "Falta un dato o una referencia necesaria para este cambio.";
+  if (issue.code.includes("duplicate")) return "Este cambio repite un dato que debe ser único.";
+  if (issue.code.includes("empty")) return "Completa la información requerida antes de aplicar.";
+  if (issue.code.includes("too_many")) return "Reduce la cantidad de elementos incluidos en este cambio.";
+  if (issue.code.includes("too_long")) return "Acorta este contenido antes de aplicar.";
+  if (issue.code.includes("invalid")) return "Este valor no cumple las reglas del mundo.";
+  return issue.severity === "error"
+    ? "Este cambio incumple una regla obligatoria y todavía no puede aplicarse."
+    : "Revisa esta condición antes de aplicar el cambio.";
+}
+
 function showError(value: unknown): void {
-  error.textContent = commandMessage(value);
-  error.hidden = false;
+  showCommandError(value);
 }
 
 function clearError(): void {
-  error.hidden = true;
-  error.textContent = "";
+  clearFeedback();
 }
 
 function button(text: string, className?: string): HTMLButtonElement {
@@ -230,7 +252,7 @@ function formatTimestamp(value: number): string {
 }
 
 function retainedDraftHint(): string {
-  return state.pendingDrafts.size > 0 ? " La propuesta sigue visible en el panel inferior." : "";
+  return " La propuesta sigue guardada en Cambios.";
 }
 
 function formatClaimObject(object: ClaimObject | null): string {
@@ -370,12 +392,9 @@ function firstUriFromNodes(nodes: LogicalVfsNode[]): string | null {
 }
 
 function labelForUri(uri: string): string {
-  const pending = state.pendingDrafts.get(uri);
-  if (pending) {
-    return pending.preview.title;
-  }
-  if (state.selectedObject?.result.uri === uri) {
-    return state.selectedObject.result.snippet;
+  const state = getAppState();
+  if (uri.startsWith("nirmata://world/")) {
+    return state.session?.world.name ?? "Mundo";
   }
   const path = pathForUri(state.logicalTree, uri);
   if (path) {
@@ -383,18 +402,6 @@ function labelForUri(uri: string): string {
     return parts[parts.length - 1] ?? uri;
   }
   return uri;
-}
-
-function selectedRevisionEntry(): RevisionHistoryEntrySnapshot | null {
-  const revisions = state.revisionHistory?.revisions ?? [];
-  if (revisions.length === 0) {
-    return null;
-  }
-  return (
-    revisions.find((entry) => entry.revisionId === state.selectedRevisionId)
-    ?? revisions.find((entry) => entry.isCurrentUndoTarget)
-    ?? revisions[0]
-  );
 }
 
 function warningsForResult(result: SearchResult): WarningItem[] {
@@ -425,11 +432,7 @@ function warningsForResult(result: SearchResult): WarningItem[] {
   }
 
 }
-import {
-  error,
-  state,
-  statusElement,
-} from "./state.js";
+import { appActions, getAppState } from "./state.js";
 import type {
   ClaimObject,
   ContentReference,
@@ -440,7 +443,6 @@ import type {
   ObjectKind,
   ObjectRef,
   Period,
-  RevisionHistoryEntrySnapshot,
   SearchResult,
   ValidationIssue,
   ValidationReport,
@@ -473,7 +475,6 @@ export {
   pathForUri,
   previewText,
   retainedDraftHint,
-  selectedRevisionEntry,
   serializeContentReferences,
   setMarkdownText,
   setStatus,
@@ -481,5 +482,6 @@ export {
   showError,
   splitLines,
   warningsForResult,
+  validationIssueMessage,
 };
 export type { EditableContentReference };

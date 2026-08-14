@@ -11,7 +11,7 @@ test("appearance validates, applies and persists the selected theme", () => {
   expect(readAppearanceTheme()).toBe("system");
 
   applyAppearanceTheme("dark");
-  expect(document.querySelector("#closed-root")?.getAttribute("data-theme")).toBe("dark");
+  expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
   expect(localStorage.getItem("nirmata.appearance.theme")).toBe("dark");
   expect(readAppearanceTheme()).toBe("dark");
 });

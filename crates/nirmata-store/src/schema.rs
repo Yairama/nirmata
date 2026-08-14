@@ -1,4 +1,26 @@
-pub(crate) const SCHEMA_VERSION: i64 = 10;
+pub(crate) const SCHEMA_VERSION: i64 = 11;
+
+pub(crate) const PENDING_REVIEW_SCHEMA: &str = "
+    CREATE TABLE IF NOT EXISTS pending_reviews (
+        review_key TEXT NOT NULL CHECK (length(trim(review_key)) > 0),
+        world_id TEXT NOT NULL,
+        variant_id TEXT NOT NULL,
+        base_revision_id TEXT NOT NULL,
+        origin TEXT NOT NULL CHECK (
+            origin IN ('manual', 'ai', 'lore_import', 'simulation', 'versions_merge', 'snapshot')
+        ),
+        payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (variant_id, review_key),
+        FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE,
+        FOREIGN KEY (variant_id) REFERENCES variants(id) ON DELETE CASCADE,
+        FOREIGN KEY (base_revision_id) REFERENCES revisions(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS pending_reviews_world_variant
+        ON pending_reviews (world_id, variant_id, created_at_ms, review_key);
+";
 
 pub(crate) const CALENDAR_SCHEMA: &str = "
     ALTER TABLE worlds ADD COLUMN calendar_json TEXT

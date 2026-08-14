@@ -72,6 +72,22 @@ de `variants` contiene una unica cabeza no nula; el nombre es unico por mundo.
 lectura historica. No es event sourcing: el canon activo sigue materializado y
 cada commit escribe el snapshot resultante en su misma transaccion.
 
+`pending_reviews` es la unica cola durable de cambios aun no confirmados. Su
+clave estable es `(variant_id, review_key)` y cada fila conserva mundo, variante,
+revision base, origen cerrado, tiempos y un payload JSON tipado version 1. El
+payload guarda draft original y editado, seleccion por operacion, juicios,
+decisiones, waivers, reglas de revalidacion, procedencia de import/merge y, para
+IA, solo el resumen necesario para volver a la critica final. No guarda
+credenciales, razonamiento privado ni capacidad de commit.
+
+Crear, editar o revalidar una revision hace upsert de esa misma fila. Confirmar
+aplica el `ChangeSet`, auditoria, snapshot y borrado pendiente en una sola
+transaccion; cualquier fallo conserva tanto canon como revision pendiente.
+Descartar borra primero la fila y solo entonces retira el estado en memoria. Al
+abrir un proyecto se deserializan y revalidan todas las filas de la variante
+activa; datos tipados corruptos abortan la apertura sin activar parcialmente el
+mundo.
+
 ### `entities`
 
 Campos comunes:
@@ -311,6 +327,14 @@ Confirmar usa la revalidacion y transaccion atomica existentes, deja auditoria
 before/after y puede deshacerse con el undo lineal normal. No existe watcher,
 montaje ni sincronizacion bidireccional viva.
 
+Las revisiones pendientes se cargan solo para su variante. Cambiar de variante
+no las borra: quedan ocultas hasta volver a la variante correspondiente. Si la
+cabeza de esa variante avanzo, reaparecen como `stale`; snapshot mantiene su
+prohibicion de rebase y los demas origenes usan la revalidacion normal. Una
+revision IA recuperada vuelve deliberadamente a `AwaitingFinalCritique`, aunque
+antes del cierre estuviera lista, para que ningun reporte contra otro proceso o
+cabeza autorice el commit.
+
 ## Historial, variantes y deshacer
 
 No se recomienda event sourcing completo.
@@ -346,6 +370,11 @@ SQLite: `import_batches`, `import_sources`, `import_chunks` e
 solo conserva material externo copiado como UTF-8 inerte, hashes, rangos y
 candidatos; entrar al canon sigue requiriendo el `ChangeSet` y la transaccion de
 NIR-047.
+
+Los lotes se consultan por mundo y fecha mediante una operacion de dominio
+acotada. Por eso cerrar y reabrir el proyecto permite reanudar fuentes,
+candidatos y decisiones desde SQLite; la interfaz no conserva un segundo estado
+volatil ni clasifica el staging persistido como trabajo efimero.
 
 La seleccion recibe una raiz absoluta elegida por el usuario y archivos
 absolutos confinados debajo de ella. Se rechazan symlinks, traversal, archivos

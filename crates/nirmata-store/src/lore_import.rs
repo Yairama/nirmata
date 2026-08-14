@@ -57,6 +57,28 @@ pub struct StoredImportCandidate {
 }
 
 impl WorldStore {
+    pub fn list_import_batches(&self) -> Result<Vec<StoredImportBatch>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, world_id, target_revision_id, status, created_at_ms, variant_id
+                 FROM import_batches WHERE world_id = ?1
+                 ORDER BY created_at_ms DESC, id DESC LIMIT 50",
+            )
+            .map_err(|error| map_schema_error(&self.path, error))?;
+        let mut rows = statement
+            .query([self.world_id.to_string()])
+            .map_err(|error| map_schema_error(&self.path, error))?;
+        let mut batches = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .map_err(|error| map_schema_error(&self.path, error))?
+        {
+            batches.push(import_batch_from_row(row, &self.path)?);
+        }
+        Ok(batches)
+    }
+
     pub fn create_import_batch(
         &mut self,
         batch: &StoredImportBatch,
@@ -410,6 +432,53 @@ impl WorldStore {
             )
             .map(|changed| changed == 1)
             .map_err(|error| map_database_error(&self.path, error))
+    }
+
+    pub fn delete_import_batch_with_pending_reviews(
+        &mut self,
+        batch_id: &str,
+        pending_reviews: &[(nirmata_core::VariantId, String)],
+    ) -> Result<bool, StoreError> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| map_database_error(&self.path, error))?;
+        let exists = transaction
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM import_batches WHERE id = ?1 AND world_id = ?2
+                 )",
+                params![batch_id, self.world_id.to_string()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|error| map_database_error(&self.path, error))?;
+        if !exists {
+            return Ok(false);
+        }
+        for (variant_id, review_key) in pending_reviews {
+            let changed = transaction
+                .execute(
+                    "DELETE FROM pending_reviews WHERE variant_id = ?1 AND review_key = ?2",
+                    params![variant_id.to_string(), review_key],
+                )
+                .map_err(|error| map_database_error(&self.path, error))?;
+            if changed != 1 {
+                return Err(StoreError::ObjectNotFound {
+                    object: "pending review",
+                    id: review_key.clone(),
+                });
+            }
+        }
+        transaction
+            .execute(
+                "DELETE FROM import_batches WHERE id = ?1 AND world_id = ?2",
+                params![batch_id, self.world_id.to_string()],
+            )
+            .map_err(|error| map_database_error(&self.path, error))?;
+        transaction
+            .commit()
+            .map_err(|error| map_database_error(&self.path, error))?;
+        Ok(true)
     }
 }
 

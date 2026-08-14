@@ -38,3 +38,15 @@ El 12 de agosto de 2026 la regresión narrativa y AI pasó sus casos offline,
 desktop pasó 14/14, safety 9/9 y
 `cargo nextest run --workspace --no-fail-fast` pasó 256/256 pruebas offline, con
 1 smoke test de red omitido.
+
+El 13 de agosto de 2026, UX-063–UX-064 sustituyeron el owner imperativo por
+`narrative-workspace.tsx`. Playwright verificó las cuatro tabs, scope histórico,
+pickers por nombre, fecha desde acontecimientos existentes, preview inerte,
+adjunto único a Cambios y cero tarjetas ante fallo/cancelación. Axe no reportó
+violaciones serious/critical y las capturas finales no desbordan:
+
+- `apps/nirmata-desktop/frontend/test-results/workspace-theme-narrative--8aa39-ws-one-safe-document-review/narrative-desktop.png`
+- `apps/nirmata-desktop/frontend/test-results/workspace-theme-narrative--8aa39-ws-one-safe-document-review/narrative-narrow.png`
+
+Frontend pasó 5/5 unit, 22/22 safety y 36/36 E2E. El build quedó en 164,67 KiB
+JS gzip y 11,42 KiB CSS gzip.

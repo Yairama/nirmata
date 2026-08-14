@@ -1,7 +1,8 @@
 use nirmata_app::{
     AppError, ContextBundleRequest, ContextIntent, CreateWorldInput, DraftOperationInput,
     ExportSnapshotInput, ImportSnapshotInput, ManualReviewActionRequest, ManualReviewInput,
-    NirmataApp, ReadScope, RelatedContextRequest, SearchWorldRequest, VariantDiffKind,
+    NirmataApp, PendingReviewOrigin, ReadScope, RelatedContextRequest, SearchWorldRequest,
+    VariantDiffKind,
 };
 use nirmata_core::{
     Period, World, WorldId,
@@ -344,6 +345,18 @@ fn variants_isolate_heads_history_reopen_stale_and_undo() {
         .expect("session")
         .expect("open")
         .current_revision;
+    let summaries = app.list_variant_summaries().expect("variant summaries");
+    let branch_summary = summaries
+        .iter()
+        .find(|summary| summary.variant.id == branch.id)
+        .expect("branch summary");
+    assert_eq!(
+        branch_summary.origin_variant_name.as_deref(),
+        Some(main.active_variant.name.as_str())
+    );
+    assert_eq!(branch_summary.origin_summary, "Create Shared");
+    assert_eq!(branch_summary.latest_summary, "Create Branch only");
+    assert!(branch_summary.latest_created_at_ms >= branch_summary.origin_created_at_ms);
 
     app.set_read_scope(ReadScope::historical(branch.id, fork_revision))
         .expect("view fork");
@@ -484,6 +497,12 @@ fn compare_and_limited_merge_use_ids_and_leave_source_untouched() {
     assert_eq!(merge.automatic_operation_ids.len(), 1);
     assert!(merge.decision_operation_ids.is_empty());
     assert!(merge.review.ready_to_confirm);
+    app.close_world().expect("close pending merge");
+    app.open_world(path.clone()).expect("reopen pending merge");
+    let pending = app.list_pending_reviews().expect("recovered merge review");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].origin, PendingReviewOrigin::VersionsMerge);
+    assert!(pending[0].merge.is_some());
     app.confirm_stored_manual_review(&merge.review.review_key)
         .expect("commit merge");
     let merged_head = app

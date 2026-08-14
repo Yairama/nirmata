@@ -13,12 +13,14 @@ mod snapshot_export;
 mod snapshot_import;
 mod variants;
 
+pub use ai::AiConversationTurn;
 pub use ai::{
     AiAffectedSubgraphSnapshot, AiContextSnapshot, AiCritiqueInput, AiInternalDocumentInput,
     AiMode, AiParsingFailure, AiProposalAction, AiProposalDraftResponse, AiProposalInput,
-    AiProposalOperationPreview, AiProposalProgress, AiProposalResponse, AiProviderConfig,
-    AiQueryCitation, AiQueryInput, AiQueryItem, AiQueryProgress, AiQueryResponse, AiRequestOptions,
-    AiRunId, AiRunSnapshot, AiRunStatus, IntentBrief, InternalDocumentRequest,
+    AiProposalOperationPreview, AiProposalProgress, AiProposalResponse, AiProposalScale,
+    AiProposalTemplate, AiProviderConfig, AiQueryCitation, AiQueryInput, AiQueryItem,
+    AiQueryProgress, AiQueryResponse, AiRequestOptions, AiRunId, AiRunSnapshot, AiRunStatus,
+    IntentBrief, InternalDocumentRequest,
 };
 pub use app::*;
 pub use context_bundle::{

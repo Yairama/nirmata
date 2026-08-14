@@ -313,7 +313,7 @@ fn exports_complete_equivalent_snapshots_with_stable_identity_and_no_canon_write
         manifest["base_revision"],
         session.current_revision.to_string()
     );
-    assert_eq!(manifest["canon_schema_version"], 10);
+    assert_eq!(manifest["canon_schema_version"], 11);
     assert_eq!(manifest["logical_hash"], first.logical_hash);
 
     let objects = manifest["objects"].as_array().expect("manifest objects");

@@ -46,6 +46,15 @@ export type Variant = {
   createdAtMs: number;
 };
 
+export type VariantSummary = {
+  variant: Variant;
+  originVariantName: string | null;
+  originSummary: string;
+  originCreatedAtMs: number;
+  latestSummary: string;
+  latestCreatedAtMs: number;
+};
+
 export type VariantDiff = {
   objectRef: ObjectRef;
   kind: "created" | "deleted" | "renamed" | "edited" | "relation_diverged";
@@ -106,6 +115,7 @@ export type SimulationRule =
     };
 
 export type SimulationScenarioInput = {
+  name: string;
   worldId: string;
   variantId: string;
   baseRevision: string;
@@ -404,6 +414,7 @@ export type ResolvedObject =
 export type OpenUriResponse = {
   result: SearchResult;
   object: ResolvedObject;
+  eventCalendar: EventCalendarPresentation | null;
 };
 
 export type LogicalVfsObject = {
@@ -545,11 +556,23 @@ export type CalendarTickPresentation = {
   tick: number;
   label: string;
   dateInput: string;
+  year: number;
+  month: number;
+  monthName: string;
+  day: number;
+  tickInDay: number;
+  weekdayName: string;
+};
+
+export type EventCalendarPresentation = {
+  start: CalendarTickPresentation | null;
+  end: CalendarTickPresentation | null;
 };
 
 export type TimelineOverview = {
   known: TimelineEventEntry[];
   unknown: TimelineEventEntry[];
+  calendarName: string | null;
 };
 
 export type NarrativeObjectReference = {
@@ -687,8 +710,17 @@ export type ExportSnapshotResult = {
   variant: string;
 };
 
+export type ProjectDiagnostics = {
+  schemaVersion: number;
+  integrity: "ok";
+};
+
 export type ImportSnapshotResult = {
   path: string;
+  worldId: string;
+  variantId: string;
+  variant: string;
+  baseRevision: string;
   logicalHash: string;
   objectCount: number;
   createdCount: number;
@@ -720,10 +752,49 @@ export type AiQueryResponse = {
   } | null;
 };
 
+export type AiConversationHistoryTurn = {
+  userRequest: string;
+  assistantResponse: string;
+  sourceUris: string[];
+};
+
+export type AssistantConversationTurn = {
+  id: string;
+  request: string;
+  createdAtMs: number;
+  response: AiQueryResponse;
+  origin: {
+    worldId: string;
+    baseRevision: string;
+    readScope: ReadScope;
+    anchorUri: string | null;
+    contextLabel: string;
+    sourceCount: number;
+  };
+};
+
+export type AssistantConversation = {
+  id: string;
+  worldId: string;
+  title: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  turns: AssistantConversationTurn[];
+};
+
 export type AiRunSnapshot = {
   id: string;
   baseRevision: string;
   request: string;
+  context: {
+    context: {
+      canon: Array<{ uri: string }>;
+      perspectives: Array<{ uri: string }>;
+      desires: Array<{ uri: string }>;
+      obligations: Array<{ uri: string }>;
+      searchEvidence: Array<{ uri: string }>;
+    };
+  };
   status:
     | "running"
     | "intent_brief_ready"
@@ -736,7 +807,7 @@ export type AiRunSnapshot = {
   draft: {
     objective: string;
     assumptions: string[];
-    operations: unknown[];
+    operations: Array<Record<string, unknown>>;
     decisions: Array<{
       decision_point_id: string;
       prompt: string;
@@ -763,6 +834,9 @@ export type AiRunSnapshot = {
     entities: SearchResult[];
     restrictions: string[];
     reason: string;
+    authority: string;
+    template?: "faction" | "city" | "character" | "conflict" | "chronology" | "consequences";
+    scale?: "small" | "medium";
   } | null;
   error: string | null;
 };
@@ -807,6 +881,7 @@ export type ImportBatchSnapshot = {
   variantId: string;
   targetRevision: string;
   status: string;
+  createdAtMs: number;
   sources: Array<{
     id: string;
     path: string;
@@ -945,7 +1020,7 @@ export type ReviewEditContext = {
   operationId: string;
 };
 
-export type EditorMode = {
+export type StructuredEditorState = {
   mode: "create" | "update";
   objectType: ObjectKind;
   existingUri: string | null;
@@ -970,11 +1045,26 @@ export type EditorMode = {
   reviewEdit: ReviewEditContext | null;
 };
 
-export type PendingDraftRecord = {
-  preview: ManualDraftPreview;
+export type PendingReviewOrigin =
+  | "manual"
+  | "ai"
+  | "lore_import"
+  | "simulation"
+  | "versions_merge"
+  | "snapshot";
+
+export type PendingReviewSnapshot = {
   review: ManualReviewSnapshot;
-  editor: EditorMode;
-  aiRunId?: string;
+  origin: PendingReviewOrigin;
+  editorRequest: ManualDraftRequest;
+  aiRunId: string | null;
+  title: string;
+  merge: {
+    sourceName: string;
+    destinationName: string;
+    automaticCount: number;
+    decisionCount: number;
+  } | null;
 };
 
 export type WorkspaceNotice = {
@@ -1013,39 +1103,20 @@ export type AiProviderDiagnosticStatus = {
   canCheckConnection: boolean;
   connected: boolean;
   credential: ProviderCredentialStatus;
+  baseUrl: string;
+  model: string;
 };
 
 export type AppState = {
-  session: WorldSession | null;
-  logicalTree: LogicalVfsDirectory | null;
-  selectedUri: string | null;
-  selectedLogicalPath: string | null;
-  selectedObject: OpenUriResponse | null;
-  editorMode: EditorMode | null;
-  context: RelatedContextResponse | null;
-  timeline: TimelineOverview | null;
-  narrative: {
-    timeline: NarrativeTimeline | null;
-    causalThreads: NarrativeCausalThreads | null;
-    looseEnds: NarrativeLooseEnds | null;
-    exploration: NarrativeContinuityExploration | null;
-  };
-  revisionHistory: RevisionHistorySnapshot | null;
-  selectedRevisionId: string | null;
-  recentUris: string[];
-  pendingDrafts: Map<string, PendingDraftRecord>;
-  ephemeralWork: Map<string, string>;
-  workspaceNotice: WorkspaceNotice | null;
-  aiActivity: AiActivity | null;
-  aiProviderReady: boolean;
-  panels: {
-    leftCollapsed: boolean;
-    rightCollapsed: boolean;
-    bottomCollapsed: boolean;
-    leftWidth: number;
-    rightWidth: number;
-    bottomHeight: number;
-  };
-  navigationRequestId: number;
-  selectionRequestId: number;
+  readonly session: WorldSession | null;
+  readonly logicalTree: LogicalVfsDirectory | null;
+  readonly selectedUri: string | null;
+  readonly selectedLogicalPath: string | null;
+  readonly structuredEditor: StructuredEditorState | null;
+  readonly recentUris: readonly string[];
+  readonly ephemeralWork: Readonly<Record<string, string>>;
+  readonly workspaceNotice: WorkspaceNotice | null;
+  readonly aiActivity: AiActivity | null;
+  readonly status: string;
+  readonly discardRevision: number;
 };

@@ -105,9 +105,12 @@ fn relation_values(relation: &Relation) -> BTreeMap<String, String> {
     ])
 }
 
-fn event_values(aggregate: &EventAggregate) -> BTreeMap<String, String> {
+fn event_values(
+    aggregate: &EventAggregate,
+    calendar: Option<&WorldCalendar>,
+) -> BTreeMap<String, String> {
     let event = aggregate.event();
-    BTreeMap::from([
+    let mut values = BTreeMap::from([
         ("kind".to_owned(), event.kind().to_owned()),
         ("summary".to_owned(), event.summary().to_owned()),
         ("body_md".to_owned(), event.body_md().to_owned()),
@@ -187,7 +190,32 @@ fn event_values(aggregate: &EventAggregate) -> BTreeMap<String, String> {
                 .collect::<Vec<_>>()
                 .join("\n"),
         ),
-    ])
+    ]);
+    values.insert(
+        "start_calendar_date".to_owned(),
+        event
+            .time()
+            .start_tick()
+            .and_then(|tick| calendar_date_input(calendar, tick))
+            .unwrap_or_default(),
+    );
+    values.insert(
+        "end_calendar_date".to_owned(),
+        event
+            .time()
+            .end_tick()
+            .and_then(|tick| calendar_date_input(calendar, tick))
+            .unwrap_or_default(),
+    );
+    values
+}
+
+fn calendar_date_input(calendar: Option<&WorldCalendar>, tick: i64) -> Option<String> {
+    let date = calendar?.tick_to_date(tick).ok()?;
+    Some(format!(
+        "{}|{}|{}|{}",
+        date.year, date.month, date.day, date.tick_in_day
+    ))
 }
 
 fn goal_values(goal: &Goal) -> BTreeMap<String, String> {
@@ -665,18 +693,43 @@ fn parse_event_link_kind(value: &str) -> Option<EventLinkKind> {
 
 fn map_domain_error(error: &DomainError) -> String {
     match error {
-        DomainError::EmptyField { .. }
-        | DomainError::InvalidJsonObject { .. }
-        | DomainError::InvalidPeriod
-        | DomainError::InvalidEventTime
-        | DomainError::HardRuleWithoutValidator
-        | DomainError::InvalidRuleValidatorParameters { .. }
-        | DomainError::DuplicateAlias(_)
-        | DomainError::DuplicateOrdinal(_)
-        | DomainError::DuplicateReference
-        | DomainError::InvalidClaimContext(_)
-        | DomainError::InvalidConfidence
-        | DomainError::TextTooLong { .. } => error.to_string(),
-        _ => format!("no se pudo construir el draft manual: {error}"),
+        DomainError::EmptyWorldName | DomainError::EmptyField { .. } => {
+            "completa este campo".to_owned()
+        }
+        DomainError::TextTooLong { max_chars, .. } => {
+            format!("no puede superar {max_chars} caracteres")
+        }
+        DomainError::InvalidJsonObject { .. } => "debe ser un objeto JSON válido".to_owned(),
+        DomainError::InvalidPeriod => "el inicio no puede ocurrir después del final".to_owned(),
+        DomainError::InvalidEventTime => {
+            "los campos temporales no corresponden al tipo elegido".to_owned()
+        }
+        DomainError::InvalidRuleValidatorParameters { .. } => {
+            "los parámetros no corresponden al validador elegido".to_owned()
+        }
+        DomainError::HardRuleWithoutValidator => {
+            "una regla obligatoria necesita un validador implementado".to_owned()
+        }
+        DomainError::DuplicateAlias(_) => "el alias está repetido".to_owned(),
+        DomainError::DuplicateOrdinal(_) => "el orden está repetido".to_owned(),
+        DomainError::DuplicateReference => "la referencia está repetida".to_owned(),
+        DomainError::InvalidClaimContext(_) => "la afirmación no es válida".to_owned(),
+        DomainError::InvalidConfidence => "la confianza debe estar entre 0 y 1".to_owned(),
+        _ => "no se pudo construir este cambio con los valores indicados".to_owned(),
+    }
+}
+
+fn calendar_error_message(error: &CalendarError) -> &'static str {
+    match error {
+        CalendarError::EmptyName("calendar") => "el calendario necesita un nombre",
+        CalendarError::EmptyName("weekday") => "cada día semanal necesita un nombre",
+        CalendarError::EmptyName("month") => "cada mes necesita un nombre",
+        CalendarError::EmptyName(_) => "el nombre no puede estar vacío",
+        CalendarError::InvalidTicksPerDay => "las unidades por día deben ser mayores que cero",
+        CalendarError::InvalidMonthLength => "los días del mes deben ser mayores que cero",
+        CalendarError::InvalidWeek => "la semana debe tener entre 1 y 64 días con nombre",
+        CalendarError::InvalidYear => "el año debe tener entre 1 y 64 meses válidos",
+        CalendarError::InvalidDate => "la fecha no existe en este calendario",
+        CalendarError::OutOfRange => "la fecha queda fuera del rango temporal admitido",
     }
 }

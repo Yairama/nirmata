@@ -45,6 +45,7 @@ struct FakeClient {
     critique_calls: Arc<Mutex<usize>>,
     critique_payloads: Arc<Mutex<Vec<Value>>>,
     proposal_payloads: Arc<Mutex<Vec<Value>>>,
+    query_payloads: Arc<Mutex<Vec<Value>>>,
 }
 
 impl FakeClient {
@@ -70,6 +71,7 @@ impl FakeClient {
             critique_calls: Arc::new(Mutex::new(0)),
             critique_payloads: Arc::new(Mutex::new(vec![])),
             proposal_payloads: Arc::new(Mutex::new(vec![])),
+            query_payloads: Arc::new(Mutex::new(vec![])),
         }
     }
 
@@ -138,12 +140,21 @@ impl FakeClient {
             .cloned()
             .expect("captured proposal payload")
     }
+
+    fn last_query_payload(&self) -> Value {
+        self.query_payloads
+            .lock()
+            .expect("query payload lock")
+            .last()
+            .cloned()
+            .expect("captured query payload")
+    }
 }
 
 impl AiModeClient for FakeClient {
     fn run_query<'a, F>(
         &'a self,
-        _payload: Value,
+        payload: Value,
         context_object_ids: Vec<String>,
         options: RequestOptions,
         mut on_delta: F,
@@ -153,6 +164,10 @@ impl AiModeClient for FakeClient {
     {
         Box::pin(async move {
             *self.query_calls.lock().expect("query calls lock") += 1;
+            self.query_payloads
+                .lock()
+                .expect("query payload lock")
+                .push(payload);
             sleep_or_cancel(self.query_delay, options.cancellation.clone()).await?;
             for delta in &self.query_deltas {
                 on_delta(StreamDelta {
@@ -439,6 +454,108 @@ fn draft_for_new_faction(
     .expect("proposal draft")
 }
 
+fn draft_with_entity_count(world: &World, sources: Vec<ObjectRef>, count: usize) -> ChangeSetDraft {
+    let operations = (0..count)
+        .map(|index| {
+            let after = Entity::new(
+                world.id(),
+                EntityKind::Faction,
+                format!("Facción {index}"),
+                format!("faccion-{index}"),
+                "Expansión acotada",
+                "",
+                "{}",
+                vec![],
+                index as i64 + 10,
+            )
+            .expect("template entity");
+            ChangeOperation::CreateEntity {
+                operation_id: ChangeOperationId::new(),
+                affected_ids: vec![ObjectRef::Entity(after.id())],
+                expected_version: 0,
+                retcon: RetconKind::Additive,
+                after,
+            }
+        })
+        .collect();
+    ChangeSetDraft::new(
+        world.id(),
+        world.current_revision(),
+        "Expansión desde plantilla",
+        sources,
+        vec![],
+        operations,
+        vec![],
+    )
+    .expect("template draft")
+}
+
+fn assert_template_prepares_without_provider(template: AiProposalTemplate, label: &str) {
+    let path = project_path(label);
+    let world = base_world(&path);
+    let mut app = open_app(&path);
+    let unused = FakeClient::new(
+        advisory_response(vec![]),
+        draft_with_entity_count(&world, vec![ObjectRef::World(world.id())], 1),
+    );
+    let run = app
+        .prepare_ai_proposal_template(
+            template,
+            AiProposalScale::Small,
+            &ContextBundleRequest::new(ContextIntent::ImpactAnalysis),
+        )
+        .expect("prepare template without provider");
+    let brief = run.intent_brief.expect("intent brief");
+    assert_eq!(run.status, AiRunStatus::IntentBriefReady);
+    assert_eq!(brief.template, Some(template));
+    assert_eq!(brief.scale, Some(AiProposalScale::Small));
+    assert!(
+        run.context
+            .context_object_ids()
+            .contains(&ObjectRef::World(world.id()).to_string())
+    );
+    assert_eq!(unused.proposal_calls(), 0);
+    assert_eq!(unused.critique_calls(), 0);
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
+fn faction_template_prepares_without_provider() {
+    assert_template_prepares_without_provider(AiProposalTemplate::Faction, "template-faction");
+}
+
+#[test]
+fn city_template_prepares_without_provider() {
+    assert_template_prepares_without_provider(AiProposalTemplate::City, "template-city");
+}
+
+#[test]
+fn character_template_prepares_without_provider() {
+    assert_template_prepares_without_provider(AiProposalTemplate::Character, "template-character");
+}
+
+#[test]
+fn conflict_template_prepares_without_provider() {
+    assert_template_prepares_without_provider(AiProposalTemplate::Conflict, "template-conflict");
+}
+
+#[test]
+fn chronology_template_prepares_without_provider() {
+    assert_template_prepares_without_provider(
+        AiProposalTemplate::Chronology,
+        "template-chronology",
+    );
+}
+
+#[test]
+fn consequences_template_prepares_without_provider() {
+    assert_template_prepares_without_provider(
+        AiProposalTemplate::Consequences,
+        "template-consequences",
+    );
+}
+
 fn internal_document_draft(
     kind: InternalDocumentKind,
     title: &str,
@@ -543,11 +660,17 @@ async fn query_streams_citations_and_offers_proposal_action_for_write_requests()
     )
     .with_query_deltas(vec!["{\"items\":[", "{\"itemId\":\"impact-1\"}", "]}"]);
     let mut progress = Vec::new();
+    let history = vec![AiConversationTurn {
+        user_request: "¿Qué controla la ciudad?".to_owned(),
+        assistant_response: "Controla el puerto según la fuente citada.".to_owned(),
+        source_uris: vec![ObjectRef::Entity(seeded.mara.id()).to_string()],
+    }];
 
     let response = app
         .execute_ai_query_with(
             &fake,
             "Haz independiente la ciudad del puerto".to_owned(),
+            history.clone(),
             &context_request(ObjectRef::Entity(seeded.mara.id())),
             AiRequestOptions::default(),
             |event| progress.push(event),
@@ -578,6 +701,16 @@ async fn query_streams_citations_and_offers_proposal_action_for_write_requests()
         event,
         AiQueryProgress::StreamingDelta { delta } if delta.contains("impact-1")
     )));
+    let payload = fake.last_query_payload();
+    assert_eq!(payload["request"], "Haz independiente la ciudad del puerto");
+    assert_eq!(
+        payload["conversationHistory"][0]["userRequest"],
+        history[0].user_request
+    );
+    assert_eq!(
+        payload["conversationHistory"][0]["assistantResponse"],
+        history[0].assistant_response
+    );
 
     drop(app);
     fs::remove_file(path).expect("remove project");
@@ -691,6 +824,7 @@ async fn historical_query_keeps_its_scope_and_proposals_are_blocked_before_model
         .execute_ai_query_with(
             &fake,
             "¿Quién es Mara?".to_owned(),
+            Vec::new(),
             &context,
             AiRequestOptions::default(),
             |_| {},
@@ -782,6 +916,7 @@ async fn query_keeps_perspectives_and_no_evidence_without_inventing_sources() {
         .execute_ai_query_with(
             &fake,
             "¿Qué rumores rodean a Mara?".to_owned(),
+            Vec::new(),
             &context_request(ObjectRef::Entity(seeded.mara.id())),
             AiRequestOptions::default(),
             |_| {},
@@ -857,6 +992,7 @@ async fn query_cancellation_stops_the_request_and_keeps_the_app_usable() {
         .execute_ai_query_with(
             &fake,
             "Explica el puerto".to_owned(),
+            Vec::new(),
             &context_request(ObjectRef::Entity(seeded.mara.id())),
             AiRequestOptions::new(Duration::from_secs(1)).with_cancellation(cancellation),
             |_| {},
@@ -1460,6 +1596,9 @@ async fn proposal_can_resume_from_an_intent_brief() {
         ],
         restrictions: vec!["No inventar datos fuera del contexto recuperado.".to_owned()],
         reason: "La solicitud original era amplia.".to_owned(),
+        authority: "Propuesta revisable; no es canon.".to_owned(),
+        template: None,
+        scale: None,
     };
 
     let response = app
@@ -1480,6 +1619,219 @@ async fn proposal_can_resume_from_an_intent_brief() {
         format!("nirmata://entity/{}", seeded.mara.id())
     );
 
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn template_scales_accept_exactly_three_and_six_operations_on_the_same_run() {
+    let path = project_path("template-scale-limits");
+    let world = base_world(&path);
+    let world_ref = ObjectRef::World(world.id());
+    let mut app = open_app(&path);
+
+    for (scale, count) in [(AiProposalScale::Small, 3), (AiProposalScale::Medium, 6)] {
+        let fake = FakeClient::new(
+            advisory_response(vec![]),
+            draft_with_entity_count(&world, vec![world_ref], count),
+        );
+        let prepared = app
+            .prepare_ai_proposal_template(
+                AiProposalTemplate::Faction,
+                scale,
+                &ContextBundleRequest::new(ContextIntent::ImpactAnalysis),
+            )
+            .expect("prepare scaled template");
+        let run_id = prepared.id;
+        let brief = prepared.intent_brief.expect("brief");
+        let continued = app
+            .continue_ai_proposal_run_from_intent_brief_with(
+                run_id,
+                &fake,
+                &brief,
+                AiRequestOptions::default(),
+                |_| {},
+            )
+            .await
+            .expect("continue scaled template");
+        assert_eq!(continued.id, run_id, "continue must reuse the prepared run");
+        assert_eq!(continued.status, AiRunStatus::AwaitingReview);
+        assert_eq!(continued.draft.expect("draft").operations().len(), count);
+    }
+
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn template_rejects_operation_overflow_before_critique() {
+    let path = project_path("template-scale-overflow");
+    let world = base_world(&path);
+    let fake = FakeClient::new(
+        advisory_response(vec![]),
+        draft_with_entity_count(&world, vec![ObjectRef::World(world.id())], 4),
+    );
+    let mut app = open_app(&path);
+    let prepared = app
+        .prepare_ai_proposal_template(
+            AiProposalTemplate::City,
+            AiProposalScale::Small,
+            &ContextBundleRequest::new(ContextIntent::ImpactAnalysis),
+        )
+        .expect("prepare template");
+    let error = app
+        .continue_ai_proposal_run_from_intent_brief_with(
+            prepared.id,
+            &fake,
+            &prepared.intent_brief.expect("brief"),
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect_err("four operations exceed small scale");
+    assert!(matches!(error, AppError::InvalidAiProposal(_)));
+    assert_eq!(fake.proposal_calls(), 1);
+    assert_eq!(fake.critique_calls(), 0);
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn template_rejects_missing_and_out_of_context_sources() {
+    let path = project_path("template-source-boundary");
+    let seeded = seed_world(&path);
+    let world = WorldStore::open(&path)
+        .expect("open store")
+        .load_world()
+        .expect("world");
+    let mut app = open_app(&path);
+
+    for (label, sources) in [
+        ("missing", vec![]),
+        ("outside", vec![ObjectRef::Entity(seeded.sera.id())]),
+    ] {
+        let fake = FakeClient::new(
+            advisory_response(vec![]),
+            draft_with_entity_count(&world, sources, 1),
+        );
+        let prepared = app
+            .prepare_ai_proposal_template(
+                AiProposalTemplate::Consequences,
+                AiProposalScale::Small,
+                &ContextBundleRequest::new(ContextIntent::ImpactAnalysis),
+            )
+            .expect("prepare template");
+        let error = app
+            .continue_ai_proposal_run_from_intent_brief_with(
+                prepared.id,
+                &fake,
+                &prepared.intent_brief.expect("brief"),
+                AiRequestOptions::default(),
+                |_| {},
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::InvalidAiProposal(_)), "{label}");
+        assert_eq!(fake.critique_calls(), 0, "{label}");
+    }
+
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn template_revalidates_limits_after_the_single_repair() {
+    let path = project_path("template-repair-limit");
+    let seeded = seed_world(&path);
+    let world = WorldStore::open(&path)
+        .expect("open store")
+        .load_world()
+        .expect("world");
+    let initial = invalid_additive_delete_draft(&world, &seeded.mara);
+    let repaired = draft_with_entity_count(&world, vec![ObjectRef::Entity(seeded.mara.id())], 4);
+    let fake =
+        FakeClient::new(advisory_response(vec![]), initial.clone()).with_proposal_replies(vec![
+            FakeProposalReply::Draft(initial),
+            FakeProposalReply::Draft(repaired),
+        ]);
+    let mut app = open_app(&path);
+    let prepared = app
+        .prepare_ai_proposal_template(
+            AiProposalTemplate::Conflict,
+            AiProposalScale::Small,
+            &context_request(ObjectRef::Entity(seeded.mara.id())),
+        )
+        .expect("prepare template");
+    let error = app
+        .continue_ai_proposal_run_from_intent_brief_with(
+            prepared.id,
+            &fake,
+            &prepared.intent_brief.expect("brief"),
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect_err("repaired overflow must be rejected");
+    assert!(matches!(error, AppError::InvalidAiProposal(_)));
+    assert_eq!(fake.proposal_calls(), 2);
+    assert_eq!(fake.critique_calls(), 1);
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn template_continue_rejects_stale_run_before_calling_provider() {
+    let path = project_path("template-stale");
+    let world = base_world(&path);
+    let fake = FakeClient::new(
+        advisory_response(vec![]),
+        draft_with_entity_count(&world, vec![ObjectRef::World(world.id())], 1),
+    );
+    let mut app = open_app(&path);
+    let prepared = app
+        .prepare_ai_proposal_template(
+            AiProposalTemplate::Chronology,
+            AiProposalScale::Small,
+            &ContextBundleRequest::new(ContextIntent::ImpactAnalysis),
+        )
+        .expect("prepare template");
+    let advance = Entity::new(
+        world.id(),
+        EntityKind::Concept,
+        "Avance",
+        "avance",
+        "",
+        "",
+        "{}",
+        vec![],
+        20,
+    )
+    .expect("advance entity");
+    let review = app
+        .start_manual_review(ManualReviewInput {
+            objective: "Advance head".to_owned(),
+            sources: vec![],
+            assumptions: vec![],
+            operations: vec![DraftOperationInput::CreateEntity {
+                retcon: RetconKind::Additive,
+                after: advance,
+            }],
+        })
+        .expect("manual review");
+    app.confirm_manual_review(&review).expect("advance head");
+
+    let error = app
+        .continue_ai_proposal_run_from_intent_brief_with(
+            prepared.id,
+            &fake,
+            &prepared.intent_brief.expect("brief"),
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect_err("stale prepared run");
+    assert!(matches!(error, AppError::AiBaseRevisionMismatch { .. }));
+    assert_eq!(fake.proposal_calls(), 0);
     drop(app);
     fs::remove_file(path).expect("remove project");
 }
@@ -1584,6 +1936,78 @@ async fn ai_run_requires_fresh_final_critique_before_commit_and_persists_summary
         Some("ai_run_summary")
     );
     drop(store);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[tokio::test]
+async fn ai_review_reopens_at_the_safe_final_critique_boundary() {
+    let path = project_path("ai-run-review-reopen");
+    let seeded = seed_world(&path);
+    let world = WorldStore::open(&path)
+        .expect("open store")
+        .load_world()
+        .expect("load world");
+    let draft = draft_for_new_faction(
+        &world,
+        ObjectRef::Entity(seeded.mara.id()),
+        "Vigías Persistidos",
+        "vigias-persistidos",
+    );
+    let operation_id = draft.operations()[0].operation_id();
+    let fake = FakeClient::new(advisory_response(vec![]), draft);
+    let context = context_request(ObjectRef::Entity(seeded.mara.id()));
+    let mut app = open_app(&path);
+    let run = app
+        .execute_ai_proposal_run_with(
+            &fake,
+            "Crea vigías persistidos.".to_owned(),
+            &context,
+            AiRequestOptions::default(),
+            |_| {},
+        )
+        .await
+        .expect("create AI review");
+    let review_key = run.review_key.expect("review key");
+    app.apply_stored_manual_review_action(
+        &review_key,
+        crate::ManualReviewActionRequest::Accept {
+            operation_id: operation_id.to_string(),
+        },
+    )
+    .expect("human action");
+    app.close_world().expect("close world");
+    app.open_world(path.clone()).expect("reopen world");
+
+    let pending = app.list_pending_reviews().expect("recovered AI review");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].origin, crate::PendingReviewOrigin::Ai);
+    let run_id = pending[0]
+        .ai_run_id
+        .as_deref()
+        .expect("recovered AI run")
+        .parse()
+        .expect("run id");
+    assert_eq!(
+        app.read_ai_run(run_id).expect("read recovered run").status,
+        AiRunStatus::AwaitingFinalCritique
+    );
+    let ready = app
+        .revalidate_ai_run_with(run_id, &fake, &context, AiRequestOptions::default(), |_| {})
+        .await
+        .expect("continue final critique");
+    assert_eq!(ready.status, AiRunStatus::ReadyToCommit);
+    app.confirm_stored_manual_review(&review_key)
+        .expect("confirm recovered AI review");
+    drop(app);
+
+    let mut reopened = open_app(&path);
+    assert!(
+        reopened
+            .list_pending_reviews()
+            .expect("pending after AI commit")
+            .is_empty()
+    );
+    drop(reopened);
     fs::remove_file(path).expect("remove project");
 }
 

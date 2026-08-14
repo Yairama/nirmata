@@ -58,7 +58,23 @@ test("landing is keyboard navigable, accessible and screenshotable", async ({ pa
   );
   expect(blocking).toEqual([]);
 
-  await page.screenshot({ path: testInfo.outputPath("landing-960x680.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("landing-960x680.png") });
+});
+
+test("landing visual baselines are deterministic in light, dark and narrow", async ({ page }) => {
+  await page.setViewportSize({ width: 960, height: 680 });
+  await page.goto("/");
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((value) => localStorage.setItem("nirmata.appearance.theme", value), theme);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Nuevo mundo" })).toBeVisible();
+    await expect(page).toHaveScreenshot(`landing-${theme}-960x680.png`);
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => localStorage.setItem("nirmata.appearance.theme", "light"));
+  await page.reload();
+  await expect(page).toHaveScreenshot("landing-light-390x844.png");
 });
 
 test("themes persist, pass axe and keep responsive creation paths", async ({ page }, testInfo) => {
@@ -69,15 +85,15 @@ test("themes persist, pass axe and keep responsive creation paths", async ({ pag
 
   for (const value of ["light", "dark", "high-contrast"]) {
     await theme.selectOption(value);
-    await expect(page.locator("#closed-root")).toHaveAttribute("data-theme", value);
-    const accessibility = await new AxeBuilder({ page }).include("#closed-root").analyze();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", value);
+    const accessibility = await new AxeBuilder({ page }).include("#closed-view").analyze();
     const blocking = accessibility.violations.filter((violation) =>
       violation.id === "color-contrast"
       || violation.impact === "serious"
       || violation.impact === "critical"
     );
     expect(blocking).toEqual([]);
-    await page.screenshot({ path: testInfo.outputPath(`landing-${value}-960x680.png`), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`landing-${value}-960x680.png`) });
   }
 
   await expect.poll(() => page.evaluate(() => localStorage.getItem("nirmata.appearance.theme")))
@@ -104,7 +120,7 @@ test("themes persist, pass axe and keep responsive creation paths", async ({ pag
       })
       .map((element) => ({ tag: element.tagName, className: element.className, right: element.getBoundingClientRect().right })));
     expect(overflow).toEqual([]);
-    await page.screenshot({ path: testInfo.outputPath(`landing-path-${index + 1}-390x844.png`), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`landing-path-${index + 1}-390x844.png`) });
     await page.getByRole("button", { name: "Cancelar" }).click();
   }
 });
@@ -117,12 +133,12 @@ test("AI creation wizard is stepped, inert until confirmation and accessible", a
   await expect(page.getByText("Paso 1 de 3")).toBeVisible();
   await expect(page.getByRole("button", { name: "Crear mundo" })).toHaveCount(0);
 
-  const accessibility = await new AxeBuilder({ page }).include("#closed-root").analyze();
+  const accessibility = await new AxeBuilder({ page }).include("#closed-view").analyze();
   const blocking = accessibility.violations.filter((violation) =>
     violation.impact === "serious" || violation.impact === "critical"
   );
   expect(blocking).toEqual([]);
-  await page.screenshot({ path: testInfo.outputPath("wizard-ai-step-1-390x844.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("wizard-ai-step-1-390x844.png") });
 });
 
 test("Settings and About trap and restore focus without a world", async ({ page }, testInfo) => {
@@ -135,7 +151,7 @@ test("Settings and About trap and restore focus without a world", async ({ page 
   await expect(page.getByRole("tab", { name: "General" })).toBeVisible();
   const accessibility = await new AxeBuilder({ page }).include("[role=dialog]").analyze();
   expect(accessibility.violations.filter((violation) => violation.impact === "serious" || violation.impact === "critical")).toEqual([]);
-  await page.screenshot({ path: testInfo.outputPath("settings-960x680.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("settings-960x680.png") });
   await page.keyboard.press("Escape");
   await expect(settings).toBeFocused();
 

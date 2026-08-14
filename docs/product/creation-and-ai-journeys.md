@@ -40,6 +40,19 @@ La seleccion multiarchivo no se promete hasta UX-033/UX-058.
 
 ## Preguntar y modificar
 
+### Editar manualmente
+
+`Mundo > Crear` y abrir un objeto canónico usan el mismo editor estructurado.
+Relaciones, participantes, causalidad, metas afectadas y referencias documentales
+se eligen por nombre y se pueden añadir, quitar o reordenar. Calendario y fechas
+usan controles humanos; los formatos de transporte y las unidades canónicas
+quedan en detalles técnicos.
+
+`Preparar cambios` conserva objetivo, fuentes y supuestos y llama al preview
+autoritativo de Rust. Un fallo mantiene el formulario. Un resultado válido abre
+la revisión estándar; editar una operación pendiente vuelve por el mismo camino
+sin aplicar canon.
+
 ### Preguntar
 
 `Objeto > Preguntar` abre contexto, respuesta clasificada y fuentes navegables.
@@ -57,6 +70,27 @@ silencio.
 `Objeto > Pedir un cambio` y `Asistente > Proponer cambios` usan el mismo
 workflow. Alcance amplio muestra un resumen de intencion; todo resultado termina
 en la cola global de revision.
+
+Dentro de `Proponer cambios`, las plantillas Faccion, Ciudad, Personaje,
+Conflicto, Cronologia y Consecuencias preparan un brief editable antes de llamar
+al proveedor. Objetivo, alcance, entidades elegidas por nombre, restricciones y
+escala pequena (hasta 3 operaciones) o mediana (hasta 6) permanecen visibles.
+El brief explica por que aparece y que su autoridad es solo de propuesta. No hay
+accion para generar una novela.
+
+## Primer mundo vacio
+
+Inicio ofrece acciones directas para editar el mundo, crear regla, entidad y
+evento, consultar y proponer. La guia puede ocultarse por mundo, pero errores,
+solo lectura y ausencia factual nunca se ocultan con esa preferencia. El ultimo
+paso se completa unicamente cuando el historial editorial contiene el primer
+conjunto de cambios aplicado; no depende de marcar una casilla local.
+
+Los ejemplos del asistente solo rellenan una solicitud o abren el modo
+correspondiente. Nunca ejecutan IA. Un mundo realmente vacio se distingue de una
+busqueda o filtro sin coincidencias; Cronologia vacia ofrece crear evento o abrir
+la plantilla Cronologia y Cambios vacio enlaza edicion manual, Proponer e
+Importar sin crear revisiones por anticipado.
 
 ## Comprension de versiones
 

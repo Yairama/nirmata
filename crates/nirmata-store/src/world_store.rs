@@ -1,7 +1,7 @@
 use crate::schema::{
     CALENDAR_SCHEMA, CANON_SCHEMA, CHANGE_SET_SCHEMA, INITIAL_SCHEMA, LORE_IMPORT_SCHEMA,
-    REVISION_COMPLETION_SCHEMA, SCHEMA_VERSION, UNDO_SCHEMA, VARIANT_INTEGRITY_SCHEMA,
-    VARIANT_SCHEMA,
+    PENDING_REVIEW_SCHEMA, REVISION_COMPLETION_SCHEMA, SCHEMA_VERSION, UNDO_SCHEMA,
+    VARIANT_INTEGRITY_SCHEMA, VARIANT_SCHEMA,
 };
 use crate::search;
 use nirmata_core::{
@@ -24,6 +24,11 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectDiagnostics {
+    pub schema_version: i64,
+}
 
 pub struct WorldStore {
     pub(crate) connection: Connection,
@@ -190,6 +195,13 @@ impl WorldStore {
             fail_next_derived_index_update: false,
             #[cfg(test)]
             fail_semantic_search: false,
+        })
+    }
+
+    pub fn diagnose_project(&self) -> Result<ProjectDiagnostics, StoreError> {
+        verify_database(&self.path, &self.connection)?;
+        Ok(ProjectDiagnostics {
+            schema_version: schema_version(&self.path, &self.connection)?,
         })
     }
 
@@ -561,6 +573,9 @@ fn initialize(path: &Path, connection: &mut Connection, world: &World) -> Result
         world.created_at_ms(),
     )?;
     transaction
+        .execute_batch(PENDING_REVIEW_SCHEMA)
+        .map_err(|error| map_database_error(path, error))?;
+    transaction
         .execute(
             "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (?1, ?2)",
             params![SCHEMA_VERSION, world.created_at_ms()],
@@ -588,7 +603,15 @@ fn install_variant_schema(connection: &Connection, path: &Path) -> Result<(), St
 
 fn initialize_variant_history(connection: &Connection, path: &Path) -> Result<(), StoreError> {
     let world_id = load_world_id(path, connection)?;
-    crate::variant::initialize_variant_history_in_tx(connection, path, world_id, current_time_ms())
+    crate::variant::initialize_variant_history_in_tx(
+        connection,
+        path,
+        world_id,
+        current_time_ms(),
+    )?;
+    connection
+        .execute_batch(PENDING_REVIEW_SCHEMA)
+        .map_err(|error| map_database_error(path, error))
 }
 
 fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
@@ -609,6 +632,27 @@ fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
                 .transaction()
                 .map_err(|error| map_database_error(path, error))?;
             initialize_variant_history(&transaction, path)?;
+            transaction
+                .commit()
+                .map_err(|error| map_database_error(path, error))
+        }
+        10 => {
+            let transaction = connection
+                .transaction()
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute_batch(PENDING_REVIEW_SCHEMA)
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .execute(
+                    "INSERT INTO schema_migrations (version, applied_at_ms)
+                     VALUES (?1, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))",
+                    [SCHEMA_VERSION],
+                )
+                .map_err(|error| map_database_error(path, error))?;
+            transaction
+                .pragma_update(None, "user_version", SCHEMA_VERSION)
+                .map_err(|error| map_database_error(path, error))?;
             transaction
                 .commit()
                 .map_err(|error| map_database_error(path, error))
@@ -1018,6 +1062,19 @@ fn verify_schema_version(
                        'decision_points', 'change_set_waivers', 'change_operation_audits',
                        'canon_fts', 'revision_undos', 'import_batches', 'import_sources',
                        'import_chunks', 'import_candidates', 'variants', 'revision_snapshots'
+                    )"
+            } else if version == 11 {
+                "SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'table'
+                   AND name IN (
+                       'schema_migrations', 'worlds', 'revisions', 'rules', 'entities',
+                       'entity_aliases', 'relations', 'events', 'event_participants',
+                       'event_links', 'event_goals', 'goals', 'claims', 'documents',
+                       'content_references', 'change_sets', 'change_operations',
+                       'decision_points', 'change_set_waivers', 'change_operation_audits',
+                       'canon_fts', 'revision_undos', 'import_batches', 'import_sources',
+                       'import_chunks', 'import_candidates', 'variants', 'revision_snapshots',
+                       'pending_reviews'
                    )"
             } else {
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -1042,6 +1099,7 @@ fn verify_schema_version(
         6 => 22,
         7 => 26,
         8 | 9 | 10 => 28,
+        11 => 29,
         _ => return Err(StoreError::InvalidFormat(path.to_owned())),
     };
     if required_table_count != expected_table_count {

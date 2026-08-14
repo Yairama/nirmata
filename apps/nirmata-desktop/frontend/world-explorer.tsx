@@ -5,9 +5,10 @@ import { useDeferredValue, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { firstUriFromTree, pathForUri } from "./helpers.js";
 import { useSession } from "./session-provider.js";
-import { state } from "./state.js";
+import { appActions, getAppState, useAppState } from "./state.js";
 import type { LogicalVfsDirectory, LogicalVfsNode, SearchKind, SearchObjectKind, SearchResult, SearchWorldResponse } from "./types.js";
-import { renderWorkspace, selectUri, startCreatingObject } from "./workspace.js";
+import { selectUri, startCreatingObject } from "./workspace.js";
+import { observedScopeQueryKey } from "./workspace-data.js";
 
 const filters: Array<{ value: SearchKind; label: string }> = [
   { value: "all", label: "Todo" },
@@ -22,27 +23,26 @@ const filters: Array<{ value: SearchKind; label: string }> = [
 
 const createOptions = filters.slice(1) as Array<{ value: SearchObjectKind; label: string }>;
 
-export function WorldExplorer() {
+export function WorldExplorer({ onStartProposal, onEditorOpened }: { onStartProposal: () => void; onEditorOpened: () => void }) {
   const session = useSession();
+  const state = useAppState();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<SearchKind>("all");
   const [createKind, setCreateKind] = useState<SearchObjectKind>("entity");
-  const [recentUris, setRecentUris] = useState<string[]>(() => [...state.recentUris]);
-  const [selectedUri, setSelectedUri] = useState(state.selectedUri);
   const [directUri, setDirectUri] = useState("");
   const deferredQuery = useDeferredValue(query.trim());
   const initialized = useRef(false);
   const scopeKey = session
-    ? [session.world_id, session.active_variant.id, session.read_scope.revisionId ?? session.current_revision]
-    : ["closed", "closed", "closed"];
+    ? observedScopeQueryKey(session)
+    : ["world", "closed", "closed", "closed"] as const;
   const tree = useQuery({
-    queryKey: ["world", ...scopeKey, "vfs"],
+    queryKey: [...scopeKey, "vfs"],
     queryFn: () => invoke<LogicalVfsDirectory>("read_logical_vfs"),
     enabled: Boolean(session),
     retry: false,
   });
   const search = useQuery({
-    queryKey: ["world", ...scopeKey, "search", deferredQuery, kind],
+    queryKey: [...scopeKey, "search", deferredQuery, kind],
     queryFn: () => invoke<SearchWorldResponse>("search_world", {
       input: { queryText: deferredQuery, kind, limit: 200 },
     }),
@@ -52,38 +52,30 @@ export function WorldExplorer() {
   });
 
   useEffect(() => {
-    function syncSelection() {
-      setRecentUris([...state.recentUris]);
-      setSelectedUri(state.selectedUri);
-    }
-    window.addEventListener("nirmata:selection-changed", syncSelection);
-    return () => window.removeEventListener("nirmata:selection-changed", syncSelection);
-  }, []);
-
-  useEffect(() => {
     if (!tree.data) return;
-    const previousPath = state.selectedLogicalPath;
-    state.logicalTree = tree.data;
-    if (state.selectedUri) {
-      const nextPath = pathForUri(tree.data, state.selectedUri);
-      state.selectedLogicalPath = nextPath;
+    const current = getAppState();
+    const previousPath = current.selectedLogicalPath;
+    if (current.selectedUri) {
+      const nextPath = pathForUri(tree.data, current.selectedUri);
+      appActions.setLogicalTree(tree.data, nextPath);
       if (nextPath && previousPath && nextPath !== previousPath) {
-        state.workspaceNotice = {
+        appActions.setWorkspaceNotice({
           kind: "info",
           title: "Objeto movido en el explorador",
           detail: `La selección conserva su identidad y ahora vive en ${nextPath}.`,
-        };
-        renderWorkspace();
+        });
       }
-    }
+    } else appActions.setLogicalTree(tree.data);
   }, [tree.data]);
 
   useEffect(() => {
-    if (initialized.current || !tree.data || !search.data || state.selectedUri || state.editorMode) return;
-    initialized.current = true;
+    const current = getAppState();
+    if (initialized.current || !tree.data || !search.data || current.selectedUri || current.structuredEditor) return;
     const firstUri = search.data.hits[0]?.uri ?? firstUriFromTree(tree.data);
-    if (firstUri) void selectUri(firstUri);
-    else startCreatingObject("entity");
+    if (firstUri) {
+      initialized.current = true;
+      void selectUri(firstUri);
+    }
   }, [search.data, tree.data]);
 
   if (!session) return null;
@@ -93,7 +85,7 @@ export function WorldExplorer() {
   }
 
   function createObject() {
-    startCreatingObject(createKind);
+    void startCreatingObject(createKind).then((opened) => { if (opened) onEditorOpened(); });
   }
 
   function onResultKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -111,6 +103,8 @@ export function WorldExplorer() {
   }
 
   const hits = search.data?.hits ?? [];
+  const worldIsEmpty = tree.data?.children.length === 0;
+  const searchIsFiltered = Boolean(deferredQuery) || kind !== "all";
   return (
     <div className="world-explorer">
       <div className="panel-header explorer-heading">
@@ -121,6 +115,7 @@ export function WorldExplorer() {
         <label className="search-field">Buscar
           <input
             className="world-explorer-search"
+            name="world-search"
             type="search"
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
@@ -135,7 +130,7 @@ export function WorldExplorer() {
         </div>
         <div className="explorer-create">
           <label>Nuevo
-            <select value={createKind} onChange={(event) => setCreateKind(event.currentTarget.value as SearchObjectKind)} disabled={session.read_only}>
+            <select name="new-object-kind" value={createKind} onChange={(event) => setCreateKind(event.currentTarget.value as SearchObjectKind)} disabled={session.read_only}>
               {createOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
@@ -151,22 +146,23 @@ export function WorldExplorer() {
         <Tabs.Content value="results" className="explorer-scroll">
           {search.isFetching && <p role="status" className="muted">Buscando en la versión observada…</p>}
           {search.isError && <p role="alert" className="notice warning">No se pudo buscar. El mundo no cambió.</p>}
-          {!search.isFetching && !search.isError && hits.length === 0 && <p className="empty-state">Sin evidencia con estos términos y filtros.</p>}
+          {!search.isFetching && !search.isError && hits.length === 0 && worldIsEmpty && !searchIsFiltered && <EmptyWorldActions readOnly={session.read_only} onStartProposal={onStartProposal} onEditorOpened={onEditorOpened} />}
+          {!search.isFetching && !search.isError && hits.length === 0 && (!worldIsEmpty || searchIsFiltered) && <p className="empty-state">No hay coincidencias con estos términos y filtros. El contenido del mundo no se ocultó ni cambió.</p>}
           <div className="explorer-results" role="region" aria-label="Resultados de búsqueda" onKeyDown={onResultKeyDown}>
-            {hits.map((result) => <ResultButton key={result.uri} result={result} selected={result.uri === selectedUri} onOpen={openObject} />)}
+            {hits.map((result) => <ResultButton key={result.uri} result={result} selected={result.uri === state.selectedUri} onOpen={openObject} />)}
           </div>
         </Tabs.Content>
         <Tabs.Content value="tree" className="explorer-scroll">
           {tree.isPending && <p role="status" className="muted">Cargando estructura…</p>}
           {tree.isError && <p role="alert" className="notice warning">No se pudo cargar la estructura.</p>}
-          {tree.data?.children.length === 0 && <p className="empty-state">El mundo todavía no tiene objetos.</p>}
-          {tree.data && <TreeNodes nodes={tree.data.children} selectedUri={selectedUri} onOpen={openObject} />}
+          {tree.data?.children.length === 0 && <EmptyWorldActions readOnly={session.read_only} onStartProposal={onStartProposal} onEditorOpened={onEditorOpened} />}
+          {tree.data && <TreeNodes nodes={tree.data.children} selectedUri={state.selectedUri} onOpen={openObject} />}
         </Tabs.Content>
         <Tabs.Content value="recent" className="explorer-scroll">
-          {recentUris.length === 0 && <p className="empty-state">Todavía no abriste objetos en esta sesión.</p>}
+          {state.recentUris.length === 0 && <p className="empty-state">Todavía no abriste objetos en esta sesión.</p>}
           <div className="explorer-results">
-            {recentUris.map((uri) => (
-              <button key={uri} type="button" className="explorer-object" aria-current={uri === selectedUri ? "true" : undefined} onClick={() => void openObject(uri)}>
+            {state.recentUris.map((uri) => (
+              <button key={uri} type="button" className="explorer-object" aria-current={uri === state.selectedUri ? "true" : undefined} onClick={() => void openObject(uri)}>
                 <strong>{nameForUri(tree.data ?? null, uri)}</strong>
                 <small>{kindFromUri(uri)}</small>
               </button>
@@ -177,11 +173,29 @@ export function WorldExplorer() {
       <details className="technical-details explorer-advanced">
         <summary>Abrir identificador técnico</summary>
         <form onSubmit={(event) => { event.preventDefault(); if (directUri.trim()) void openObject(directUri.trim()); }}>
-          <label>URI <input value={directUri} onChange={(event) => setDirectUri(event.currentTarget.value)} placeholder="nirmata://…" autoComplete="off" /></label>
+          <label>URI <input name="direct-uri" value={directUri} onChange={(event) => setDirectUri(event.currentTarget.value)} placeholder="nirmata://…" autoComplete="off" /></label>
           <button type="submit">Abrir</button>
         </form>
       </details>
     </div>
+  );
+}
+
+function EmptyWorldActions({ readOnly, onStartProposal, onEditorOpened }: { readOnly: boolean; onStartProposal: () => void; onEditorOpened: () => void }) {
+  function create(kind: SearchObjectKind) {
+    void startCreatingObject(kind).then((opened) => { if (opened) onEditorOpened(); });
+  }
+  return (
+    <section className="empty-state contextual-empty" aria-label="Mundo sin objetos">
+      <h4>El mundo todavía no tiene objetos</h4>
+      <p>Crea una pieza canónica manualmente o abre una propuesta revisable. Nada se genera automáticamente.</p>
+      <div className="pending-actions">
+        <button type="button" disabled={readOnly} onClick={() => create("entity")}>Crear entidad</button>
+        <button type="button" className="secondary" disabled={readOnly} onClick={() => create("rule")}>Crear regla</button>
+        <button type="button" className="secondary" disabled={readOnly} onClick={() => create("event")}>Crear evento</button>
+        <button type="button" className="ghost" disabled={readOnly} onClick={onStartProposal}>Proponer con IA</button>
+      </div>
+    </section>
   );
 }
 

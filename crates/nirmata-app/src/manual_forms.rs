@@ -4,7 +4,7 @@ use crate::{
 };
 use nirmata_core::{
     ChangeOperationId, ClaimId, DocumentId, DomainError, EntityId, GoalId, Period, World,
-    calendar::{CalendarDate, CalendarMonth, WorldCalendar},
+    calendar::{CalendarDate, CalendarError, CalendarMonth, WorldCalendar},
     change_set::ChangeOperation,
     claim::{Claim, ClaimAuthentication, ClaimModality, ClaimObject, ClaimPolarity},
     document::{ContentReference, Document, DocumentAggregate, DocumentCanonStatus, ObjectRef},

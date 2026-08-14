@@ -43,6 +43,10 @@ pub struct ImportSnapshotInput {
 #[serde(rename_all = "camelCase")]
 pub struct ImportSnapshotResult {
     pub path: PathBuf,
+    pub world_id: String,
+    pub variant_id: String,
+    pub variant: String,
+    pub base_revision: String,
     pub logical_hash: String,
     pub object_count: usize,
     pub created_count: usize,
@@ -158,10 +162,14 @@ impl NirmataApp {
         let mut stored = StoredManualReview::from_snapshot_import(review);
         stored.sync_with_revision(current_revision);
         let review = stored.snapshot(&review_key);
-        self.manual_reviews.insert(review_key, stored);
+        self.insert_pending_review(review_key, stored)?;
 
         Ok(ImportSnapshotResult {
             path: root,
+            world_id: manifest.world_id,
+            variant_id: active_variant.id.to_string(),
+            variant: active_variant.name,
+            base_revision: manifest.base_revision,
             logical_hash: manifest.logical_hash,
             object_count: manifest.objects.len(),
             created_count,
@@ -217,7 +225,7 @@ fn validate_manifest_header(
         ));
     }
     let schema_supported = manifest.canon_schema_version == schema_version
-        || (schema_version == 10 && manifest.canon_schema_version == 9);
+        || (schema_version == 11 && matches!(manifest.canon_schema_version, 9 | 10));
     if !schema_supported {
         return Err(invalid(
             path,

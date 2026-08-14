@@ -14,12 +14,12 @@ import {
   shortId,
   warningsForResult,
 } from "./helpers.js";
-import { state } from "./state.js";
+import { getAppState } from "./state.js";
 import type {
   EditorControl,
   EditorField,
   EditorMeta,
-  EditorMode,
+  StructuredEditorState,
   JumpLink,
   ObjectKind,
   OpenUriResponse,
@@ -39,8 +39,8 @@ function createField(
 export {
   buildSelectionEditor,
   buildWorldEditor,
-  cloneEditorMode,
-  createEditorMode,
+  cloneStructuredEditorState,
+  createStructuredEditorState,
   createField,
   currentWorldUri,
   enumOptions,
@@ -50,7 +50,7 @@ function enumOptions(values: string[]): Array<{ value: string; label: string }> 
   return values.map((value) => ({ value, label: humanize(value) }));
 }
 
-function createEditorMode(definition: {
+function createStructuredEditorState(definition: {
   mode: "create" | "update";
   objectType: ObjectKind;
   existingUri: string | null;
@@ -66,7 +66,7 @@ function createEditorMode(definition: {
   objective: string;
   sourceUrisText: string;
   assumptionsText: string;
-}): EditorMode {
+}): StructuredEditorState {
   const values = Object.fromEntries(definition.fields.map((field) => [field.key, field.value]));
   return {
     ...definition,
@@ -80,7 +80,7 @@ function createEditorMode(definition: {
   };
 }
 
-function cloneEditorMode(mode: EditorMode): EditorMode {
+function cloneStructuredEditorState(mode: StructuredEditorState): StructuredEditorState {
   return {
     ...mode,
     fields: mode.fields.map((field) => ({ ...field })),
@@ -95,23 +95,25 @@ function cloneEditorMode(mode: EditorMode): EditorMode {
 }
 
 function currentWorldUri(): string | null {
+  const state = getAppState();
   return state.session ? `nirmata://world/${state.session.world.id}` : null;
 }
 
-function buildWorldEditor(): EditorMode | null {
+function buildWorldEditor(): StructuredEditorState | null {
+  const state = getAppState();
   if (!state.session) {
     return null;
   }
   const world = state.session.world;
   const worldUri = currentWorldUri()!;
-  const editor = createEditorMode({
+  const editor = createStructuredEditorState({
     mode: "update",
     objectType: "world",
     existingUri: worldUri,
     targetUri: worldUri,
     title: world.name,
     subtitle: "Mundo",
-    description: previewText(world.premise_md, "Edita metadatos del mundo activo como draft."),
+    description: previewText(world.premise_md, "Edita los datos del mundo activo y prepara una propuesta revisable."),
     logicalPath: "/world",
     objective: `Actualizar mundo ${world.name}`,
     sourceUrisText: worldUri,
@@ -128,13 +130,14 @@ function buildWorldEditor(): EditorMode | null {
   return editor;
 }
 
-function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
+function buildSelectionEditor(selection: OpenUriResponse): StructuredEditorState {
+  const state = getAppState();
   const { result, object } = selection;
   const warnings = warningsForResult(result);
   const sourceUrisText = result.uri;
 
   if ("world" in object) {
-    return buildWorldEditor() ?? createEditorMode({
+    return buildWorldEditor() ?? createStructuredEditorState({
       mode: "update",
       objectType: "world",
       existingUri: result.uri,
@@ -155,7 +158,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
 
   if ("entity" in object) {
     const entity = object.entity;
-    const editor = createEditorMode({
+    const editor = createStructuredEditorState({
       mode: "update",
       objectType: "entity",
       existingUri: result.uri,
@@ -207,7 +210,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
         label: `Entidad destino · ${shortId(relation.target_entity_id)}`,
       },
     ];
-    const editor = createEditorMode({
+    const editor = createStructuredEditorState({
       mode: "update",
       objectType: "relation",
       existingUri: result.uri,
@@ -311,7 +314,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
         detail: `La cronología está marcada como ${humanize(event.time.certainty).toLowerCase()}.`,
       });
     }
-    const editor = createEditorMode({
+    const editor = createStructuredEditorState({
       mode: "update",
       objectType: "event",
       existingUri: result.uri,
@@ -341,8 +344,8 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
         }),
         createField("start_tick", "Tick inicio", "number", event.time.start_tick?.toString() ?? ""),
         createField("end_tick", "Tick fin", "number", event.time.end_tick?.toString() ?? ""),
-        createField("start_calendar_date", "Fecha inicio (año|mes|día|sub-tick)", "text", ""),
-        createField("end_calendar_date", "Fecha fin (año|mes|día|sub-tick)", "text", ""),
+        createField("start_calendar_date", "Fecha de inicio", "text", selection.eventCalendar?.start?.dateInput ?? ""),
+        createField("end_calendar_date", "Fecha de fin", "text", selection.eventCalendar?.end?.dateInput ?? ""),
         createField("location_entity", "Entidad lugar", "text", event.location_entity_id ?? "", {
           help: "UUID o nirmata://entity/...",
         }),
@@ -431,7 +434,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
         detail: "Este claim ya tiene una revisión posterior que lo supera.",
       });
     }
-    const editor = createEditorMode({
+    const editor = createStructuredEditorState({
       mode: "update",
       objectType: "claim",
       existingUri: result.uri,
@@ -528,7 +531,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
         detail: "Puede bloquear cambios durante una revisión posterior.",
       });
     }
-    const editor = createEditorMode({
+    const editor = createStructuredEditorState({
       mode: "update",
       objectType: "rule",
       existingUri: result.uri,
@@ -586,7 +589,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
         detail: "El contexto puede depender de perspectivas y no solo de canon.",
       });
     }
-    const editor = createEditorMode({
+    const editor = createStructuredEditorState({
       mode: "update",
       objectType: "goal",
       existingUri: result.uri,
@@ -665,7 +668,7 @@ function buildSelectionEditor(selection: OpenUriResponse): EditorMode {
       detail: "Su contenido debe leerse como perspectiva o apoyo, no como hecho duro.",
     });
   }
-  const editor = createEditorMode({
+  const editor = createStructuredEditorState({
     mode: "update",
     objectType: "document",
     existingUri: result.uri,
@@ -723,18 +726,18 @@ function worldFields(world: import("./types.js").World): EditorField[] {
       ],
     }),
     createField("calendar_name", "Nombre del calendario", "text", calendar?.name ?? ""),
-    createField("calendar_epoch_tick", "Tick del epoch", "text", String(calendar?.epoch_tick ?? 0)),
-    createField("calendar_ticks_per_day", "Ticks por día", "text", String(calendar?.ticks_per_day ?? 1)),
+    createField("calendar_epoch_tick", "Unidad temporal del origen", "text", String(calendar?.epoch_tick ?? 0)),
+    createField("calendar_ticks_per_day", "Unidades por día", "text", String(calendar?.ticks_per_day ?? 1)),
     createField(
       "calendar_weekdays",
-      "Weekdays (uno por línea)",
+      "Días de la semana",
       "textarea",
       calendar?.weekday_names.join("\n") ?? "",
       { rows: 4 },
     ),
     createField(
       "calendar_months",
-      "Meses (nombre|días)",
+      "Meses del año",
       "textarea",
       calendar?.months.map((month) => `${month.name}|${month.days}`).join("\n") ?? "",
       { rows: 5 },

@@ -82,6 +82,7 @@ pub enum AppError {
         current_revision: RevisionId,
     },
     AiRunNotFound(String),
+    InvalidAiProposal(String),
     DeepReviewRunNotFound(String),
     InvalidDeepReview(String),
     InvalidSimulationScenario(String),
@@ -281,6 +282,7 @@ impl fmt::Display for AppError {
                 "AI request is stale: base revision {draft_base_revision} is behind current head {current_revision}"
             ),
             Self::AiRunNotFound(run_id) => write!(formatter, "AI run {run_id} was not found"),
+            Self::InvalidAiProposal(message) => write!(formatter, "invalid AI proposal: {message}"),
             Self::DeepReviewRunNotFound(run_id) => {
                 write!(formatter, "deep review run {run_id} was not found")
             }

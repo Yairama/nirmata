@@ -113,11 +113,14 @@ Los comandos expuestos al frontend deben corresponder a casos de uso:
 
 ```text
 open_world
+list_pending_reviews
 export_vfs_snapshot
 import_vfs_snapshot
 create_lore_import
+list_lore_imports
 extract_lore_import
 prepare_lore_import_review
+get_project_diagnostics
 search_world
 get_entity
 save_manual_changes
@@ -148,6 +151,13 @@ El contenido del mundo y la salida del modelo son datos no confiables:
   revision manual descartable;
 - `create_lore_import` acepta solo texto/Markdown UTF-8 seleccionado, vuelve a
   confinar ruta y symlinks en Rust y copia el contenido como staging inerte;
+- `list_lore_imports` devuelve lotes persistidos del mundo actual para reanudar
+  la revision sin exponer consultas SQLite;
+- `get_project_diagnostics` devuelve schema e integridad mediante un caso de uso
+  del store; no ofrece pragmas ni SQL arbitrario al frontend;
+- `list_pending_reviews` devuelve DTOs humanos estrictos de la variante activa,
+  con origen y formulario tipado para reconstruir la cola global; no expone el
+  payload SQLite ni mezcla revisiones de otra variante;
 - `extract_lore_import` y `prepare_lore_import_review` comparten timeout y token
   de cancelacion del proveedor estandar; cancelar no publica resultados
   parciales;

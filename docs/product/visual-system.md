@@ -66,11 +66,16 @@ nombre y texto. `success` describe una accion completada, no una severidad.
 
 ## Shell responsive
 
-- `>=1200px`: topbar, navegacion `216-256px`, editor flexible y panel derecho
-  `304-352px`; cola inferior colapsable.
-- `800-1199px`: navegacion y editor; contexto/asistente en drawer derecho.
-- `<800px`: una sola region principal; navegacion, asistente, contexto y
-  revision como sheets/tabs, nunca toda la app apilada.
+- `>920px`: topbar, navegacion primaria y workspace con Explorador, editor y
+  Contexto visibles. Dos separadores ajustan las columnas laterales, permiten
+  colapsarlas y conservan el editor como region flexible.
+- El layout del workspace se guarda localmente por mundo en
+  `nirmata.workspace.layout.<worldId>`; cambiar de mundo no mezcla anchos ni
+  estados colapsados y recargar no pierde la preferencia.
+- `<=920px`: una sola region de Mundo visible mediante tabs; no se muestran
+  separadores ni se desmonta el estado de las otras regiones.
+- Asistente y Cambios son drawers modales independientes del grid. Cambios no
+  usa splitter vertical porque actualmente no es una fila acoplada permanente.
 - Cada region tiene scroll propio dentro de `100dvh`.
 
 ## Temas y movimiento

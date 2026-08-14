@@ -1,219 +1,97 @@
 import {
-  buildSelectionEditor,
   buildWorldEditor,
-  cloneEditorMode,
+  cloneStructuredEditorState,
+  currentWorldUri,
 } from "./editor-model.js";
 import { buildCreateEditor } from "./editor-create.js";
+import { requestConfirmation } from "./confirmation.js";
 import {
   clearError,
   commandCode,
   commandMessage,
-  normalizeText,
-  pathForUri,
   retainedDraftHint,
-  setMarkdownText,
   setStatus,
   showError,
   splitLines,
 } from "./helpers.js";
-import { renderEditor } from "./render-editor.js";
 import {
-  readPendingDraft,
-  renderPending,
-  syncPendingReviewRecord,
-} from "./render-pending.js";
-import {
-  bottomPanelSize,
-  contextPanel,
-  editWorldButton,
+  appActions,
+  getAppState,
   invoke,
-  leftPanelSize,
-  navigationPanel,
-  pendingPanel,
-  rightPanelSize,
-  setSession,
-  state,
-  statusElement,
-  toggleContextButton,
-  toggleNavigationButton,
-  togglePendingButton,
-  workspaceShell,
-  worldEpoch,
-  worldName,
-  worldPath,
-  worldPremise,
-  worldRevision,
-  worldView,
 } from "./state.js";
 import type {
-  EditorMode,
-  LogicalVfsDirectory,
+  StructuredEditorState,
   ManualDraftRequest,
   ManualDraftResponse,
   ManualReviewOperationSnapshot,
-  OpenUriResponse,
-  PendingDraftRecord,
-  RelatedContextResponse,
+  PendingReviewSnapshot,
   ReadScope,
   ReviewEditContext,
-  RevisionHistorySnapshot,
   SearchObjectKind,
-  SearchWorldResponse,
-  TimelineOverview,
+  WorkspaceNotice,
   WorldSession,
 } from "./types.js";
 
-export function editorIsDirty(mode: EditorMode | null): boolean {
+export function editorIsDirty(mode: StructuredEditorState | null): boolean {
   if (!mode) {
     return false;
   }
 
   return (
-    JSON.stringify(mode.values) !== JSON.stringify(mode.baselineValues)
+    !sameEditorValues(mode.values, mode.baselineValues)
     || mode.objective !== mode.baselineObjective
     || mode.sourceUrisText !== mode.baselineSourceUrisText
     || mode.assumptionsText !== mode.baselineAssumptionsText
   );
 }
 
-export function hasPendingWork(): boolean {
-  return state.pendingDrafts.size > 0
-    || state.ephemeralWork.size > 0
-    || editorIsDirty(state.editorMode);
-}
-
-export function applyLayoutState(): void {
-  workspaceShell.style.setProperty(
-    "--left-panel-width",
-    state.panels.leftCollapsed ? "0px" : `${state.panels.leftWidth}rem`,
-  );
-  workspaceShell.style.setProperty(
-    "--right-panel-width",
-    state.panels.rightCollapsed ? "0px" : `${state.panels.rightWidth}rem`,
-  );
-  workspaceShell.style.setProperty(
-    "--bottom-panel-height",
-    state.panels.bottomCollapsed ? "0px" : `${state.panels.bottomHeight}rem`,
-  );
-
-  navigationPanel.hidden = state.panels.leftCollapsed;
-  contextPanel.hidden = state.panels.rightCollapsed;
-  pendingPanel.hidden = !document.body.classList.contains("review-drawer-open");
-
-  toggleNavigationButton.textContent = state.panels.leftCollapsed
-    ? "Mostrar navegación"
-    : "Ocultar navegación";
-  toggleContextButton.textContent = state.panels.rightCollapsed
-    ? "Mostrar contexto"
-    : "Ocultar contexto";
-  togglePendingButton.textContent = state.panels.bottomCollapsed
-    ? "Mostrar cambios"
-    : "Ocultar cambios";
-
-  toggleNavigationButton.setAttribute("aria-expanded", String(!state.panels.leftCollapsed));
-  toggleContextButton.setAttribute("aria-expanded", String(!state.panels.rightCollapsed));
-  togglePendingButton.setAttribute("aria-expanded", String(!state.panels.bottomCollapsed));
-
-  leftPanelSize.disabled = state.panels.leftCollapsed;
-  rightPanelSize.disabled = state.panels.rightCollapsed;
-  bottomPanelSize.disabled = state.panels.bottomCollapsed;
-  leftPanelSize.value = String(state.panels.leftWidth);
-  rightPanelSize.value = String(state.panels.rightWidth);
-  bottomPanelSize.value = String(state.panels.bottomHeight);
-}
-
-export function renderWorkspace(): void {
-  if (!state.session) {
-    worldView.hidden = true;
-    statusElement.hidden = true;
-    return;
+function sameEditorValues(left: Record<string, string>, right: Record<string, string>): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if ((left[key] ?? "") !== (right[key] ?? "")) return false;
   }
-
-  worldView.hidden = false;
-  statusElement.hidden = false;
-  worldName.textContent = state.session.world.name;
-  worldPath.textContent = state.session.path;
-  setMarkdownText(worldPremise, state.session.world.premise_md, "No especificada");
-  worldEpoch.textContent = normalizeText(state.session.world.epoch_label, "No especificado");
-  worldRevision.textContent = state.session.read_only ? "Versión anterior" : "Versión actual";
-  editWorldButton.disabled = state.session.read_only;
-  applyLayoutState();
-  renderEditor();
-  window.dispatchEvent(new CustomEvent("nirmata:context-changed"));
-  renderPending();
+  return true;
 }
 
-function resetWorkspaceState(): void {
-  state.logicalTree = null;
-  state.selectedUri = null;
-  state.selectedLogicalPath = null;
-  state.selectedObject = null;
-  state.editorMode = null;
-  state.context = null;
-  state.timeline = null;
-  state.narrative.timeline = null;
-  state.narrative.causalThreads = null;
-  state.narrative.looseEnds = null;
-  state.narrative.exploration = null;
-  state.revisionHistory = null;
-  state.selectedRevisionId = null;
-  state.recentUris = [];
-  state.pendingDrafts.clear();
-  state.ephemeralWork.clear();
-  state.workspaceNotice = null;
-  state.navigationRequestId = 0;
-  state.selectionRequestId = 0;
+export function hasPendingWork(): boolean {
+  const state = getAppState();
+  return Object.keys(state.ephemeralWork).length > 0
+    || editorIsDirty(state.structuredEditor);
 }
 
 export function openSession(session: WorldSession): void {
-  resetWorkspaceState();
-  setSession(session);
-  renderWorkspace();
-  window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
-  void refreshNavigation();
+  appActions.resetWorkspace(session, "Navegación actualizada.");
 }
 
 export function closeSession(): void {
-  window.dispatchEvent(new CustomEvent("nirmata:discard-ephemeral-work"));
-  resetWorkspaceState();
-  setSession(null);
-  renderWorkspace();
-  setStatus("Mundo cerrado.");
-}
-
-function pushRecent(uri: string): void {
-  state.recentUris = [uri, ...state.recentUris.filter((item) => item !== uri)].slice(0, 8);
-  window.dispatchEvent(new CustomEvent("nirmata:selection-changed"));
+  appActions.resetWorkspace(null, "Mundo cerrado.");
 }
 
 export function applyCommandStateError(value: unknown, fallback?: string): void {
   const code = commandCode(value);
   const message = commandMessage(value);
+  let notice: WorkspaceNotice | null = null;
   switch (code) {
     case "object_not_found":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "Objeto eliminado",
-        detail: `La URI seleccionada ya no existe en el mundo actual. ${message}`,
+        detail: `La referencia seleccionada ya no existe en el mundo actual. ${message}`,
       };
-      state.selectedObject = null;
-      state.context = null;
-      state.selectedLogicalPath = null;
-      if (state.selectedUri && state.pendingDrafts.has(state.selectedUri)) {
-        state.editorMode = cloneEditorMode(state.pendingDrafts.get(state.selectedUri)!.editor);
-      }
+      appActions.setSelectedLogicalPath(null);
+      appActions.setStructuredEditor(null);
       setStatus("La selección ya no existe en canon.");
       break;
     case "no_world_open":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
-        title: "Mundo cerrado",
-        detail: "La sesión activa ya no existe y la interfaz volvió al estado inicial.",
+        title: "Sesión no disponible",
+        detail: "El backend no reconoce la sesión. El trabajo local se conserva hasta que decidas volver al inicio.",
       };
-      closeSession();
+      setStatus("La acción no se ejecutó; comprueba la sesión antes de continuar.");
       break;
     case "manual_review_stale":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "Propuesta desactualizada",
         detail: `${message || "La propuesta quedó detrás de la versión actual; vuelve a comprobarla antes de aplicarla."}${retainedDraftHint()}`,
@@ -223,7 +101,7 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
     case "manual_review_not_ready":
     case "manual_review_revalidation_failed":
     case "validation_error":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "No se puede aplicar todavía",
         detail: `${message}${retainedDraftHint()}`,
@@ -231,7 +109,7 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
       setStatus("El conjunto de cambios sigue pendiente de revisión.");
       break;
     case "project_locked":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "Archivo bloqueado",
         detail: `${message}${retainedDraftHint()}`,
@@ -239,7 +117,7 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
       setStatus("No se pudo escribir porque el archivo está en uso.");
       break;
     case "app_busy":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "IA trabajando",
         detail: "Espera a que termine la solicitud activa o cancélala antes de cambiar el mundo.",
@@ -247,7 +125,7 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
       setStatus("La acción no se ejecutó; el mundo y el trabajo local se conservaron.");
       break;
     case "constraint_error":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "El almacenamiento rechazó el cambio",
         detail: `${message}${retainedDraftHint()}`,
@@ -255,7 +133,7 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
       setStatus("La propuesta se conservó para corregirla o reintentarlo.");
       break;
     case "storage_error":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "La transacción no pudo completarse",
         detail: `${message}${retainedDraftHint()}`,
@@ -263,7 +141,7 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
       setStatus("El canon no cambió. La propuesta se conservó y puedes reintentar.");
       break;
     case "file_not_found":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "Archivo movido o inexistente",
         detail: `El archivo .nirmata activo ya no se encuentra en la ruta original. ${message}`,
@@ -271,7 +149,7 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
       setStatus("");
       break;
     case "file_error":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "Error de archivo",
         detail: `${message}${retainedDraftHint()}`,
@@ -279,7 +157,7 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
       setStatus("");
       break;
     case "invalid_project_path":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "Ruta inválida",
         detail: "Selecciona un archivo local con extensión .nirmata.",
@@ -288,16 +166,16 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
       break;
     case "invalid_object_uri":
     case "invalid_revision_id":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
-        title: "URI o revisión inválida",
-        detail: message || "Usa URIs estables nirmata://kind/uuid y revisiones UUID visibles en el historial.",
+        title: "Referencia o versión inválida",
+        detail: "Vuelve a elegir el objeto o la versión desde la interfaz.",
       };
       setStatus(fallback ?? "");
       break;
     case "undo_target_invalid":
     case "undo_conflict":
-      state.workspaceNotice = {
+      notice = {
         kind: "warning",
         title: "Deshacer no disponible",
         detail: message,
@@ -311,119 +189,64 @@ export function applyCommandStateError(value: unknown, fallback?: string): void 
       }
       return;
   }
-  clearError();
-  renderWorkspace();
-}
-
-export async function refreshNavigation(): Promise<void> {
-  if (!state.session) {
-    return;
-  }
-  clearError();
-  setStatus("Actualizando navegación…");
-  const requestId = ++state.navigationRequestId;
-  try {
-    const [session, timeline, revisionHistory] = await Promise.all([
-      invoke<WorldSession | null>("get_current_world"),
-      invoke<TimelineOverview>("list_timeline_events"),
-      invoke<RevisionHistorySnapshot>("list_revision_history"),
-    ]);
-    if (requestId !== state.navigationRequestId) {
-      return;
-    }
-
-    if (session) {
-      setSession(session);
-    }
-    state.timeline = timeline;
-    state.revisionHistory = revisionHistory;
-    state.selectedRevisionId =
-      revisionHistory.revisions.find((entry) => entry.revisionId === state.selectedRevisionId)?.revisionId
-      ?? revisionHistory.undoTargetRevisionId
-      ?? revisionHistory.revisions[0]?.revisionId
-      ?? null;
-    window.dispatchEvent(new CustomEvent("nirmata:scope-changed"));
-
-    if (state.selectedUri) {
-      await loadSelection(state.selectedUri, true);
-      return;
-    }
-
-    const pending = Array.from(state.pendingDrafts.values());
-    if (pending.length > 0) {
-      await Promise.all(pending.map((record) => readPendingDraft(record)));
-      if (requestId !== state.navigationRequestId) {
-        return;
-      }
-    }
-
-    renderWorkspace();
-    setStatus("Navegación actualizada.");
-  } catch (value) {
-    applyCommandStateError(value, "");
-  }
-}
-
-export async function loadSelection(uri: string, keepNotice: boolean): Promise<void> {
-  clearError();
-  const requestId = ++state.selectionRequestId;
-  setStatus("Cargando selección…");
-  try {
-    const [selectedObject, context] = await Promise.all([
-      invoke<OpenUriResponse>("open_uri", { uri }),
-      invoke<RelatedContextResponse>("get_related_context", { input: { uri } }),
-    ]);
-    if (requestId !== state.selectionRequestId) {
-      return;
-    }
-
-    state.selectedUri = uri;
-    state.selectedLogicalPath = pathForUri(state.logicalTree, uri);
-    state.selectedObject = selectedObject;
-    state.context = context;
-    pushRecent(uri);
-    if (!keepNotice) {
-      state.workspaceNotice = null;
-    }
-    state.editorMode = buildSelectionEditor(selectedObject);
-    renderWorkspace();
-    setStatus(`Selección actualizada: ${state.editorMode.title}.`);
-  } catch (value) {
-    if (requestId !== state.selectionRequestId) {
-      return;
-    }
-    state.selectedUri = uri;
-    applyCommandStateError(value, "");
-  }
+  appActions.setWorkspaceNotice(notice);
+  showError(value);
 }
 
 export async function selectUri(uri: string): Promise<boolean> {
-  if (state.selectedUri === uri && state.selectedObject && state.context) {
+  const state = getAppState();
+  if (
+    state.selectedUri === uri
+    && state.structuredEditor?.existingUri === uri
+  ) {
     return true;
   }
-  if (!confirmDiscardPending("editor")) {
+  if (!await confirmDiscardPending("editor")) {
     return false;
   }
-  await loadSelection(uri, false);
+  clearError();
+  appActions.setWorkspaceNotice(null);
+  appActions.selectUri(uri);
+  setStatus("Cargando selección…");
   return true;
 }
 
-export function startCreatingObject(kind: SearchObjectKind): boolean {
+export async function startCreatingObject(kind: SearchObjectKind): Promise<boolean> {
+  const state = getAppState();
   if (state.session?.read_only) {
     showError("Vuelve a la versión actual antes de crear objetos.");
     return false;
   }
-  if (!confirmDiscardPending("editor")) {
+  if (!await confirmDiscardPending("editor")) {
     return false;
   }
-  state.workspaceNotice = null;
-  state.editorMode = buildCreateEditor(kind);
-  renderWorkspace();
+  appActions.setSelectedUri(null);
+  appActions.setWorkspaceNotice(null);
+  appActions.setStructuredEditor(buildCreateEditor(kind));
+  return true;
+}
+
+export async function startEditingWorld(): Promise<boolean> {
+  const state = getAppState();
+  if (state.session?.read_only) {
+    showError("El calendario de una versión anterior es de solo lectura. Vuelve a la versión actual para configurarlo.");
+    return false;
+  }
+  if (!await confirmDiscardPending("editor")) {
+    return false;
+  }
+  const editor = buildWorldEditor();
+  if (!editor) {
+    return false;
+  }
+  appActions.setSelectedUri(currentWorldUri());
+  appActions.setWorkspaceNotice(null);
+  appActions.setStructuredEditor(editor);
   return true;
 }
 
 export async function selectUriInScope(uri: string, scope: ReadScope): Promise<boolean> {
-  const session = state.session;
+  const session = getAppState().session;
   if (!session) {
     return false;
   }
@@ -431,22 +254,22 @@ export async function selectUriInScope(uri: string, scope: ReadScope): Promise<b
   if (current.variantId === scope.variantId && current.revisionId === scope.revisionId) {
     return selectUri(uri);
   }
-  if (!confirmDiscardPending("editor")) {
+  if (!await confirmDiscardPending("editor")) {
     return false;
   }
-  setSession(await invoke<WorldSession>("set_read_scope", { input: { scope } }));
-  state.editorMode = null;
-  await refreshNavigation();
-  await loadSelection(uri, false);
+  appActions.setSession(await invoke<WorldSession>("set_read_scope", { input: { scope } }));
+  appActions.setWorkspaceNotice(null);
+  appActions.selectUri(uri);
+  setStatus("Navegación actualizada.");
   return true;
 }
 
 function applyManualRequestToEditor(
-  editor: EditorMode,
+  editor: StructuredEditorState,
   request: ManualDraftRequest,
   reviewEdit: ReviewEditContext | null,
-): EditorMode {
-  const next = cloneEditorMode(editor);
+): StructuredEditorState {
+  const next = cloneStructuredEditorState(editor);
   next.objective = request.objective ?? "";
   next.sourceUrisText = request.sourceUris.join("\n");
   next.assumptionsText = request.assumptions.join("\n");
@@ -465,10 +288,10 @@ function applyManualRequestToEditor(
 }
 
 export async function openReviewOperationEditor(
-  record: PendingDraftRecord,
+  record: PendingReviewSnapshot,
   operation: ManualReviewOperationSnapshot,
 ): Promise<void> {
-  if (!confirmDiscardPending("editor")) {
+  if (!await confirmDiscardPending("editor")) {
     return;
   }
   clearError();
@@ -481,29 +304,23 @@ export async function openReviewOperationEditor(
       },
     });
 
-    let editor: EditorMode | null;
-    if (request.existingUri) {
-      await loadSelection(request.existingUri, false);
-      editor = state.editorMode ? cloneEditorMode(state.editorMode) : null;
-    } else {
-      editor = buildCreateEditor(request.objectType as SearchObjectKind);
-    }
+    const editor = buildPendingReviewEditor(request);
 
     if (!editor) {
       setStatus("");
       return;
     }
 
-    state.workspaceNotice = {
+    appActions.setWorkspaceNotice({
       kind: "info",
       title: "Edición por operación",
       detail: "El formulario reutiliza el flujo existente y volverá a validar el conjunto de cambios al guardar.",
-    };
-    state.editorMode = applyManualRequestToEditor(editor, request, {
+    });
+    appActions.setSelectedUri(null);
+    appActions.setStructuredEditor(applyManualRequestToEditor(editor, request, {
       reviewKey: record.review.reviewKey,
       operationId: operation.operationId,
-    });
-    renderWorkspace();
+    }));
     setStatus("Operación lista para editar.");
   } catch (value) {
     applyCommandStateError(value, "");
@@ -511,7 +328,7 @@ export async function openReviewOperationEditor(
 }
 
 function currentManualRequest(): ManualDraftRequest | null {
-  const editor = state.editorMode;
+  const editor = getAppState().structuredEditor;
   if (!editor) {
     return null;
   }
@@ -525,139 +342,99 @@ function currentManualRequest(): ManualDraftRequest | null {
   };
 }
 
-export async function saveCurrentDraft(): Promise<void> {
+export async function saveCurrentDraft(submittedRequest?: ManualDraftRequest): Promise<boolean> {
+  const state = getAppState();
   if (state.session?.read_only) {
     showError("La versión observada es de solo lectura. Vuelve a la versión actual para editar.");
-    return;
+    return false;
   }
-  const editor = state.editorMode;
-  const request = currentManualRequest();
-  if (!editor || !request) {
-    return;
-  }
+  const editor = state.structuredEditor;
+  const request = submittedRequest ?? currentManualRequest();
+  if (!editor || !request) return false;
   if (editor.reviewEdit) {
     clearError();
     setStatus("Revalidando operación editada…");
     try {
       const response = await invoke<ManualDraftResponse>("apply_manual_review_edit", {
-        input: {
-          reviewKey: editor.reviewEdit.reviewKey,
-          operationId: editor.reviewEdit.operationId,
-          request,
-        },
+        input: { reviewKey: editor.reviewEdit.reviewKey, operationId: editor.reviewEdit.operationId, request },
       });
-      if (!state.editorMode) {
-        return;
-      }
-      state.editorMode.issues = response.fieldIssues;
+      if (!getAppState().structuredEditor) return false;
+      appActions.updateStructuredEditor((current) => ({ ...current, issues: response.fieldIssues }));
       if (!response.review) {
-        state.workspaceNotice = {
-          kind: "warning",
-          title: "Edición incompleta",
-          detail: "Corrige los campos marcados antes de revalidar la operación.",
-        };
-        renderWorkspace();
+        appActions.setWorkspaceNotice({ kind: "warning", title: "Edición incompleta", detail: "Corrige los campos marcados antes de revalidar la operación." });
         setStatus("La operación editada requiere correcciones.");
-        return;
+        return false;
       }
-      const record = state.pendingDrafts.get(editor.reviewEdit.reviewKey);
-      if (record) {
-        syncPendingReviewRecord(record, response.review);
-      }
-      state.workspaceNotice = {
-        kind: "info",
-        title: "Operación revalidada",
-        detail: "El diff y el reporte del panel inferior ya reflejan la edición aplicada.",
-      };
-      state.editorMode = null;
-      renderWorkspace();
+      appActions.setWorkspaceNotice({ kind: "info", title: "Operación revalidada", detail: "El diff y el reporte de Cambios ya reflejan la edición aplicada." });
+      appActions.setStructuredEditor(null);
       setStatus("Operación actualizada.");
-      return;
+      return true;
     } catch (value) {
       applyCommandStateError(value, "");
-      return;
+      return false;
     }
   }
   clearError();
   setStatus("Preparando conjunto de cambios…");
   try {
     const response = await invoke<ManualDraftResponse>("preview_manual_draft", { input: request });
-    if (!state.editorMode) {
-      return;
-    }
-    state.editorMode.issues = response.fieldIssues;
+    if (!getAppState().structuredEditor) return false;
+    appActions.updateStructuredEditor((current) => ({ ...current, issues: response.fieldIssues }));
     if (!response.draft) {
-      state.workspaceNotice = {
-        kind: "warning",
-        title: "Propuesta no creada",
-        detail: "Corrige los campos marcados antes de preparar el conjunto de cambios.",
-      };
-      renderWorkspace();
+      appActions.setWorkspaceNotice({ kind: "warning", title: "Propuesta no creada", detail: "Corrige los campos marcados antes de preparar el conjunto de cambios." });
       setStatus("La propuesta requiere correcciones.");
-      return;
+      return false;
     }
-    if (!response.review) {
-      throw new Error("La revisión manual no quedó disponible para este draft.");
-    }
-
-    const updatedEditor = cloneEditorMode(state.editorMode);
-    updatedEditor.targetUri = response.draft.targetUri;
-    updatedEditor.logicalPath = response.draft.logicalPath;
-    updatedEditor.issues = [];
-    state.pendingDrafts.set(response.draft.draftKey, {
-      preview: response.draft,
-      review: response.review,
-      editor: updatedEditor,
-    });
-    state.workspaceNotice = {
-      kind: "info",
-      title: "Propuesta preparada",
-      detail: "El conjunto de cambios está listo para revisarse en el panel inferior.",
-    };
-    state.editorMode = null;
-    renderWorkspace();
+    if (!response.review) throw new Error("La revisión manual no quedó disponible para este draft.");
+    appActions.setWorkspaceNotice({ kind: "info", title: "Propuesta preparada", detail: "El conjunto de cambios está listo para revisarse en Cambios." });
+    appActions.setStructuredEditor(null);
     setStatus(`Propuesta lista: ${response.draft.title}.`);
+    return true;
   } catch (value) {
     applyCommandStateError(value, "");
+    return false;
   }
 }
 
 export function resetCurrentEditor(): void {
-  if (!state.editorMode) {
-    return;
-  }
-  if (state.editorMode.mode === "create") {
-    state.editorMode = buildCreateEditor(
-      state.editorMode.objectType === "world" ? "entity" : state.editorMode.objectType,
-    );
-  } else if (state.selectedObject) {
-    state.editorMode = buildSelectionEditor(state.selectedObject);
-  } else if (state.editorMode.objectType === "world") {
-    state.editorMode = buildWorldEditor();
-  }
-  state.workspaceNotice = null;
-  renderWorkspace();
+  const state = getAppState();
+  if (!state.structuredEditor) return;
+  const editor = cloneStructuredEditorState(state.structuredEditor);
+  editor.values = { ...editor.baselineValues };
+  editor.objective = editor.baselineObjective;
+  editor.sourceUrisText = editor.baselineSourceUrisText;
+  editor.assumptionsText = editor.baselineAssumptionsText;
+  editor.issues = [];
+  appActions.setStructuredEditor(editor);
+  appActions.setWorkspaceNotice(null);
 }
 
-export function confirmDiscardPending(scope: "editor" | "workspace" = "workspace"): boolean {
-  const shouldConfirm = editorIsDirty(state.editorMode)
-    || (scope === "workspace" && (state.pendingDrafts.size > 0 || state.ephemeralWork.size > 0));
-  if (!shouldConfirm) {
-    return true;
-  }
-  const previousFocus = document.activeElement instanceof HTMLElement
-    ? document.activeElement
-    : null;
-  const volatileItems = Array.from(state.ephemeralWork.values());
-  const accepted = window.confirm(
-    scope === "workspace"
+export function buildPendingReviewEditor(request: ManualDraftRequest): StructuredEditorState {
+  const base = request.objectType === "world"
+    ? buildWorldEditor() ?? buildCreateEditor("entity")
+    : buildCreateEditor(request.objectType as SearchObjectKind);
+  const editor = applyManualRequestToEditor(base, request, null);
+  editor.mode = request.existingUri ? "update" : "create";
+  editor.existingUri = request.existingUri ?? null;
+  editor.targetUri = request.existingUri ?? null;
+  return editor;
+}
+
+export async function confirmDiscardPending(scope: "editor" | "workspace" = "workspace"): Promise<boolean> {
+  const state = getAppState();
+  const shouldConfirm = editorIsDirty(state.structuredEditor)
+    || Boolean(state.ephemeralWork.editor)
+    || (scope === "workspace" && Object.keys(state.ephemeralWork).length > 0);
+  if (!shouldConfirm) return true;
+  const volatileItems = Object.values(state.ephemeralWork);
+  return requestConfirmation({
+    title: scope === "workspace" ? "Descartar trabajo de sesión" : "Descartar cambios del formulario",
+    detail: scope === "workspace"
       ? volatileItems.length > 0
-        ? `Hay trabajo de sesión que se perderá: ${volatileItems.join(", ")}. También se descartará cualquier formulario o revisión local pendiente. ¿Continuar?`
-        : "Hay cambios locales o revisiones pendientes. ¿Descartar y continuar?"
-      : "Hay cambios sin guardar en el formulario. ¿Descartar y continuar?",
-  );
-  if (!accepted) {
-    previousFocus?.focus();
-  }
-  return accepted;
+        ? `Hay trabajo de sesión que se perderá: ${volatileItems.join(", ")}. También se descartará cualquier formulario sin guardar.`
+        : "Hay cambios locales sin guardar que se perderán."
+      : "Hay cambios sin guardar en el formulario.",
+    confirmLabel: "Descartar y continuar",
+    danger: true,
+  });
 }

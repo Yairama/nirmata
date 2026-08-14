@@ -16,6 +16,8 @@ externo.
 
 - un lote mixto con binario falla antes de staging y deja canon identico;
 - reemplazar una fuente cambia hash/chunks y elimina la generacion vieja;
+- cerrar antes de revisar, reabrir el `.nirmata` y listar lotes recupera las
+  fuentes copiadas sin tocar canon;
 - cancelacion previa consume cero salidas y no deja candidatos parciales;
 - cada candidato conserva cita literal a source/hash/chunk;
 - alias entre paginas resuelven identidad, mientras claims opuestos permanecen
@@ -31,6 +33,8 @@ externo.
 - fuentes seleccionadas y fixtures permanecen byte a byte iguales;
 - cerrar/reabrir conserva el commit y undo; un segundo reopen confirma que undo
   retiro solo las operaciones importadas.
+- Playwright verifica reanudacion, campos completos por tipo, citas por archivo
+  y lineas, hash bajo detalles tecnicos, teclado/axe y `390x844` sin overflow.
 
 ## Comandos
 

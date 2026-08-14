@@ -1,21 +1,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use nirmata_app::{
-    AiError, AiProviderConfig, AiQueryResponse, AiRequestOptions, AiRunId, AiRunSnapshot, AppError,
-    CancellationToken, ContextBudget, ContextBundleRequest, ContextIntent, CreateWorldInput,
-    DeepReviewMode, DeepReviewPlan, DeepReviewRun, DeepReviewRunId, EmptySearchClassification,
-    EntityId, EventId, ExportSnapshotInput, ExportSnapshotResult, ImportBatchSnapshot,
-    ImportCandidate, ImportCandidateDecisionRequest, ImportCandidateSnapshot, ImportChunkLocation,
+    AiError, AiProposalScale, AiProposalTemplate, AiProviderConfig, AiQueryResponse,
+    AiRequestOptions, AiRunId, AiRunSnapshot, AppError, CancellationToken, ContextBudget,
+    ContextBundleRequest, ContextIntent, CreateWorldInput, DeepReviewMode, DeepReviewPlan,
+    DeepReviewRun, DeepReviewRunId, EmptySearchClassification, EntityId, EventId,
+    ExportSnapshotInput, ExportSnapshotResult, ImportBatchSnapshot, ImportCandidate,
+    ImportCandidateDecisionRequest, ImportCandidateSnapshot, ImportChunkLocation,
     ImportExtractionResult, ImportReviewPreparation, ImportSnapshotInput, ImportSnapshotResult,
-    IntentBrief, InternalDocumentKind, InternalDocumentRequest, LogicalVfsDirectory,
-    ManualDraftRequest, ManualDraftResponse, ManualReviewActionRequest, ManualReviewSnapshot,
-    MergeReviewResult, NarrativeCausalThreads, NarrativeContinuityExploration,
-    NarrativeContinuityProposal, NarrativeContinuitySelection, NarrativeLooseEnds,
-    NarrativeTimeline, NirmataApp, ObjectRef, OpenUriResponse, ProviderCredentialStatus, ReadScope,
+    InternalDocumentKind, InternalDocumentRequest, LogicalVfsDirectory, ManualDraftRequest,
+    ManualDraftResponse, ManualReviewActionRequest, ManualReviewSnapshot, MergeReviewResult,
+    NarrativeCausalThreads, NarrativeContinuityExploration, NarrativeContinuityProposal,
+    NarrativeContinuitySelection, NarrativeLooseEnds, NarrativeTimeline, NirmataApp, ObjectRef,
+    OpenUriResponse, PendingReviewSnapshot, ProviderCredentialStatus, ReadScope,
     RelatedContextRequest, RelatedContextResponse, RevisionHistorySnapshot, RevisionId,
     SearchWorldRequest, SearchWorldResponse, SimulationPromotionInput, SimulationRun,
     SimulationScenario, SimulationScenarioId, SimulationScenarioInput, SpecialistRole, StoreError,
-    StructuredSearchKind, TimelineOverview, Variant, VariantComparison, VariantId, WorldSession,
+    StructuredSearchKind, TimelineOverview, Variant, VariantComparison, VariantId, VariantSummary,
+    WorldSession,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -29,6 +31,8 @@ use std::{
     },
 };
 use tauri::{Emitter, Manager, State};
+
+mod desktop_menu;
 
 struct AiCancellations(Mutex<HashMap<String, CancellationToken>>);
 static AI_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -48,6 +52,15 @@ struct AiProviderDiagnosticStatus {
     can_check_connection: bool,
     connected: bool,
     credential: ProviderCredentialStatus,
+    base_url: String,
+    model: String,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiProviderSettings {
+    base_url: String,
+    model: String,
 }
 
 #[derive(Deserialize)]
@@ -162,20 +175,20 @@ struct AiLoreImportCommand {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ManualReviewActionCommand {
     review_key: String,
     action: ManualReviewActionRequest,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReviewKeyCommand {
     review_key: String,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReviewOperationCommand {
     review_key: String,
     operation_id: String,
@@ -228,7 +241,7 @@ struct CompareScopesCommand {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ManualReviewEditCommand {
     review_key: String,
     operation_id: String,
@@ -236,7 +249,7 @@ struct ManualReviewEditCommand {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AiRequestCommand {
     request_id: String,
     request: String,
@@ -244,7 +257,17 @@ struct AiRequestCommand {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AiQueryCommand {
+    request_id: String,
+    request: String,
+    anchor_uri: Option<String>,
+    #[serde(default)]
+    history: Vec<nirmata_app::AiConversationTurn>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AiRunCommand {
     request_id: String,
     run_id: String,
@@ -252,15 +275,22 @@ struct AiRunCommand {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AiIntentBriefCommand {
     request_id: String,
-    user_request: String,
+    run_id: String,
     objective: String,
     scope: String,
     entity_uris: Vec<String>,
     restrictions: Vec<String>,
-    reason: String,
+    scale: Option<AiProposalScale>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AiTemplateCommand {
+    template: AiProposalTemplate,
+    scale: AiProposalScale,
     anchor_uri: Option<String>,
 }
 
@@ -451,6 +481,7 @@ impl From<AppError> for CommandError {
             }
             AppError::AiBaseRevisionMismatch { .. } => "ai_context_stale",
             AppError::AiRunNotFound(_) => "ai_run_not_found",
+            AppError::InvalidAiProposal(_) => "invalid_ai_proposal",
             AppError::DeepReviewRunNotFound(_) => "deep_review_run_not_found",
             AppError::InvalidDeepReview(_) => "invalid_deep_review",
             AppError::InvalidSimulationScenario(_) => "invalid_simulation_scenario",
@@ -532,6 +563,15 @@ fn get_current_world(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<Option<WorldSession>, CommandError> {
     lock_app(&state)?.get_current_world().map_err(Into::into)
+}
+
+#[tauri::command]
+fn get_project_diagnostics(
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<nirmata_app::ProjectDiagnostics, CommandError> {
+    lock_app(&state)?
+        .get_project_diagnostics()
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -677,6 +717,13 @@ fn create_lore_import(
 }
 
 #[tauri::command]
+fn list_lore_imports(
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<Vec<ImportBatchSnapshot>, CommandError> {
+    lock_app(&state)?.list_import_batches().map_err(Into::into)
+}
+
+#[tauri::command]
 fn read_lore_import(
     input: LoreImportCommand,
     state: State<'_, Arc<Mutex<NirmataApp>>>,
@@ -761,7 +808,7 @@ async fn extract_lore_import(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
     cancellations: State<'_, AiCancellations>,
 ) -> Result<ImportExtractionResult, CommandError> {
-    let provider = provider_config()?;
+    let provider = provider_config(&app_handle)?;
     let token = register_cancellation(&cancellations, &input.request_id)?;
     let request_id = input.request_id.clone();
     let cleanup_id = input.request_id.clone();
@@ -785,9 +832,9 @@ async fn extract_lore_import(
         .map_err(CommandError::from)
     })
     .await
-    .map_err(|_| internal_error())?;
+    .map_err(|_| internal_error());
     remove_cancellation(&cancellations, &cleanup_id);
-    result
+    result?
 }
 
 #[tauri::command]
@@ -797,7 +844,7 @@ async fn prepare_lore_import_review(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
     cancellations: State<'_, AiCancellations>,
 ) -> Result<ImportReviewPreparation, CommandError> {
-    let provider = provider_config()?;
+    let provider = provider_config(&app_handle)?;
     let token = register_cancellation(&cancellations, &input.request_id)?;
     let request_id = input.request_id.clone();
     let cleanup_id = input.request_id.clone();
@@ -821,9 +868,9 @@ async fn prepare_lore_import_review(
         .map_err(CommandError::from)
     })
     .await
-    .map_err(|_| internal_error())?;
+    .map_err(|_| internal_error());
     remove_cancellation(&cancellations, &cleanup_id);
-    result
+    result?
 }
 
 #[tauri::command]
@@ -835,19 +882,35 @@ fn get_provider_credential_status(
 
 #[tauri::command]
 fn get_ai_provider_status(
+    app_handle: tauri::AppHandle,
     state: State<'_, Arc<Mutex<NirmataApp>>>,
 ) -> Result<AiProviderDiagnosticStatus, CommandError> {
     let credential = lock_app(&state)?.get_provider_credential_status();
-    Ok(provider_diagnostic_status(credential, false))
+    provider_diagnostic_status(&app_handle, credential, false)
+}
+
+#[tauri::command]
+fn set_ai_provider_settings(
+    input: AiProviderSettings,
+    app_handle: tauri::AppHandle,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<AiProviderDiagnosticStatus, CommandError> {
+    let settings = validate_ai_provider_settings(input)?;
+    write_ai_provider_settings(&ai_provider_settings_path(&app_handle)?, &settings)?;
+    let credential = lock_app(&state)?.get_provider_credential_status();
+    Ok(provider_diagnostic_status_from_config(
+        credential, false, settings,
+    ))
 }
 
 #[tauri::command]
 async fn diagnose_ai_provider(
     input: ProviderDiagnosticCommand,
+    app_handle: tauri::AppHandle,
     state: State<'_, Arc<Mutex<NirmataApp>>>,
     cancellations: State<'_, AiCancellations>,
 ) -> Result<AiProviderDiagnosticStatus, CommandError> {
-    let provider = provider_config()?;
+    let provider = provider_config(&app_handle)?;
     let token = register_cancellation(&cancellations, &input.request_id)?;
     let cleanup_id = input.request_id.clone();
     let app_state = Arc::clone(state.inner());
@@ -865,7 +928,7 @@ async fn diagnose_ai_provider(
     result??;
 
     let credential = lock_app(&state)?.get_provider_credential_status();
-    Ok(provider_diagnostic_status(credential, true))
+    provider_diagnostic_status(&app_handle, credential, true)
 }
 
 #[tauri::command]
@@ -903,22 +966,57 @@ fn internal_error() -> CommandError {
 
 #[tauri::command]
 async fn execute_ai_query(
-    input: AiRequestCommand,
+    input: AiQueryCommand,
     app_handle: tauri::AppHandle,
     state: State<'_, Arc<Mutex<NirmataApp>>>,
     cancellations: State<'_, AiCancellations>,
 ) -> Result<AiQueryResponse, CommandError> {
-    let provider = provider_config()?;
-    let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::EntityQuery)?;
+    let history_chars = input.history.iter().fold(0usize, |total, turn| {
+        total
+            .saturating_add(turn.user_request.chars().count())
+            .saturating_add(turn.assistant_response.chars().count())
+    });
+    if input.history.len() > 8
+        || history_chars > 32_000
+        || input.history.iter().any(|turn| {
+            turn.user_request.chars().count() > 2_000
+                || turn.assistant_response.chars().count() > 8_000
+                || turn.source_uris.len() > 24
+        })
+    {
+        return Err(CommandError {
+            code: "invalid_ai_history",
+            message: "Conversation history exceeds the local query limits".to_owned(),
+        });
+    }
+    let provider = provider_config(&app_handle)?;
+    let mut context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::EntityQuery)?;
+    for source_uri in input
+        .history
+        .iter()
+        .rev()
+        .flat_map(|turn| turn.source_uris.iter())
+        .take(24)
+    {
+        let source =
+            ObjectRef::from_str(parse_object_uri(source_uri)?).map_err(|_| CommandError {
+                code: "invalid_object_uri",
+                message: format!("invalid nirmata URI {source_uri}"),
+            })?;
+        if !context.anchors.contains(&source) {
+            context.anchors.push(source);
+        }
+    }
     let token = register_cancellation(&cancellations, &input.request_id)?;
     let request_id = input.request_id.clone();
     let cleanup_id = input.request_id.clone();
     let app_state = Arc::clone(state.inner());
     let result = tauri::async_runtime::spawn_blocking(move || {
         let app = app_state.lock().map_err(|_| internal_error())?;
-        tauri::async_runtime::block_on(app.execute_ai_query(
+        tauri::async_runtime::block_on(app.execute_ai_query_with_history(
             &provider,
             input.request,
+            input.history,
             &context,
             AiRequestOptions::default().with_cancellation(token),
             move |progress| {
@@ -934,9 +1032,9 @@ async fn execute_ai_query(
         .map_err(CommandError::from)
     })
     .await
-    .map_err(|_| internal_error())?;
+    .map_err(|_| internal_error());
     remove_cancellation(&cancellations, &cleanup_id);
-    result
+    result?
 }
 
 #[tauri::command]
@@ -946,7 +1044,7 @@ async fn execute_ai_proposal(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
     cancellations: State<'_, AiCancellations>,
 ) -> Result<AiRunSnapshot, CommandError> {
-    let provider = provider_config()?;
+    let provider = provider_config(&app_handle)?;
     let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::ImpactAnalysis)?;
     let token = register_cancellation(&cancellations, &input.request_id)?;
     let request_id = input.request_id.clone();
@@ -972,9 +1070,20 @@ async fn execute_ai_proposal(
         .map_err(CommandError::from)
     })
     .await
-    .map_err(|_| internal_error())?;
+    .map_err(|_| internal_error());
     remove_cancellation(&cancellations, &cleanup_id);
-    result
+    result?
+}
+
+#[tauri::command]
+fn prepare_ai_proposal_template(
+    input: AiTemplateCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<AiRunSnapshot, CommandError> {
+    let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::ImpactAnalysis)?;
+    lock_app(&state)?
+        .prepare_ai_proposal_template(input.template, input.scale, &context)
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -996,7 +1105,7 @@ async fn execute_deep_review(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
     cancellations: State<'_, AiCancellations>,
 ) -> Result<DeepReviewRun, CommandError> {
-    let provider = provider_config()?;
+    let provider = provider_config(&app_handle)?;
     let mode = parse_deep_review_mode(&input.mode)?;
     let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::ImpactAnalysis)?;
     let token = register_cancellation(&cancellations, &input.request_id)?;
@@ -1028,9 +1137,9 @@ async fn execute_deep_review(
         .map_err(CommandError::from)
     })
     .await
-    .map_err(|_| internal_error())?;
+    .map_err(|_| internal_error());
     remove_cancellation(&cancellations, &cleanup_id);
-    result
+    result?
 }
 
 #[tauri::command]
@@ -1050,14 +1159,22 @@ async fn execute_ai_proposal_from_brief(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
     cancellations: State<'_, AiCancellations>,
 ) -> Result<AiRunSnapshot, CommandError> {
-    let provider = provider_config()?;
-    let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::ImpactAnalysis)?;
+    let provider = provider_config(&app_handle)?;
+    let run_id = parse_ai_run_id(&input.run_id)?;
     let token = register_cancellation(&cancellations, &input.request_id)?;
     let request_id = input.request_id.clone();
     let cleanup_id = input.request_id.clone();
     let app_state = Arc::clone(state.inner());
     let result = tauri::async_runtime::spawn_blocking(move || {
         let mut app = app_state.lock().map_err(|_| internal_error())?;
+        let mut brief = app
+            .read_ai_run(run_id)
+            .map_err(CommandError::from)?
+            .intent_brief
+            .ok_or_else(|| CommandError {
+                code: "invalid_ai_run_transition",
+                message: "AI run has no editable intent brief".to_owned(),
+            })?;
         let entities = input
             .entity_uris
             .iter()
@@ -1067,18 +1184,15 @@ async fn execute_ai_proposal_from_brief(
                     .map_err(CommandError::from)
             })
             .collect::<Result<Vec<_>, CommandError>>()?;
-        let brief = IntentBrief {
-            user_request: input.user_request,
-            objective: input.objective,
-            scope: input.scope,
-            entities,
-            restrictions: input.restrictions,
-            reason: input.reason,
-        };
-        tauri::async_runtime::block_on(app.execute_ai_proposal_run_from_intent_brief(
+        brief.objective = input.objective;
+        brief.scope = input.scope;
+        brief.entities = entities;
+        brief.restrictions = input.restrictions;
+        brief.scale = input.scale;
+        tauri::async_runtime::block_on(app.continue_ai_proposal_run_from_intent_brief(
             &provider,
+            run_id,
             &brief,
-            &context,
             AiRequestOptions::default().with_cancellation(token),
             move |progress| {
                 let _ = app_handle.emit(
@@ -1093,9 +1207,9 @@ async fn execute_ai_proposal_from_brief(
         .map_err(CommandError::from)
     })
     .await
-    .map_err(|_| internal_error())?;
+    .map_err(|_| internal_error());
     remove_cancellation(&cancellations, &cleanup_id);
-    result
+    result?
 }
 
 #[tauri::command]
@@ -1105,7 +1219,7 @@ async fn revalidate_ai_run(
     state: State<'_, Arc<Mutex<NirmataApp>>>,
     cancellations: State<'_, AiCancellations>,
 ) -> Result<AiRunSnapshot, CommandError> {
-    let provider = provider_config()?;
+    let provider = provider_config(&app_handle)?;
     let context = ai_context_request(input.anchor_uri.as_deref(), ContextIntent::ImpactAnalysis)?;
     let run_id = parse_ai_run_id(&input.run_id)?;
     let token = register_cancellation(&cancellations, &input.request_id)?;
@@ -1132,9 +1246,9 @@ async fn revalidate_ai_run(
         .map_err(CommandError::from)
     })
     .await
-    .map_err(|_| internal_error())?;
+    .map_err(|_| internal_error());
     remove_cancellation(&cancellations, &cleanup_id);
-    result
+    result?
 }
 
 #[tauri::command]
@@ -1223,6 +1337,13 @@ fn read_manual_review(
     lock_app(&state)?
         .read_stored_manual_review(parse_review_key(&input.review_key)?)
         .map_err(Into::into)
+}
+
+#[tauri::command]
+fn list_pending_reviews(
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<Vec<PendingReviewSnapshot>, CommandError> {
+    lock_app(&state)?.list_pending_reviews().map_err(Into::into)
 }
 
 #[tauri::command]
@@ -1412,7 +1533,7 @@ async fn generate_internal_document(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let provider = provider_config()?;
+    let provider = provider_config(&app_handle)?;
     let token = register_cancellation(&cancellations, &input.request_id)?;
     let request_id = input.request_id.clone();
     let cleanup_id = input.request_id.clone();
@@ -1444,9 +1565,9 @@ async fn generate_internal_document(
         .map_err(CommandError::from)
     })
     .await
-    .map_err(|_| internal_error())?;
+    .map_err(|_| internal_error());
     remove_cancellation(&cancellations, &cleanup_id);
-    result
+    result?
 }
 
 #[tauri::command]
@@ -1464,7 +1585,7 @@ async fn propose_narrative_continuity(
         64,
         "invalid_narrative_query",
     )?;
-    let provider = provider_config()?;
+    let provider = provider_config(&app_handle)?;
     let token = register_cancellation(&cancellations, &input.request_id)?;
     let request_id = input.request_id.clone();
     let cleanup_id = input.request_id.clone();
@@ -1490,9 +1611,9 @@ async fn propose_narrative_continuity(
         .map_err(CommandError::from)
     })
     .await
-    .map_err(|_| internal_error())?;
+    .map_err(|_| internal_error());
     remove_cancellation(&cancellations, &cleanup_id);
-    result
+    result?
 }
 
 #[tauri::command]
@@ -1514,6 +1635,15 @@ fn list_revision_history(
 #[tauri::command]
 fn list_variants(state: State<'_, Arc<Mutex<NirmataApp>>>) -> Result<Vec<Variant>, CommandError> {
     lock_app(&state)?.list_variants().map_err(Into::into)
+}
+
+#[tauri::command]
+fn list_variant_summaries(
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<Vec<VariantSummary>, CommandError> {
+    lock_app(&state)?
+        .list_variant_summaries()
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -1719,64 +1849,63 @@ fn current_ai_activity(
     })
 }
 
-fn provider_config() -> Result<AiProviderConfig, CommandError> {
-    let base_url = development_config_value("BASE_URL").ok_or(CommandError {
+fn provider_config(app: &tauri::AppHandle) -> Result<AiProviderConfig, CommandError> {
+    let settings = resolved_ai_provider_settings(app)?;
+    let base_url = non_empty_config_value(settings.base_url).ok_or(CommandError {
         code: "provider_config_missing",
         message: "BASE_URL is not configured for Microsoft Foundry.".to_owned(),
     })?;
-    if !base_url.to_ascii_lowercase().starts_with("https://") {
+    if !is_https_provider_endpoint(&base_url) {
         return Err(CommandError {
             code: "invalid_provider_base_url",
             message: "Microsoft Foundry BASE_URL must use HTTPS.".to_owned(),
         });
     }
-    let model = development_config_value("AZURE_FOUNDRY_MODEL")
-        .or_else(|| development_config_value("GPT-5.6-SOL"))
-        .ok_or(CommandError {
-            code: "provider_config_missing",
-            message: "AZURE_FOUNDRY_MODEL is not configured for Microsoft Foundry.".to_owned(),
-        })?;
+    let model = non_empty_config_value(settings.model).ok_or(CommandError {
+        code: "provider_config_missing",
+        message: "AZURE_FOUNDRY_MODEL is not configured for Microsoft Foundry.".to_owned(),
+    })?;
     Ok(AiProviderConfig::new(base_url, model))
 }
 
 fn provider_diagnostic_status(
+    app: &tauri::AppHandle,
     credential: ProviderCredentialStatus,
     connected: bool,
-) -> AiProviderDiagnosticStatus {
-    let base_url = development_config_value("BASE_URL");
-    let model = development_config_value("AZURE_FOUNDRY_MODEL")
-        .or_else(|| development_config_value("GPT-5.6-SOL"));
-    provider_diagnostic_status_from_config(credential, connected, base_url, model)
+) -> Result<AiProviderDiagnosticStatus, CommandError> {
+    Ok(provider_diagnostic_status_from_config(
+        credential,
+        connected,
+        resolved_ai_provider_settings(app)?,
+    ))
 }
 
 fn provider_diagnostic_status_from_config(
     credential: ProviderCredentialStatus,
     connected: bool,
-    base_url: Option<String>,
-    model: Option<String>,
+    settings: AiProviderSettings,
 ) -> AiProviderDiagnosticStatus {
+    let base_url = non_empty_config_value(settings.base_url).unwrap_or_default();
+    let model = non_empty_config_value(settings.model).unwrap_or_default();
     let (state, message, can_check_connection) = if !credential.configured {
         (
             "credential_missing",
             "Falta la credencial del proveedor. Configúrala para esta sesión o en el almacén seguro.",
             false,
         )
-    } else if base_url.is_none() {
+    } else if base_url.is_empty() {
         (
             "endpoint_missing",
             "Falta BASE_URL. Configura el endpoint HTTPS de Microsoft Foundry.",
             false,
         )
-    } else if !base_url
-        .as_deref()
-        .is_some_and(|value| value.to_ascii_lowercase().starts_with("https://"))
-    {
+    } else if !is_https_provider_endpoint(&base_url) {
         (
             "endpoint_invalid",
             "BASE_URL debe ser un endpoint HTTPS válido de Microsoft Foundry.",
             false,
         )
-    } else if model.is_none() {
+    } else if model.is_empty() {
         (
             "model_missing",
             "Falta AZURE_FOUNDRY_MODEL. Configura el nombre del modelo o deployment.",
@@ -1801,7 +1930,55 @@ fn provider_diagnostic_status_from_config(
         can_check_connection,
         connected,
         credential,
+        base_url,
+        model,
     }
+}
+
+fn validate_ai_provider_settings(
+    settings: AiProviderSettings,
+) -> Result<AiProviderSettings, CommandError> {
+    let base_url = settings.base_url.trim().trim_end_matches('/').to_owned();
+    if !is_https_provider_endpoint(&base_url) {
+        return Err(CommandError {
+            code: "invalid_provider_base_url",
+            message: "Microsoft Foundry BASE_URL must be a non-empty HTTPS endpoint.".to_owned(),
+        });
+    }
+    let model = settings.model.trim().to_owned();
+    if model.is_empty() {
+        return Err(CommandError {
+            code: "provider_config_missing",
+            message: "Microsoft Foundry model or deployment name cannot be empty.".to_owned(),
+        });
+    }
+    Ok(AiProviderSettings { base_url, model })
+}
+
+fn is_https_provider_endpoint(value: &str) -> bool {
+    let lowercase = value.to_ascii_lowercase();
+    lowercase.strip_prefix("https://").is_some_and(|rest| {
+        let host = rest.split('/').next().unwrap_or_default();
+        !host.is_empty()
+            && !value.chars().any(char::is_whitespace)
+            && !value.contains('?')
+            && !value.contains('#')
+    })
+}
+
+fn resolved_ai_provider_settings(
+    app: &tauri::AppHandle,
+) -> Result<AiProviderSettings, CommandError> {
+    let persisted = read_ai_provider_settings(&ai_provider_settings_path(app)?)?;
+    Ok(AiProviderSettings {
+        base_url: non_empty_config_value(persisted.base_url)
+            .or_else(|| development_config_value("BASE_URL"))
+            .unwrap_or_default(),
+        model: non_empty_config_value(persisted.model)
+            .or_else(|| development_config_value("AZURE_FOUNDRY_MODEL"))
+            .or_else(|| development_config_value("GPT-5.6-SOL"))
+            .unwrap_or_default(),
+    })
 }
 
 fn development_config_value(name: &str) -> Option<String> {
@@ -1818,7 +1995,7 @@ fn development_config_value(name: &str) -> Option<String> {
 }
 
 fn dotenv_paths() -> [PathBuf; 1] {
-    [Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.env")]
+    [Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../.env")]
 }
 
 fn dotenv_value(contents: &str, name: &str) -> Option<String> {
@@ -2021,6 +2198,44 @@ fn recent_projects_path(app: &tauri::AppHandle) -> Result<PathBuf, CommandError>
         })
 }
 
+fn ai_provider_settings_path(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join("ai-provider.json"))
+        .map_err(|error| CommandError {
+            code: "settings_io_error",
+            message: format!("Could not locate AI provider settings: {error}"),
+        })
+}
+
+fn read_ai_provider_settings(path: &Path) -> Result<AiProviderSettings, CommandError> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(AiProviderSettings::default());
+        }
+        Err(error) => return Err(settings_io_error("read", error)),
+    };
+    serde_json::from_str(&contents).map_err(|error| CommandError {
+        code: "settings_format_error",
+        message: format!("AI provider settings could not be read: {error}"),
+    })
+}
+
+fn write_ai_provider_settings(
+    path: &Path,
+    settings: &AiProviderSettings,
+) -> Result<(), CommandError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| settings_io_error("create", error))?;
+    }
+    let contents = serde_json::to_vec_pretty(settings).map_err(|error| CommandError {
+        code: "settings_format_error",
+        message: format!("AI provider settings could not be serialized: {error}"),
+    })?;
+    fs::write(path, contents).map_err(|error| settings_io_error("write", error))
+}
+
 fn read_recent_projects(path: &Path) -> Result<Vec<RecentProject>, CommandError> {
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
@@ -2154,12 +2369,14 @@ fn main() {
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| Ok(desktop_menu::install(app)?))
         .manage(Arc::new(Mutex::new(app)))
         .manage(AiCancellations(Mutex::new(HashMap::new())))
         .invoke_handler(tauri::generate_handler![
             create_world,
             open_world,
             get_current_world,
+            get_project_diagnostics,
             list_recent_projects,
             remember_recent_project,
             remove_recent_project,
@@ -2170,6 +2387,7 @@ fn main() {
             export_vfs_snapshot,
             import_vfs_snapshot,
             create_lore_import,
+            list_lore_imports,
             read_lore_import,
             read_lore_candidates,
             open_lore_chunk,
@@ -2182,11 +2400,13 @@ fn main() {
             get_ai_activity,
             get_provider_credential_status,
             get_ai_provider_status,
+            set_ai_provider_settings,
             diagnose_ai_provider,
             set_provider_api_key,
             clear_provider_api_key,
             execute_ai_query,
             execute_ai_proposal,
+            prepare_ai_proposal_template,
             prepare_deep_review,
             execute_deep_review,
             read_deep_review_run,
@@ -2198,6 +2418,7 @@ fn main() {
             cancel_ai_request,
             preview_manual_draft,
             apply_manual_review_action,
+            list_pending_reviews,
             read_manual_review,
             discard_manual_review,
             begin_manual_review_edit,
@@ -2219,6 +2440,7 @@ fn main() {
             list_timeline_events,
             list_revision_history,
             list_variants,
+            list_variant_summaries,
             create_variant,
             rename_variant,
             switch_variant,
@@ -2228,6 +2450,8 @@ fn main() {
             compare_variant_scopes,
             prepare_variant_merge,
             undo_revision,
+            desktop_menu::set_desktop_menu_state,
+            desktop_menu::exit_application,
             close_world
         ])
         .run(tauri::generate_context!())

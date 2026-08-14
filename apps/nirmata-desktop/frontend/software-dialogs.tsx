@@ -6,9 +6,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { applyAppearanceTheme, readAppearanceTheme } from "./appearance.js";
+import { commandErrorCopy, showCommandError, showSuccess } from "./feedback.js";
 import type { AppearanceTheme } from "./appearance.js";
 import { useSession } from "./session-provider.js";
-import type { AiProviderDiagnosticStatus } from "./types.js";
+import type { AiProviderDiagnosticStatus, ProjectDiagnostics } from "./types.js";
 
 type SoftwareDialog = "settings" | "help" | "about" | null;
 
@@ -23,27 +24,51 @@ function providerSource(status: AiProviderDiagnosticStatus): string {
   }
 }
 
-function SettingsContent() {
+function SettingsContent({ onBackups }: { onBackups: () => void }) {
   const session = useSession();
   const queryClient = useQueryClient();
   const [theme, setTheme] = useState<AppearanceTheme>(readAppearanceTheme);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [providerSettingsError, setProviderSettingsError] = useState("");
   const [credentialError, setCredentialError] = useState("");
   const provider = useQuery({
     queryKey: providerStatusKey,
     queryFn: () => invoke<AiProviderDiagnosticStatus>("get_ai_provider_status"),
     retry: false,
   });
+  const project = useQuery({
+    queryKey: ["project", session?.world_id, "diagnostics"],
+    queryFn: () => invoke<ProjectDiagnostics>("get_project_diagnostics"),
+    enabled: Boolean(session),
+    retry: false,
+  });
   const diagnose = useMutation({
     mutationFn: () => invoke<AiProviderDiagnosticStatus>("diagnose_ai_provider", {
       input: { requestId: crypto.randomUUID() },
     }),
-    onSuccess: (status) => queryClient.setQueryData(providerStatusKey, status),
+    onSuccess: (status) => {
+      queryClient.setQueryData(providerStatusKey, status);
+      showSuccess("Conexión comprobada", status.connected ? "Microsoft Foundry está disponible." : "La configuración todavía requiere atención.");
+    },
+  });
+  const saveProviderSettings = useMutation({
+    mutationFn: (input: { baseUrl: string; model: string }) =>
+      invoke<AiProviderDiagnosticStatus>("set_ai_provider_settings", { input }),
+    onSuccess: (status) => {
+      setProviderSettingsError("");
+      setBaseUrl(status.baseUrl);
+      setModel(status.model);
+      queryClient.setQueryData(providerStatusKey, status);
+      showSuccess("Proveedor guardado", "El endpoint y el modelo quedaron configurados en este equipo.");
+    },
   });
   const saveCredential = useMutation({
     mutationFn: (apiKey: string) => invoke("set_provider_api_key", { apiKey }),
     onSuccess: async () => {
       setCredentialError("");
       await queryClient.invalidateQueries({ queryKey: providerStatusKey });
+      showSuccess("Credencial guardada", "La credencial quedó protegida por el almacenamiento disponible.");
     },
   });
   const clearCredential = useMutation({
@@ -51,10 +76,27 @@ function SettingsContent() {
     onSuccess: async () => {
       setCredentialError("");
       await queryClient.invalidateQueries({ queryKey: providerStatusKey });
+      showSuccess("Credencial eliminada", "Nirmata ya no usará esa credencial.");
     },
   });
 
   useEffect(() => applyAppearanceTheme(theme), [theme]);
+  useEffect(() => {
+    if (!provider.data) return;
+    setBaseUrl(provider.data.baseUrl ?? "");
+    setModel(provider.data.model ?? "");
+  }, [provider.data]);
+
+  function submitProviderSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextBaseUrl = baseUrl.trim();
+    const nextModel = model.trim();
+    if (!nextBaseUrl || !nextModel) {
+      setProviderSettingsError("Escribe el endpoint HTTPS y el nombre del modelo o deployment.");
+      return;
+    }
+    saveProviderSettings.mutate({ baseUrl: nextBaseUrl, model: nextModel });
+  }
 
   function submitCredential(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -67,7 +109,16 @@ function SettingsContent() {
     saveCredential.mutate(apiKey, { onSuccess: () => form.reset() });
   }
 
-  const providerError = provider.error || diagnose.error || saveCredential.error || clearCredential.error;
+  const providerError = provider.error || diagnose.error || saveProviderSettings.error || saveCredential.error || clearCredential.error;
+
+  async function copyValue(label: string, value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      showSuccess(`${label} copiado`, "Ya puedes pegarlo donde lo necesites.");
+    } catch (error) {
+      showCommandError(error, { label: "Reintentar", run: () => copyValue(label, value) });
+    }
+  }
   return (
     <Tabs.Root className="settings-tabs" defaultValue="general" orientation="vertical">
       <Tabs.List className="settings-tab-list" aria-label="Secciones de Settings">
@@ -87,7 +138,7 @@ function SettingsContent() {
         <Tabs.Content value="appearance">
           <h3>Apariencia</h3>
           <label>Tema
-            <select value={theme} onChange={(event) => setTheme(event.target.value as AppearanceTheme)}>
+            <select name="appearance-theme" value={theme} onChange={(event) => setTheme(event.target.value as AppearanceTheme)}>
               <option value="system">Usar el del sistema</option>
               <option value="light">Claro</option>
               <option value="dark">Oscuro</option>
@@ -108,14 +159,43 @@ function SettingsContent() {
                 <div><dt>Credencial</dt><dd>{providerSource(provider.data)}</dd></div>
                 <div><dt>Persistencia</dt><dd>{provider.data.credential.persistence === "system_secure_store" ? "Persistente" : "Solo esta sesión"}</dd></div>
               </dl>
+              <form className="settings-provider-form" onSubmit={submitProviderSettings}>
+                <label>Endpoint de Microsoft Foundry
+                  <input
+                    name="base-url"
+                    type="url"
+                    value={baseUrl}
+                    onChange={(event) => setBaseUrl(event.target.value)}
+                    placeholder="Ej.: https://mi-recurso.services.ai.azure.com"
+                    autoCapitalize="none"
+                    autoComplete="url"
+                    spellCheck={false}
+                  />
+                </label>
+                <label>Modelo o deployment
+                  <input
+                    name="model"
+                    value={model}
+                    onChange={(event) => setModel(event.target.value)}
+                    placeholder="Ej.: gpt-5.6-sol"
+                    autoCapitalize="none"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <button type="submit" disabled={saveProviderSettings.isPending}>
+                  {saveProviderSettings.isPending ? "Guardando…" : "Guardar endpoint y modelo"}
+                </button>
+              </form>
+              {providerSettingsError && <p role="alert" className="creation-error">{providerSettingsError}</p>}
               <button type="button" className="secondary" disabled={!provider.data.canCheckConnection || diagnose.isPending} onClick={() => diagnose.mutate()}>
                 {diagnose.isPending ? "Probando conexión…" : "Probar conexión"}
               </button>
             </div>
           )}
           <form className="settings-credential-form" onSubmit={submitCredential}>
-            <label>Reemplazar credencial
-              <input name="api-key" type="password" autoComplete="off" />
+            <label>Clave API
+              <input name="api-key" type="password" autoComplete="off" placeholder="Ej.: 0123456789abcdef…" />
             </label>
             <div className="dialog-actions">
               <button type="submit" disabled={saveCredential.isPending}>Guardar</button>
@@ -129,12 +209,25 @@ function SettingsContent() {
         <Tabs.Content value="project">
           <h3>Proyecto</h3>
           {session ? (
-            <dl className="settings-facts">
-              <div><dt>Nombre</dt><dd>{session.world.name}</dd></div>
-              <div><dt>Archivo</dt><dd className="path">{session.path}</dd></div>
-              <div><dt>Escribiendo en</dt><dd>{session.active_variant.name}</dd></div>
-              <div><dt>Vista</dt><dd>{session.read_only ? "Versión anterior, solo lectura" : "Versión actual"}</dd></div>
-            </dl>
+            <div className="settings-section-stack">
+              <dl className="settings-facts">
+                <div><dt>Nombre</dt><dd>{session.world.name}</dd></div>
+                <div><dt>Archivo</dt><dd className="copyable-fact"><span className="path">{session.path}</span><button type="button" className="ghost" onClick={() => copyValue("Ruta", session.path)}>Copiar ruta</button></dd></div>
+                <div><dt>Escribiendo en</dt><dd>{session.active_variant.name}</dd></div>
+                <div><dt>Vista</dt><dd>{session.read_only ? "Versión anterior, solo lectura" : "Versión actual"}</dd></div>
+                <div><dt>Schema</dt><dd>{project.data ? `Versión ${project.data.schemaVersion}` : project.isPending ? "Comprobando…" : "No disponible"}</dd></div>
+                <div><dt>Integridad</dt><dd>{project.data?.integrity === "ok" ? <span className="status-chip success">Correcta</span> : "No comprobada"}</dd></div>
+              </dl>
+              {project.error && (
+                <div className="notice warning" role="alert">
+                  <strong>{commandErrorCopy(project.error).title}</strong>
+                  <p>{commandErrorCopy(project.error).detail}</p>
+                  <button type="button" className="secondary" onClick={() => project.refetch()}>Reintentar diagnóstico</button>
+                </div>
+              )}
+              <button type="button" className="secondary" onClick={onBackups}>Abrir backups</button>
+              <p className="muted">El diagnóstico comprueba la estructura e integridad sin exponer consultas SQL.</p>
+            </div>
           ) : <p>Abre un mundo para ver sus datos de proyecto.</p>}
         </Tabs.Content>
         <Tabs.Content value="accessibility">
@@ -145,9 +238,9 @@ function SettingsContent() {
           <h3>Avanzado</h3>
           {session ? (
             <dl className="settings-facts technical-facts">
-              <div><dt>Mundo</dt><dd>{session.world_id}</dd></div>
-              <div><dt>Revisión</dt><dd>{session.current_revision}</dd></div>
-              <div><dt>Variante</dt><dd>{session.active_variant.id}</dd></div>
+              <div><dt>Mundo</dt><dd className="copyable-fact"><span>{session.world_id}</span><button type="button" className="ghost" onClick={() => copyValue("ID del mundo", session.world_id)}>Copiar</button></dd></div>
+              <div><dt>Revisión</dt><dd className="copyable-fact"><span>{session.current_revision}</span><button type="button" className="ghost" onClick={() => copyValue("ID de revisión", session.current_revision)}>Copiar</button></dd></div>
+              <div><dt>Variante</dt><dd className="copyable-fact"><span>{session.active_variant.id}</span><button type="button" className="ghost" onClick={() => copyValue("ID de variante", session.active_variant.id)}>Copiar</button></dd></div>
             </dl>
           ) : <p>Los identificadores técnicos estarán disponibles al abrir un mundo.</p>}
         </Tabs.Content>
@@ -179,7 +272,7 @@ function AboutContent() {
   );
 }
 
-function HelpContent({ onAbout }: { onAbout: () => void }) {
+function HelpContent({ onAbout, onShowOnboarding }: { onAbout: () => void; onShowOnboarding: () => void }) {
   return (
     <div className="help-content">
       <nav className="help-index" aria-label="Temas de ayuda">
@@ -187,6 +280,9 @@ function HelpContent({ onAbout }: { onAbout: () => void }) {
         <a href="#help-ai">Preguntar y proponer</a>
         <a href="#help-versions">Versiones</a>
         <a href="#help-import">Importar</a>
+        <a href="#help-changes">Cambios</a>
+        <a href="#help-tools">Herramientas</a>
+        <a href="#help-privacy">Privacidad</a>
         <a href="#help-shortcuts">Atajos</a>
         <a href="#help-glossary">Glosario</a>
       </nav>
@@ -194,7 +290,7 @@ function HelpContent({ onAbout }: { onAbout: () => void }) {
         <h3>Crear un mundo</h3>
         <p><strong>Manual</strong> crea un proyecto vacío. <strong>Base con IA</strong> prepara contenido revisable. <strong>Material existente</strong> copia texto de forma inerte para extraer candidatos.</p>
       </section>
-      <button type="button" className="secondary" onClick={() => window.dispatchEvent(new CustomEvent("nirmata:show-onboarding"))}>Volver a mostrar la guía del mundo</button>
+      <button type="button" className="secondary" onClick={onShowOnboarding}>Volver a mostrar la guía del mundo</button>
       <section id="help-ai">
         <h3>Preguntar no es modificar</h3>
         <p>Preguntar consulta el canon y muestra fuentes. Proponer cambios prepara un conjunto que puedes revisar, editar, aplicar o descartar. La IA nunca aplica canon por sí sola.</p>
@@ -207,10 +303,25 @@ function HelpContent({ onAbout }: { onAbout: () => void }) {
         <h3>Importar con seguridad</h3>
         <p>Un archivo de lore es una fuente, no canon. Nirmata conserva procedencia, presenta candidatos y exige revisión. Un snapshot es una copia estructurada distinta de Markdown o texto.</p>
       </section>
+      <section id="help-changes">
+        <h3>Cambios y recuperación</h3>
+        <p>Antes y Después explican cada operación. Puedes editar, rechazar, aceptar advertencias con motivo, volver a comprobar y descartar. <strong>Aplicar al mundo</strong> es la única escritura de canon y ocurre en una transacción.</p>
+        <p>Las revisiones pendientes se guardan dentro del proyecto y reaparecen al abrir su variante.</p>
+      </section>
+      <section id="help-tools">
+        <h3>Simulación, narrativa y calendario</h3>
+        <p>Simulación permanece fuera del canon hasta seleccionar resultados. Estudio narrativo deriva historia y prepara documentos revisables. Calendario presenta fechas humanas sin sustituir la unidad temporal autoritativa.</p>
+      </section>
+      <section id="help-privacy">
+        <h3>Privacidad</h3>
+        <p>El canon y las conversaciones locales permanecen en este equipo. La IA es opcional; recibe contexto acotado con solicitud de no almacenamiento, y la credencial nunca vuelve a la interfaz.</p>
+      </section>
       <section id="help-shortcuts">
         <h3>Atajos</h3>
         <dl className="settings-facts">
           <div><dt>Ctrl/Cmd + K</dt><dd>Abrir búsqueda y acciones</dd></div>
+          <div><dt>Ctrl/Cmd + N / O</dt><dd>Crear o abrir un mundo desde el menú</dd></div>
+          <div><dt>F1</dt><dd>Abrir este Centro de ayuda</dd></div>
           <div><dt>Escape</dt><dd>Cerrar diálogo o palette y devolver el foco</dd></div>
           <div><dt>Tab / Shift + Tab</dt><dd>Recorrer controles</dd></div>
         </dl>
@@ -229,10 +340,12 @@ function HelpContent({ onAbout }: { onAbout: () => void }) {
   );
 }
 
-export function SoftwareDialogs({ active, onActiveChange, returnFocus }: {
+export function SoftwareDialogs({ active, onActiveChange, returnFocus, onOpenBackups, onShowOnboarding }: {
   active: SoftwareDialog;
   onActiveChange: (dialog: SoftwareDialog) => void;
   returnFocus?: HTMLElement | null;
+  onOpenBackups: () => void;
+  onShowOnboarding: () => void;
 }) {
   const title = active === "settings" ? "Settings" : active === "help" ? "Centro de ayuda" : "Acerca de Nirmata";
   return (
@@ -262,9 +375,9 @@ export function SoftwareDialogs({ active, onActiveChange, returnFocus }: {
             <Dialog.Close asChild><button type="button" className="ghost" aria-label={`Cerrar ${title}`}>Cerrar</button></Dialog.Close>
           </div>
           {active === "settings"
-            ? <SettingsContent />
+            ? <SettingsContent onBackups={() => { onActiveChange(null); onOpenBackups(); }} />
             : active === "help"
-              ? <HelpContent onAbout={() => onActiveChange("about")} />
+              ? <HelpContent onAbout={() => onActiveChange("about")} onShowOnboarding={onShowOnboarding} />
               : <AboutContent />}
         </Dialog.Content>
       </Dialog.Portal>

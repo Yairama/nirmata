@@ -590,7 +590,8 @@ pub struct ManualReviewSnapshot {
     pub freshness: ManualReviewFreshnessSnapshot,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManualReviewOperation {
     original: ChangeOperation,
     current: ChangeOperation,
@@ -637,7 +638,41 @@ pub struct ManualReviewSession {
     ready_to_confirm: bool,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PersistedManualReviewSession {
+    variant_id: VariantId,
+    original_draft: ChangeSetDraft,
+    operations: Vec<ManualReviewOperation>,
+    decisions: Vec<DecisionPoint>,
+    waivers: Vec<ChangeSetWaiver>,
+}
+
 impl ManualReviewSession {
+    pub(crate) fn persisted(&self) -> PersistedManualReviewSession {
+        PersistedManualReviewSession {
+            variant_id: self.variant_id,
+            original_draft: self.original_draft.clone(),
+            operations: self.operations.clone(),
+            decisions: self.decisions.clone(),
+            waivers: self.waivers.clone(),
+        }
+    }
+
+    pub(crate) fn restore_persisted(
+        persisted: PersistedManualReviewSession,
+        store: &WorldStore,
+    ) -> Result<Self, AppError> {
+        Self::rebuild(
+            persisted.variant_id,
+            persisted.original_draft,
+            persisted.operations,
+            persisted.decisions,
+            persisted.waivers,
+            store,
+        )
+    }
+
     pub(crate) fn create(
         variant_id: VariantId,
         world_id: WorldId,

@@ -89,7 +89,7 @@ fn downgrade_to_schema_seven(path: &Path) {
              ALTER TABLE import_batches DROP COLUMN variant_id;
              CREATE UNIQUE INDEX revisions_linear_parent ON revisions (parent_revision_id)
                  WHERE parent_revision_id IS NOT NULL;
-             UPDATE schema_migrations SET version = 7 WHERE version = 10;
+             UPDATE schema_migrations SET version = 7 WHERE version = 11;
              PRAGMA user_version = 7;",
         )
         .expect("downgrade fixture to schema seven");
@@ -173,6 +173,72 @@ fn creates_schema_and_reopens_same_world() {
     assert_eq!(reopened.load_world().expect("load reopened world"), world);
     drop(reopened);
     fs::remove_file(path).expect("remove test project");
+}
+
+#[test]
+fn pending_reviews_migrate_and_round_trip_by_variant() {
+    let path = project_path("pending-review-round-trip");
+    let world = World::new("Arcadia", "", "First Dawn", 42).expect("world");
+    let store = WorldStore::create(&path, &world).expect("create project");
+    let variant = store.active_variant().expect("active variant");
+    store
+        .upsert_pending_review(
+            "nirmata://world/test-review",
+            variant.id,
+            world.current_revision(),
+            "manual",
+            r#"{"formatVersion":1}"#,
+            50,
+        )
+        .expect("store pending review");
+    drop(store);
+
+    let reopened = WorldStore::open(&path).expect("reopen project");
+    let records = reopened
+        .list_pending_reviews(variant.id)
+        .expect("list pending reviews");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].origin, "manual");
+    assert_eq!(records[0].base_revision_id, world.current_revision());
+    assert_eq!(records[0].payload_json, r#"{"formatVersion":1}"#);
+    assert!(
+        reopened
+            .delete_pending_review(variant.id, &records[0].review_key)
+            .expect("delete pending review")
+    );
+    assert!(
+        reopened
+            .list_pending_reviews(variant.id)
+            .expect("list after delete")
+            .is_empty()
+    );
+    drop(reopened);
+
+    let connection = Connection::open(&path).expect("open schema ten fixture");
+    connection
+        .execute_batch(
+            "DROP TABLE pending_reviews;
+             UPDATE schema_migrations SET version = 10 WHERE version = 11;
+             PRAGMA user_version = 10;",
+        )
+        .expect("downgrade to schema ten");
+    drop(connection);
+    let migrated = WorldStore::open(&path).expect("migrate schema ten");
+    assert_eq!(
+        migrated
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .expect("schema version"),
+        SCHEMA_VERSION
+    );
+    assert!(
+        migrated
+            .list_pending_reviews(variant.id)
+            .expect("new table after migration")
+            .is_empty()
+    );
+    drop(migrated);
+    fs::remove_file(path).expect("remove project");
 }
 
 #[test]
@@ -409,7 +475,7 @@ fn migrates_schema_nine_world_to_optional_calendar_column() {
     connection
         .execute_batch(
             "ALTER TABLE worlds DROP COLUMN calendar_json;
-             UPDATE schema_migrations SET version = 9 WHERE version = 10;
+             UPDATE schema_migrations SET version = 9 WHERE version = 11;
              PRAGMA user_version = 9;",
         )
         .expect("downgrade to schema nine");
@@ -422,7 +488,7 @@ fn migrates_schema_nine_world_to_optional_calendar_column() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 10);
+    assert_eq!(version, SCHEMA_VERSION);
     let calendar_column: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('worlds') WHERE name = 'calendar_json'",

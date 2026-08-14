@@ -14,7 +14,6 @@ export function readAppearanceTheme(): AppearanceTheme {
 
 export function applyAppearanceTheme(theme: AppearanceTheme): void {
   document.documentElement.setAttribute("data-theme", theme);
-  document.querySelector("#closed-root")?.setAttribute("data-theme", theme);
   try {
     localStorage.setItem(storageKey, theme);
   } catch {

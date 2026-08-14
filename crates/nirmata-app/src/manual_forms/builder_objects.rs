@@ -185,24 +185,30 @@ impl<'a> Builder<'a> {
                     let Some((month_name, days)) = line.split_once('|') else {
                         self.issue(
                             "calendar_months",
-                            format!("línea {}: usa nombre|días", index + 1),
+                            format!(
+                                "fila {}: completa el nombre y la cantidad de días",
+                                index + 1
+                            ),
                         );
                         continue;
                     };
                     let Ok(days) = days.trim().parse::<u32>() else {
                         self.issue(
                             "calendar_months",
-                            format!("línea {}: días debe ser entero", index + 1),
+                            format!("fila {}: los días deben ser un número entero", index + 1),
                         );
                         continue;
                     };
                     match CalendarMonth::new(month_name, days) {
                         Ok(month) => months.push(month),
-                        Err(error) => self.issue("calendar_months", error.to_string()),
+                        Err(error) => self.issue("calendar_months", calendar_error_message(&error)),
                     }
                 }
                 if months.is_empty() {
-                    self.issue("calendar_months", "define al menos un mes nombre|días");
+                    self.issue(
+                        "calendar_months",
+                        "define al menos un mes con nombre y cantidad de días",
+                    );
                 }
                 if !self.issues.is_empty() {
                     return None;
@@ -216,7 +222,7 @@ impl<'a> Builder<'a> {
                 ) {
                     Ok(calendar) => Some(calendar),
                     Err(error) => {
-                        self.issue("calendar_mode", error.to_string());
+                        self.issue("calendar_mode", calendar_error_message(&error));
                         None
                     }
                 }

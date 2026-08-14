@@ -1,8 +1,8 @@
 use nirmata_app::{
     AppError, ContextBudget, ContextBundleRequest, ContextIntent, DraftOperationInput,
     EmptySearchClassification, ExportSnapshotInput, ImportSnapshotInput, ManualReviewActionRequest,
-    ManualReviewFreshnessStatus, ManualReviewInput, NirmataApp, RelatedContextRequest,
-    SearchWorldRequest,
+    ManualReviewFreshnessStatus, ManualReviewInput, NirmataApp, PendingReviewOrigin,
+    RelatedContextRequest, SearchWorldRequest,
 };
 use nirmata_core::{
     EntityId, World,
@@ -765,6 +765,15 @@ fn edited_entity_and_document_round_trip_through_review_commit_undo_and_reopen()
                 .value
                 .contains(&ObjectRef::Entity(fixture.disposable.id()).to_string()))
     );
+
+    app.close_world().expect("close pending snapshot review");
+    app.open_world(fixture.project.clone())
+        .expect("reopen pending snapshot review");
+    let pending = app
+        .list_pending_reviews()
+        .expect("recovered snapshot review");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].origin, PendingReviewOrigin::Snapshot);
 
     let rejected_operation = entity_diff.operation_id.clone();
     app.apply_stored_manual_review_action(
