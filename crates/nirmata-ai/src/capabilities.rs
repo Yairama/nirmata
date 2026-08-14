@@ -1,6 +1,6 @@
 use crate::{
-    AiError, AzureFoundryClientInner, RequestOptions, ReqwestTransport, ResponseRequest,
-    ResponseUsage, Transport,
+    AiError, AzureFoundryClientInner, RequestOptions, ReqwestTransport, ResponseJsonSchema,
+    ResponseRequest, ResponseUsage, Transport,
     contracts::{
         AdvisoryResponse, CritiqueReport, DeepSynthesis, ImportExtraction, InternalDocumentDraft,
         SpecialistReport, StructuredOutputError, parse_advisory_response, parse_change_set_draft,
@@ -9,7 +9,9 @@ use crate::{
     },
 };
 use nirmata_core::change_set::ChangeSetDraft;
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{error::Error, fmt};
 
 pub const QUERY_PROMPT_VERSION: &str = "query_v2";
@@ -314,6 +316,7 @@ where
             QUERY_SYSTEM_PROMPT,
             QUERY_PROMPT_VERSION,
             2_048,
+            Some(advisory_response_schema()),
             parse_advisory_response,
             options,
         )
@@ -337,6 +340,7 @@ where
             QUERY_SYSTEM_PROMPT,
             QUERY_PROMPT_VERSION,
             2_048,
+            Some(advisory_response_schema()),
             parse_advisory_response,
             options,
             on_delta,
@@ -359,6 +363,7 @@ where
             PROPOSE_SYSTEM_PROMPT,
             PROPOSE_PROMPT_VERSION,
             4_096,
+            Some(change_set_draft_schema()),
             |raw| parse_change_set_draft(raw).map(|draft| draft.into_inner()),
             options,
         )
@@ -380,6 +385,7 @@ where
             CRITIC_SYSTEM_PROMPT,
             CRITIC_PROMPT_VERSION,
             4_096,
+            None,
             parse_critique_report,
             options,
         )
@@ -401,6 +407,7 @@ where
             SPECIALIST_SYSTEM_PROMPT,
             SPECIALIST_PROMPT_VERSION,
             2_048,
+            None,
             parse_specialist_report,
             options,
         )
@@ -422,6 +429,7 @@ where
             SYNTHESIS_SYSTEM_PROMPT,
             SYNTHESIS_PROMPT_VERSION,
             4_096,
+            None,
             parse_deep_synthesis,
             options,
         )
@@ -443,6 +451,7 @@ where
             IMPORT_EXTRACTION_SYSTEM_PROMPT,
             IMPORT_EXTRACTION_PROMPT_VERSION,
             4_096,
+            None,
             parse_import_extraction,
             options,
         )
@@ -464,6 +473,7 @@ where
             INTERNAL_DOCUMENT_SYSTEM_PROMPT,
             INTERNAL_DOCUMENT_PROMPT_VERSION,
             8_192,
+            None,
             parse_internal_document,
             options,
         )
@@ -477,6 +487,7 @@ where
         system_prompt: &'static str,
         prompt_version: &'static str,
         max_output_tokens: u32,
+        response_schema: Option<ResponseJsonSchema>,
         parse_output: impl FnOnce(&str) -> Result<O, StructuredOutputError>,
         options: RequestOptions,
     ) -> Result<CapabilityInvocation<O>, CapabilityError>
@@ -485,14 +496,14 @@ where
     {
         let user_payload = serde_json::to_string(payload)
             .map_err(|error| CapabilityError::Serialization(error.to_string()))?;
+        let mut request = ResponseRequest::new(self.model.clone(), system_prompt, user_payload)
+            .with_max_output_tokens(max_output_tokens);
+        if let Some(schema) = response_schema {
+            request = request.with_json_schema(schema.name, schema.schema, schema.strict);
+        }
         let response = self
             .client
-            .create_response(
-                &self.api_key,
-                ResponseRequest::new(self.model.clone(), system_prompt, user_payload)
-                    .with_max_output_tokens(max_output_tokens),
-                options,
-            )
+            .create_response(&self.api_key, request, options)
             .await
             .map_err(CapabilityError::Ai)?;
         let metadata = InvocationMetadata {
@@ -517,6 +528,7 @@ where
         system_prompt: &'static str,
         prompt_version: &'static str,
         max_output_tokens: u32,
+        response_schema: Option<ResponseJsonSchema>,
         parse_output: impl FnOnce(&str) -> Result<O, StructuredOutputError>,
         options: RequestOptions,
         on_delta: F,
@@ -527,15 +539,14 @@ where
     {
         let user_payload = serde_json::to_string(payload)
             .map_err(|error| CapabilityError::Serialization(error.to_string()))?;
+        let mut request = ResponseRequest::new(self.model.clone(), system_prompt, user_payload)
+            .with_max_output_tokens(max_output_tokens);
+        if let Some(schema) = response_schema {
+            request = request.with_json_schema(schema.name, schema.schema, schema.strict);
+        }
         let response = self
             .client
-            .stream_response(
-                &self.api_key,
-                ResponseRequest::new(self.model.clone(), system_prompt, user_payload)
-                    .with_max_output_tokens(max_output_tokens),
-                options,
-                on_delta,
-            )
+            .stream_response(&self.api_key, request, options, on_delta)
             .await
             .map_err(CapabilityError::Ai)?;
         let metadata = InvocationMetadata {
@@ -551,6 +562,44 @@ where
         let output =
             parse_output(&response.output_text).map_err(CapabilityError::StructuredOutput)?;
         Ok(CapabilityInvocation { output, metadata })
+    }
+}
+
+fn advisory_response_schema() -> ResponseJsonSchema {
+    generated_response_schema::<AdvisoryResponse>("nirmata_advisory_response_v2", true)
+}
+
+fn change_set_draft_schema() -> ResponseJsonSchema {
+    generated_response_schema::<ChangeSetDraft>("nirmata_change_set_draft_v2", false)
+}
+
+fn generated_response_schema<T: JsonSchema>(name: &str, strict: bool) -> ResponseJsonSchema {
+    let mut schema =
+        serde_json::to_value(schema_for!(T)).expect("schemars schemas must serialize to JSON");
+    remove_provider_unsupported_annotations(&mut schema);
+    ResponseJsonSchema {
+        name: name.to_owned(),
+        schema,
+        strict,
+    }
+}
+
+fn remove_provider_unsupported_annotations(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.remove("$schema");
+            object.remove("title");
+            object.remove("format");
+            for nested in object.values_mut() {
+                remove_provider_unsupported_annotations(nested);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                remove_provider_unsupported_annotations(item);
+            }
+        }
+        _ => {}
     }
 }
 

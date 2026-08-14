@@ -1,4 +1,5 @@
 use crate::calendar::WorldCalendar;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt, str::FromStr};
 use uuid::Uuid;
@@ -10,7 +11,17 @@ pub const MAX_EPOCH_LABEL_CHARS: usize = 200;
 macro_rules! domain_id {
     ($name:ident) => {
         #[derive(
-            Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+            Clone,
+            Copy,
+            Debug,
+            Eq,
+            Hash,
+            Ord,
+            PartialEq,
+            PartialOrd,
+            Serialize,
+            Deserialize,
+            JsonSchema,
         )]
         #[serde(transparent)]
         pub struct $name(Uuid);
@@ -57,7 +68,7 @@ domain_id!(ChangeSetId);
 domain_id!(ChangeOperationId);
 domain_id!(DecisionPointId);
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "String", into = "String")]
 pub struct JsonObject(String);
 
@@ -106,7 +117,7 @@ impl Default for JsonObject {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Period {
     start_tick: Option<i64>,
     end_tick: Option<i64>,
@@ -144,7 +155,7 @@ impl Period {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct World {
     id: WorldId,
     name: String,

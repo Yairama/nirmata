@@ -4,7 +4,9 @@ pub mod contracts;
 mod chat;
 mod runtime;
 
-pub use chat::{RequestOptions, ResponseRequest, ResponseResult, ResponseUsage, StreamDelta};
+pub use chat::{
+    RequestOptions, ResponseJsonSchema, ResponseRequest, ResponseResult, ResponseUsage, StreamDelta,
+};
 pub use runtime::{
     AiError, AzureFoundryClient, CredentialPersistence, CredentialSource, ProviderCredentialStatus,
     ProviderCredentialStore,

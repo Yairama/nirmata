@@ -21,6 +21,8 @@ import { PendingReviews, pendingReviewsQueryKey } from "./pending-reviews.js";
 import { observedScopeQueryKey, useWorkspaceData } from "./workspace-data.js";
 import type { AssistantIntent, ProposalTemplate } from "./assistant-workspace.js";
 import type { DesktopActionRequest } from "./desktop-actions.js";
+import { Icon } from "./icons.js";
+import type { IconName } from "./icons.js";
 
 const AssistantWorkspace = lazy(() => import("./assistant-workspace.js").then((module) => ({ default: module.AssistantWorkspace })));
 const ImportCenter = lazy(() => import("./import-center.js").then((module) => ({ default: module.ImportCenter })));
@@ -28,7 +30,8 @@ const NarrativeWorkspace = lazy(() => import("./narrative-workspace.js").then((m
 const SimulationWorkspace = lazy(() => import("./simulation-workspace.js").then((module) => ({ default: module.SimulationWorkspace })));
 const StructuredEditor = lazy(() => import("./structured-editor.js").then((module) => ({ default: module.StructuredEditor })));
 
-type WorldArea = "home" | "world" | "chronology" | "assistant" | "narrative" | "simulation" | "imports" | "versions";
+type WorldArea = "home" | "world" | "chronology" | "narrative" | "simulation" | "imports" | "versions";
+type NavigationArea = WorldArea | "assistant";
 type WorkspaceRegion = "explorer" | "editor" | "context";
 type WorkspaceSide = "explorer" | "context";
 type WorkspaceLayout = {
@@ -117,20 +120,20 @@ function fitWorkspaceLayout(layout: WorkspaceLayout, containerWidth: number) {
 }
 
 const workspaceRegions: Array<{ id: WorkspaceRegion; label: string; panelId: string }> = [
-  { id: "explorer", label: "Explorador", panelId: "navigation-panel" },
-  { id: "editor", label: "Editor", panelId: "editor-panel" },
+  { id: "explorer", label: "Explorar", panelId: "navigation-panel" },
+  { id: "editor", label: "Editar", panelId: "editor-panel" },
   { id: "context", label: "Contexto", panelId: "context-panel" },
 ];
 
-const areas: Array<{ id: WorldArea; label: string }> = [
-  { id: "home", label: "Inicio" },
-  { id: "world", label: "Mundo" },
-  { id: "chronology", label: "Cronología" },
-  { id: "assistant", label: "Asistente" },
-  { id: "narrative", label: "Estudio narrativo" },
-  { id: "simulation", label: "Simulación" },
-  { id: "imports", label: "Importaciones" },
-  { id: "versions", label: "Versiones" },
+const areas: Array<{ id: NavigationArea; label: string; icon: IconName }> = [
+  { id: "home", label: "Inicio", icon: "home" },
+  { id: "world", label: "Mundo", icon: "globe" },
+  { id: "chronology", label: "Cronología", icon: "clock" },
+  { id: "assistant", label: "Asistente", icon: "sparkles" },
+  { id: "narrative", label: "Estudio narrativo", icon: "book" },
+  { id: "simulation", label: "Simulación", icon: "flask" },
+  { id: "imports", label: "Importaciones", icon: "download" },
+  { id: "versions", label: "Versiones", icon: "history" },
 ];
 
 const createActions: Array<{ kind: SearchObjectKind; label: string }> = [
@@ -143,25 +146,12 @@ const createActions: Array<{ kind: SearchObjectKind; label: string }> = [
   { kind: "document", label: "Crear documento" },
 ];
 
-const onboardingItems = [
-  { id: "premise", label: "Definir la premisa", action: "Editar mundo" },
-  { id: "rules", label: "Registrar una regla fundamental", action: "Crear regla" },
-  { id: "entities", label: "Crear la primera entidad", action: "Crear entidad" },
-  { id: "events", label: "Añadir un acontecimiento", action: "Crear evento" },
-  { id: "query", label: "Hacer la primera consulta", action: "Consultar" },
-  { id: "propose", label: "Preparar la primera propuesta", action: "Proponer" },
-  { id: "applied", label: "Aplicar el primer conjunto de cambios", action: "Se completa desde el historial" },
-] as const;
-
-function readOnboarding(worldId: string, hasPremise: boolean): { completed: string[]; dismissed: boolean } {
+function readOnboarding(worldId: string): { dismissed: boolean } {
   try {
-    const stored = JSON.parse(localStorage.getItem(`nirmata.onboarding.${worldId}`) ?? "{}") as { completed?: string[]; dismissed?: boolean };
-    return {
-      completed: Array.from(new Set([...(stored.completed ?? []), ...(hasPremise ? ["premise"] : [])])),
-      dismissed: Boolean(stored.dismissed),
-    };
+    const stored = JSON.parse(localStorage.getItem(`nirmata.onboarding.${worldId}`) ?? "{}") as { dismissed?: boolean };
+    return { dismissed: Boolean(stored.dismissed) };
   } catch {
-    return { completed: hasPremise ? ["premise"] : [], dismissed: false };
+    return { dismissed: false };
   }
 }
 
@@ -179,7 +169,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
   const mountedAreas = useRef(new Set<WorldArea>(["home"]));
   mountedAreas.current.add(area);
   const [workspaceRegion, setWorkspaceRegion] = useState<WorkspaceRegion>("explorer");
-  const [narrowWorkspace, setNarrowWorkspace] = useState(() => window.matchMedia("(max-width: 920px)").matches);
+  const [narrowWorkspace, setNarrowWorkspace] = useState(() => window.matchMedia("(max-width: 1180px)").matches);
   const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayout>(() => session
     ? readWorkspaceLayout(session.world_id)
     : { ...defaultWorkspaceLayout });
@@ -197,6 +187,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
   } | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [dialog, setDialog] = useState<SoftwareDialog>(null);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<"general" | "ai">("general");
   const [dialogTrigger, setDialogTrigger] = useState<HTMLElement | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -206,12 +197,12 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteTrigger, setPaletteTrigger] = useState<HTMLElement | null>(null);
   const [onboarding, setOnboarding] = useState(() => session
-    ? readOnboarding(session.world_id, Boolean(session.world.premise_md.trim()))
-    : { completed: [] as string[], dismissed: false });
+    ? readOnboarding(session.world_id)
+    : { dismissed: false });
   const areaHeading = useRef<HTMLHeadingElement>(null);
   const initialArea = useRef(true);
   const assistantReturnFocus = useRef<HTMLElement | null>(null);
-  const assistantPreviousArea = useRef<WorldArea>("home");
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const assistantIntentId = useRef(0);
   const [assistantIntent, setAssistantIntent] = useState<AssistantIntent | null>(null);
   const [importIntent, setImportIntent] = useState<{ id: number; tab: "lore" | "snapshot" } | null>(null);
@@ -265,7 +256,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
   }, [area, session]);
 
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 920px)");
+    const media = window.matchMedia("(max-width: 1180px)");
     const sync = () => setNarrowWorkspace(media.matches);
     sync();
     media.addEventListener("change", sync);
@@ -318,7 +309,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
       case "view.simulation": setArea("simulation"); break;
       case "view.imports": setArea("imports"); break;
       case "view.versions": setArea("versions"); break;
-      case "settings.open": setDialog("settings"); break;
+      case "settings.open": setSettingsInitialTab("general"); setDialog("settings"); break;
       case "help.open": setDialog("help"); break;
       case "help.about": setDialog("about"); break;
       case "help.onboarding": showOnboarding(); break;
@@ -327,7 +318,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
 
   useEffect(() => {
     if (!session) return;
-    setOnboarding(readOnboarding(session.world_id, Boolean(session.world.premise_md.trim())));
+    setOnboarding(readOnboarding(session.world_id));
   }, [session]);
 
   useEffect(() => () => document.body.classList.remove("review-drawer-open"), []);
@@ -430,6 +421,8 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
   }
 
   function openDialog(nextDialog: Exclude<SoftwareDialog, null>, trigger: HTMLElement) {
+    trigger.closest("details")?.removeAttribute("open");
+    if (nextDialog === "settings") setSettingsInitialTab("general");
     setDialogTrigger(trigger);
     setDialog(nextDialog);
   }
@@ -508,28 +501,40 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
   }
 
   function openAssistant(mode: "query" | "propose", request = "", template?: ProposalTemplate) {
-    assistantPreviousArea.current = area === "assistant" ? "home" : area;
     assistantReturnFocus.current = document.activeElement as HTMLElement | null;
     assistantIntentId.current += 1;
     setAssistantIntent({ id: assistantIntentId.current, mode, request, template });
-    setArea("assistant");
+    setAssistantOpen(true);
   }
 
   function closeAssistant() {
-    setArea(assistantPreviousArea.current);
+    setAssistantOpen(false);
     window.setTimeout(() => assistantReturnFocus.current?.focus());
   }
 
-  function chooseArea(nextArea: WorldArea, trigger: HTMLElement) {
+  function openAssistantSettings() {
+    setAssistantOpen(false);
+    setSettingsInitialTab("ai");
+    setDialogTrigger(assistantReturnFocus.current);
+    setDialog("settings");
+  }
+
+  function openAssistantReviews() {
+    setAssistantOpen(false);
+    openReviews(null);
+  }
+
+  function chooseArea(nextArea: NavigationArea, trigger: HTMLElement) {
     if (nextArea === "assistant") {
-      assistantPreviousArea.current = area;
+      openAssistant("query");
       assistantReturnFocus.current = trigger;
+      return;
     }
     setArea(nextArea);
   }
 
-  function updateOnboarding(completed: string[], dismissed = onboarding.dismissed) {
-    const next = { completed, dismissed };
+  function updateOnboarding(dismissed: boolean) {
+    const next = { dismissed };
     setOnboarding(next);
     try {
       localStorage.setItem(`nirmata.onboarding.${worldId}`, JSON.stringify(next));
@@ -540,7 +545,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
 
   function showOnboarding() {
     setArea("home");
-    updateOnboarding(onboarding.completed, false);
+    updateOnboarding(false);
     setDialog(null);
   }
 
@@ -558,28 +563,9 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
     }
   }
 
-  function runOnboardingAction(item: typeof onboardingItems[number]) {
-    const completed = onboarding.completed.includes(item.id)
-      ? onboarding.completed
-      : [...onboarding.completed, item.id];
-    if (item.id !== "applied") updateOnboarding(completed);
-    if (item.id === "premise") void configureCalendar();
-    if (item.id === "rules") void startCreate("rule");
-    if (item.id === "entities") void startCreate("entity");
-    if (item.id === "events") void startCreate("event");
-    if (item.id === "query") openAssistant("query");
-    if (item.id === "propose") openAssistant("propose");
-  }
-
   const currentArea = areas.find((item) => item.id === area)!;
-  const firstChangeApplied = (revisionHistory.data?.revisions ?? [])
-    .some((revision) => revision.operations.length > 0);
-  const onboardingCompleted = Array.from(new Set([
-    ...onboarding.completed,
-    ...(firstChangeApplied ? ["applied"] : []),
-  ]));
   const paletteActions: PaletteAction[] = [
-    ...areas.map((item): PaletteAction => ({ id: `area-${item.id}`, label: `Ir a ${item.label}`, group: "Navegar", keywords: [item.label], run: () => setArea(item.id) })),
+    ...areas.filter((item) => item.id !== "assistant").map((item): PaletteAction => ({ id: `area-${item.id}`, label: `Ir a ${item.label}`, group: "Navegar", keywords: [item.label], run: () => setArea(item.id as WorldArea) })),
     { id: "search", label: "Buscar en el canon", group: "Trabajar", keywords: ["objeto", "nombre", "alias"], run: openSearch },
     { id: "ask", label: "Preguntar al asistente", group: "Trabajar", run: () => openAssistant("query") },
     { id: "propose", label: session.read_only ? "Proponer cambios (solo lectura)" : "Proponer cambios", group: "Trabajar", disabled: session.read_only, run: () => openAssistant("propose") },
@@ -616,7 +602,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
       keywords: ["historia", "solo lectura"],
       run: () => void viewRevision(revision.revisionId),
     })),
-    { id: "settings", label: "Abrir Settings", group: "Aplicación", run: () => setDialog("settings") },
+    { id: "settings", label: "Abrir Ajustes", group: "Aplicación", run: () => { setSettingsInitialTab("general"); setDialog("settings"); } },
     { id: "help", label: "Abrir Centro de ayuda", group: "Aplicación", run: () => setDialog("help") },
     { id: "close", label: "Cerrar mundo", group: "Aplicación", run: onClose },
   ];
@@ -639,54 +625,49 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
         </dl>
         {session.read_only && <span className="read-only-chip">Solo lectura</span>}
         <div className="open-shell-actions">
-          <button type="button" className="topbar-search" onClick={(event) => openPalette(event.currentTarget)}>Buscar <kbd>Ctrl K</kbd></button>
-          <button type="button" className="ghost" aria-expanded={reviewOpen} onClick={(event) => openReviews(event.currentTarget)}>Cambios <span className="count-badge" aria-label={`${pendingCount} cambios pendientes`}>{pendingCount}</span></button>
-          <button type="button" className="ghost" disabled={session.read_only} title={session.read_only ? "El calendario histórico es de solo lectura." : "Editar el calendario del mundo actual"} onClick={configureCalendar}>Calendario</button>
-          <button type="button" className="ghost" onClick={(event) => openDialog("settings", event.currentTarget)}>Settings</button>
-          <button type="button" className="ghost" onClick={(event) => openDialog("help", event.currentTarget)}>Ayuda</button>
-          <button type="button" className="ghost" onClick={onClose}>Cerrar</button>
+          <button type="button" className="topbar-search" onClick={(event) => openPalette(event.currentTarget)}><Icon name="search" /> <span>Buscar</span> <kbd>Ctrl K</kbd></button>
+          <button type="button" className="ghost topbar-changes" aria-label={`Cambios ${pendingCount} cambios pendientes`} aria-expanded={reviewOpen} onClick={(event) => openReviews(event.currentTarget)}><Icon name="layers" /> <span>Cambios</span> <span className="count-badge" aria-hidden="true">{pendingCount}</span></button>
+          <details className="topbar-more">
+            <summary aria-label="Más acciones" title="Más acciones"><Icon name="more" /><span className="sr-only">Más</span></summary>
+            <div>
+              <button type="button" className="ghost" disabled={session.read_only} title={session.read_only ? "El calendario histórico es de solo lectura." : "Editar el calendario del mundo actual"} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void configureCalendar(); }}>Editar calendario</button>
+              <button type="button" className="ghost" onClick={(event) => openDialog("settings", event.currentTarget)}>Ajustes</button>
+              <button type="button" className="ghost" onClick={(event) => openDialog("help", event.currentTarget)}>Ayuda</button>
+              <button type="button" className="ghost" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onClose(); }}>Cerrar mundo</button>
+            </div>
+          </details>
         </div>
       </header>
       <nav className="open-shell-sidebar" aria-label="Áreas del mundo">
         <button type="button" className="sidebar-collapse ghost" aria-expanded={!collapsed} aria-label={collapsed ? "Expandir navegación" : "Contraer navegación"} onClick={() => setCollapsed((value) => !value)}>
-          {collapsed ? ">" : "<"}
+          <Icon name={collapsed ? "chevron-right" : "chevron-left"} />
         </button>
         {areas.map((item) => (
-          <button key={item.id} type="button" aria-current={item.id === area ? "page" : undefined} aria-label={collapsed ? item.label : undefined} title={item.label} onClick={(event) => chooseArea(item.id, event.currentTarget)}>
-            <span className="area-mark" aria-hidden="true">{item.label.slice(0, 1)}</span>
+          <button key={item.id} type="button" aria-current={item.id === "assistant" ? assistantOpen ? "page" : undefined : item.id === area ? "page" : undefined} aria-label={collapsed ? item.label : undefined} title={item.label} onClick={(event) => chooseArea(item.id, event.currentTarget)}>
+            <span className="area-mark" aria-hidden="true"><Icon name={item.icon} /></span>
             <span className="area-label">{item.label}</span>
           </button>
         ))}
-        <button type="button" title="Settings" onClick={(event) => openDialog("settings", event.currentTarget)}>
-          <span className="area-mark" aria-hidden="true">S</span>
-          <span className="area-label">Settings</span>
-        </button>
       </nav>
       <section className="open-world-home" hidden={area !== "home"} aria-labelledby="world-home-title">
         <p className="panel-eyebrow">Inicio del mundo</p>
         <h1 id="world-home-title" ref={areaHeading} tabIndex={-1}>{session.world.name}</h1>
-        <p className="world-home-premise">{session.world.premise_md || "Este mundo todavía no tiene una premisa. Empieza por definir sus compromisos fundamentales."}</p>
+        <p className="world-home-premise">{session.world.premise_md
+          ? session.world.premise_md.replace(/[*_`#>~]+/gu, "").replace(/\s+/gu, " ").trim()
+          : "Este mundo todavía no tiene una premisa. Define en una frase qué lo hace único."}</p>
         <div className="world-home-actions">
-          <button type="button" onClick={() => setArea("world")}>Explorar el mundo</button>
-          <button type="button" className="secondary" onClick={openSearch}>Buscar en el canon</button>
-          <button type="button" className="ghost" onClick={() => setArea("imports")}>Importar material</button>
+          <button type="button" onClick={() => setArea("world")}>Abrir Mundo</button>
+          <button type="button" className="secondary" disabled={session.read_only} onClick={() => void startCreate("entity")}>Crear entidad</button>
+          <button type="button" className="secondary" disabled={session.read_only} onClick={() => void startCreate("event")}>Crear evento</button>
+          <button type="button" className="ghost" onClick={() => openAssistant("query")}>Preguntar</button>
         </div>
         {!onboarding.dismissed && (
           <section className="world-home-guide" aria-labelledby="world-guide-title">
             <div className="world-guide-heading">
-              <div><p className="panel-eyebrow">Guía local · no es canon</p><h2 id="world-guide-title">Construye una base coherente</h2></div>
-              <button type="button" className="ghost" onClick={() => updateOnboarding(onboarding.completed, true)}>Ocultar guía</button>
+              <div><p className="panel-eyebrow">Flujo básico</p><h2 id="world-guide-title">Tú decides qué entra al mundo</h2></div>
+              <button type="button" className="ghost" onClick={() => updateOnboarding(true)}>Ocultar guía</button>
             </div>
-            <p>{onboardingCompleted.length} de {onboardingItems.length} pasos completados. El último se verifica desde el historial editorial.</p>
-            <ol className="onboarding-list">
-              {onboardingItems.map((item) => (
-                <li key={item.id}>
-                  <span className="onboarding-step-status" aria-label={onboardingCompleted.includes(item.id) ? "Completado" : "Pendiente"}>{onboardingCompleted.includes(item.id) ? "Hecho" : "Pendiente"}</span>
-                  <span>{item.label}</span>
-                  <button type="button" className="ghost" disabled={item.id === "applied" || session.read_only} onClick={() => runOnboardingAction(item)}>{item.action}</button>
-                </li>
-              ))}
-            </ol>
+            <p>Edita o crea, prepara una propuesta, revísala en <strong>Cambios</strong> y usa <strong>Aplicar al mundo</strong> solo cuando estés conforme.</p>
           </section>
         )}
       </section>
@@ -695,7 +676,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
         {area === "versions" && <VersionsWorkspace />}
         {mountedAreas.current.has("simulation") && <SimulationWorkspace active={area === "simulation"} onOpenReviews={() => openReviews(null)} />}
         {mountedAreas.current.has("narrative") && <NarrativeWorkspace active={area === "narrative"} onOpen={(uri, scope) => void openNarrativeObject(uri, scope)} onOpenReviews={() => openReviews(null)} onPendingReviewsChanged={() => void queryClient.invalidateQueries({ queryKey: pendingReviewsQueryKey(session) })} />}
-        {mountedAreas.current.has("assistant") && <AssistantWorkspace active={area === "assistant"} intent={assistantIntent} onClose={closeAssistant} />}
+        {assistantIntent && <AssistantWorkspace active={assistantOpen} intent={assistantIntent} onClose={closeAssistant} onOpenSettings={openAssistantSettings} onOpenReviews={openAssistantReviews} />}
       </Suspense>
       <PendingReviews
         open={reviewOpen}
@@ -799,7 +780,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
                   aria-label={workspaceLayout.explorerCollapsed ? "Restaurar Explorador" : "Colapsar Explorador"}
                   title={workspaceLayout.explorerCollapsed ? "Restaurar Explorador" : "Colapsar Explorador"}
                   onClick={() => toggleWorkspacePanel("explorer")}
-                >{workspaceLayout.explorerCollapsed ? ">" : "<"}</button>
+                ><Icon name={workspaceLayout.explorerCollapsed ? "chevron-right" : "chevron-left"} /></button>
               </div>
               <div className="workspace-splitter workspace-splitter-context">
                 <div
@@ -826,7 +807,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
                   aria-label={workspaceLayout.contextCollapsed ? "Restaurar Contexto" : "Colapsar Contexto"}
                   title={workspaceLayout.contextCollapsed ? "Restaurar Contexto" : "Colapsar Contexto"}
                   onClick={() => toggleWorkspacePanel("context")}
-                >{workspaceLayout.contextCollapsed ? "<" : ">"}</button>
+                ><Icon name={workspaceLayout.contextCollapsed ? "chevron-left" : "chevron-right"} /></button>
               </div>
             </>
           )}
@@ -848,7 +829,7 @@ export function WorldShell({ desktopAction, handoff, onHandoffHandled, aiActivit
         searchError={paletteResults.isError}
         onSelectResult={openPaletteResult}
       />
-      <SoftwareDialogs active={dialog} onActiveChange={setDialog} returnFocus={dialogTrigger} onOpenBackups={openBackups} onShowOnboarding={showOnboarding} />
+      <SoftwareDialogs active={dialog} onActiveChange={setDialog} returnFocus={dialogTrigger} onOpenBackups={openBackups} onShowOnboarding={showOnboarding} settingsInitialTab={settingsInitialTab} />
       <Dialog.Root open={confirmation !== null} onOpenChange={(open) => {
         if (!open && confirmation) {
           confirmation.resolve(false);

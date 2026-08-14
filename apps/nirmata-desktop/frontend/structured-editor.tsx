@@ -1,9 +1,11 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useFieldArray, useForm, useWatch } from "react-hook-form";
 import type { Control, UseFormRegister, UseFormSetValue } from "react-hook-form";
-import { humanize, objectKindFromUri, pathForUri, setStatus } from "./helpers.js";
+import { requestConfirmation } from "./confirmation.js";
+import { humanize, objectKindFromUri, pathForUri, setStatus, showError } from "./helpers.js";
 import { buildSelectionEditor } from "./editor-model.js";
 import { useObjectPicker } from "./object-picker.js";
 import { useSession } from "./session-provider.js";
@@ -15,6 +17,7 @@ import {
 import type {
   EditorField,
   ManualDraftRequest,
+  ManualReviewSnapshot,
   ObjectKind,
   SearchObjectKind,
   SearchResult,
@@ -26,6 +29,7 @@ import {
   selectUri,
 } from "./workspace.js";
 import { observedScopeQueryKey, openUriQuery, useWorkspaceData } from "./workspace-data.js";
+import { Icon } from "./icons.js";
 
 type NamedReference = { uri: string; label: string };
 type EditorForm = {
@@ -129,7 +133,7 @@ const specialFields = new Set([
 ]);
 
 const advancedFields = new Set([
-  "attributes_json", "metadata_json", "parameters_json", "valid_from_tick", "valid_to_tick",
+  "slug", "attributes_json", "metadata_json", "parameters_json", "valid_from_tick", "valid_to_tick",
   "start_tick", "end_tick", "calendar_epoch_tick", "calendar_ticks_per_day",
   "period_start_tick", "period_end_tick", "validator_kind", "holder_confidence",
 ]);
@@ -273,6 +277,7 @@ export function StructuredEditor({ onPendingReviewsChanged, onStartProposal }: {
   const documentReferences = useFieldArray({ control, name: "documentReferences" });
   const sources = useFieldArray({ control, name: "sources" });
   const previousEditor = useRef(editor);
+  const [preparingDeletion, setPreparingDeletion] = useState(false);
   const issueSignature = editor?.issues.map((issue) => `${issue.field}:${issue.message}`).join("|") ?? "";
 
   useEffect(() => {
@@ -360,7 +365,43 @@ export function StructuredEditor({ onPendingReviewsChanged, onStartProposal }: {
   }
 
   async function submit(data: EditorForm) {
-    if (await saveCurrentDraft(requestFromForm(editor!, data))) onPendingReviewsChanged?.();
+    const request = requestFromForm(editor!, data);
+    if (editor!.mode === "create" && editor!.objectType === "entity" && !request.values.slug?.trim()) {
+      request.values.slug = request.values.name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/gu, "")
+        .toLocaleLowerCase("es")
+        .replace(/[^a-z0-9]+/gu, "-")
+        .replace(/^-|-$/gu, "");
+    }
+    if (await saveCurrentDraft(request)) onPendingReviewsChanged?.();
+  }
+
+  async function prepareDeletion() {
+    if (!editor?.existingUri || editor.objectType !== "entity" || preparingDeletion) return;
+    const accepted = await requestConfirmation({
+      title: `Preparar eliminación de ${editor.title}`,
+      detail: "Se creará una propuesta en Cambios. El canon no cambiará todavía y las referencias existentes impedirán aplicarla hasta que se resuelvan.",
+      confirmLabel: "Preparar eliminación",
+      danger: true,
+    });
+    if (!accepted) return;
+    setPreparingDeletion(true);
+    try {
+      const entityId = editor.existingUri.slice(editor.existingUri.lastIndexOf("/") + 1);
+      await invoke<ManualReviewSnapshot>("prepare_entity_deletion", { input: { entityId } });
+      appActions.setWorkspaceNotice({
+        kind: "info",
+        title: "Eliminación preparada",
+        detail: "Revisa dependencias, registra tu decisión y aplica la propuesta desde Cambios.",
+      });
+      onPendingReviewsChanged?.();
+      setStatus(`Eliminación de ${editor.title} preparada en Cambios.`);
+    } catch (value) {
+      showError(value);
+    } finally {
+      setPreparingDeletion(false);
+    }
   }
 
   return (
@@ -372,10 +413,12 @@ export function StructuredEditor({ onPendingReviewsChanged, onStartProposal }: {
       <div className="panel-body">
         <form className="editor-layout" onSubmit={handleSubmit(submit)}>
           {state.workspaceNotice && <section className={`notice ${state.workspaceNotice.kind}`}><h4>{state.workspaceNotice.title}</h4><p>{state.workspaceNotice.detail}</p></section>}
-          {workspaceData.selectedUri === editor.existingUri && (
-            <section className="editor-section"><h4>Acciones</h4><div className="editor-toolbar"><button type="button" className="secondary" disabled={Boolean(session?.read_only)} onClick={() => onStartProposal?.(`Propón un cambio acotado sobre ${editor.title}: `)}>Pedir un cambio sobre la selección</button></div></section>
+          {editor.mode === "update" && workspaceData.selectedUri === editor.existingUri && (
+            <div className="editor-toolbar">
+              <button type="button" className="secondary" disabled={Boolean(session?.read_only)} onClick={() => onStartProposal?.(`Propón un cambio acotado sobre ${editor.title}: `)}>Proponer con IA</button>
+              {editor.objectType === "entity" && <button type="button" className="danger-outline" disabled={Boolean(session?.read_only || preparingDeletion)} onClick={() => void prepareDeletion()}>{preparingDeletion ? "Preparando…" : "Eliminar del canon"}</button>}
+            </div>
           )}
-          <section className="editor-section"><h4>Lectura activa</h4><p>{editor.description}</p>{editor.logicalPath && <p className="path muted">{editor.logicalPath}</p>}</section>
           <fieldset disabled={Boolean(session?.read_only || formState.isSubmitting)} className="editor-form-fieldset">
             <section className="editor-section">
               <h4>Formulario</h4>
@@ -414,6 +457,7 @@ export function StructuredEditor({ onPendingReviewsChanged, onStartProposal }: {
               </div>
             </section>
           </fieldset>
+          {editor.mode === "update" && <details className="editor-section editor-reading"><summary>Información del objeto</summary><p>{editor.description}</p>{editor.logicalPath && <p className="path muted">{editor.logicalPath}</p>}</details>}
           <details className="editor-section editor-technical-details">
             <summary>Detalles técnicos</summary>
             <dl className="meta-list">{editor.metadata.map((item) => <div className="meta-row" key={item.label}><dt>{item.label}</dt><dd>{item.uri ? <button type="button" className="meta-link" onClick={() => void selectUri(item.uri!)}>{item.value}</button> : item.value}</dd></div>)}</dl>
@@ -597,7 +641,7 @@ function TechnicalReference({ name, label, register }: { name: `participants.${n
 }
 
 function RowActions({ noun, index, count, actions }: { noun: string; index: number; count: number; actions: ArrayActions }) {
-  return <div className="calendar-row-actions"><button type="button" className="secondary" aria-label={`Subir ${noun} ${index + 1}`} disabled={index === 0} onClick={() => actions.move(index, index - 1)}>↑</button><button type="button" className="secondary" aria-label={`Bajar ${noun} ${index + 1}`} disabled={index === count - 1} onClick={() => actions.move(index, index + 1)}>↓</button><button type="button" className="ghost" aria-label={`Quitar ${noun} ${index + 1}`} onClick={() => actions.remove(index)}>Quitar</button></div>;
+  return <div className="calendar-row-actions"><button type="button" className="icon-button" aria-label={`Subir ${noun} ${index + 1}`} title={`Subir ${noun}`} disabled={index === 0} onClick={() => actions.move(index, index - 1)}><Icon name="arrow-up" /></button><button type="button" className="icon-button" aria-label={`Bajar ${noun} ${index + 1}`} title={`Bajar ${noun}`} disabled={index === count - 1} onClick={() => actions.move(index, index + 1)}><Icon name="arrow-down" /></button><button type="button" className="icon-button danger-icon" aria-label={`Quitar ${noun} ${index + 1}`} title={`Quitar ${noun}`} onClick={() => actions.remove(index)}><Icon name="trash" /></button></div>;
 }
 
 function ReferenceName({ uri, fallback }: { uri: string; fallback: string }) {

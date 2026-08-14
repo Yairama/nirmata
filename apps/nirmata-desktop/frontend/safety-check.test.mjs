@@ -27,6 +27,7 @@ const closedViewSource = await readFile(new URL("closed-view.tsx", frontendDirec
 const mainSource = await readFile(new URL("main.tsx", frontendDirectory), "utf8");
 const worldShellSource = await readFile(new URL("world-shell.tsx", frontendDirectory), "utf8");
 const workspaceDataSource = await readFile(new URL("workspace-data.tsx", frontendDirectory), "utf8");
+const softwareDialogsSource = await readFile(new URL("software-dialogs.tsx", frontendDirectory), "utf8");
 
 test("hidden application views stay out of layout and accessibility flow", () => {
   assert.match(cssSource, /\[hidden\]\s*\{\s*display:\s*none\s*!important;/u);
@@ -119,7 +120,7 @@ test("hostile Markdown stays in plain text mode", () => {
   assert.match(assistantSource, /title=\{evidence\.excerptMd\}/u);
   assert.match(frontendSource, /<pre className="lore-preview">\{source\.preview\}<\/pre>/u);
   assert.match(frontendSource, /setOpenedExcerpt\(location\.chunk\.content\)/u);
-  assert.match(assistantSource, /\{humanize\(issue\.severity\)\}: \{issue\.summary\.markdown\}/u);
+  assert.match(pendingSource, /Crítica final/u);
   assert.doesNotMatch(frontendSource, /\binnerHTML\b/u);
   assert.doesNotMatch(frontendSource, /\bdangerouslySetInnerHTML\b/u);
   assert.doesNotMatch(frontendSource, /\binsertAdjacentHTML\b/u);
@@ -193,7 +194,7 @@ test("queries and selected objects enter the same explicit proposal workflow", (
   assert.match(assistantSource, /runId: run\.id/u);
   assert.doesNotMatch(assistantSource, /execute_ai_proposal_from_brief[\s\S]{0,500}anchorUri/u);
   assert.doesNotMatch(assistantSource, /window\.confirm\(/u);
-  assert.match(frontendSource, /Pedir un cambio sobre la selección/u);
+  assert.match(frontendSource, /Proponer con IA/u);
   assert.equal((assistantSource.match(/"execute_ai_proposal"/gu) ?? []).length, 1);
 });
 
@@ -221,11 +222,11 @@ test("empty states offer actions without auto-running editors or AI", () => {
   assert.match(frontendSource, /El mundo todavía no tiene objetos/u);
   assert.match(frontendSource, /La cronología todavía no tiene acontecimientos/u);
   assert.match(frontendSource, /Crear cambio manual/u);
-  assert.match(frontendSource, /Ejemplos para empezar/u);
+  assert.match(assistantSource, /Usar ejemplo/u);
 });
 
 test("advanced AI profiles keep authority and costs explicit", () => {
-  assert.match(assistantSource, /Perfiles avanzados/u);
+  assert.match(assistantSource, /Más opciones/u);
   assert.match(assistantSource, /Auditoría del canon/u);
   assert.match(assistantSource, /solo lectura y no crea propuestas/u);
   assert.match(assistantSource, /Resultado orientativo · solo lectura\. No se creó ninguna propuesta\./u);
@@ -235,7 +236,8 @@ test("advanced AI profiles keep authority and costs explicit", () => {
 });
 
 test("assistant conversations stay local and pass structured bounded history", () => {
-  assert.match(assistantSource, /Historial guardado en este equipo · no es canon/u);
+  assert.match(assistantSource, /Historial de conversaciones/u);
+  assert.match(assistantSource, /Se guarda solo en este equipo y no forma parte del canon/u);
   assert.match(assistantSource, /nirmata\.assistant\.conversations\./u);
   assert.match(assistantSource, /conversation\.turns\.slice\(-8\)/u);
   assert.match(assistantSource, /history: conversationHistory\(conversation\)/u);
@@ -260,18 +262,28 @@ test("provider diagnostics distinguish local configuration from connectivity", (
   assert.match(tauriSource, /model_missing/u);
   assert.match(tauriSource, /connection_unchecked/u);
   assert.match(tauriSource, /fn diagnose_ai_provider/u);
-  assert.match(assistantSource, /"provider_transport_error"/u);
-  assert.match(assistantSource, /No se creó ninguna propuesta/u);
+  assert.match(softwareDialogsSource, /"diagnose_ai_provider"/u);
+  assert.doesNotMatch(assistantSource, /"diagnose_ai_provider"|set_provider_api_key|clear_provider_api_key/u);
+  assert.match(assistantSource, /Abrir Ajustes de IA/u);
 });
 
 test("React exclusively owns the assistant without imperative DOM or a compatibility shim", () => {
   assert.ok(!sourceNames.includes("assistant.ts"));
-  assert.match(worldShellSource, /<AssistantWorkspace active=\{area === "assistant"\}/u);
+  assert.match(worldShellSource, /<AssistantWorkspace active=\{assistantOpen\}/u);
+  assert.doesNotMatch(worldShellSource, /type WorldArea = [^;]*"assistant"/u);
   assert.doesNotMatch(htmlSource, /id="assistant-panel"|id="assistant-input"/u);
   assert.doesNotMatch(mainSource, /assistant\.js/u);
   assert.doesNotMatch(assistantSource, /createElement|querySelector|innerHTML|dangerouslySetInnerHTML|\bprompt\s*\(|\bconfirm\s*\(/u);
   assert.doesNotMatch(frontendSource, /nirmata:start-template|nirmata:ai-review-attached/u);
   assert.doesNotMatch(frontendSource, /nirmata:start-proposal|nirmata:ai-provider-changed/u);
+});
+
+test("entity deletion enters durable review instead of a direct write path", () => {
+  assert.match(tauriSource, /fn prepare_entity_deletion/u);
+  assert.match(frontendSource, /"prepare_entity_deletion"/u);
+  assert.match(frontendSource, /Eliminar del canon/u);
+  assert.doesNotMatch(tauriSource, /fn delete_entity\s*\(/u);
+  assert.doesNotMatch(frontendSource, /invoke\([^\n]*"delete_entity"/u);
 });
 
 test("foundation workflows are wired to specific Tauri commands", () => {

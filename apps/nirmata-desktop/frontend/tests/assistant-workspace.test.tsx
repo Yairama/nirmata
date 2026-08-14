@@ -81,7 +81,7 @@ function runWithBrief(): AiRunSnapshot {
 
 function renderAssistant(intent: { id: number; mode: "query" | "propose"; template?: "city" } | null = null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><AssistantWorkspace active intent={intent} onClose={vi.fn()} /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><AssistantWorkspace active intent={intent} onClose={vi.fn()} onOpenSettings={vi.fn()} onOpenReviews={vi.fn()} /></QueryClientProvider>);
 }
 
 describe("AssistantWorkspace", () => {
@@ -107,34 +107,35 @@ describe("AssistantWorkspace", () => {
 
   afterEach(cleanup);
 
-  test("switches query, proposal, deep review and audit modes without executing them", async () => {
+  test("separates the two primary tasks from advanced analysis", async () => {
     const user = userEvent.setup();
     renderAssistant();
-    await screen.findByText("Conexión verificada.");
+    const query = await screen.findByRole("tab", { name: "Preguntar" });
+    expect(query.getAttribute("aria-selected")).toBe("true");
 
-    await user.click(screen.getByRole("button", { name: "Proponer cambios" }));
-    expect(screen.getByRole("button", { name: "Proponer cambios" }).getAttribute("aria-pressed")).toBe("true");
-    await user.click(screen.getByText("Perfiles avanzados"));
+    await user.click(screen.getByRole("tab", { name: "Proponer un cambio" }));
+    expect(screen.getByRole("tab", { name: "Proponer un cambio" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: "Preparar propuesta" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Enviar pregunta" })).toBeNull();
+    await user.click(screen.getByText("Más opciones"));
     await user.click(screen.getByRole("button", { name: /Revisión profunda/u }));
-    expect(screen.getByRole("button", { name: /Revisión profunda/u }).getAttribute("aria-pressed")).toBe("true");
-    await user.click(screen.getByRole("button", { name: /Auditoría del canon/u }));
-    expect(screen.getByRole("button", { name: /Auditoría del canon/u }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("textbox", { name: "Qué quieres analizar" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Preparar revisión profunda" }).hasAttribute("disabled")).toBe(true);
     expect(mocks.invoke.mock.calls.some(([command]) => command === "execute_deep_review")).toBe(false);
   });
 
   test("keeps local turns and sends only prior bounded conversation history", async () => {
     const user = userEvent.setup();
     renderAssistant();
-    await screen.findByText("Conexión verificada.");
-    const request = screen.getByRole("textbox", { name: "Solicitud" });
+    const request = await screen.findByRole("textbox", { name: "Tu pregunta" });
 
     await user.type(request, "Primera pregunta");
-    await user.click(screen.getAllByRole("button", { name: "Consultar" }).at(-1)!);
+    await user.click(screen.getByRole("button", { name: "Enviar pregunta" }));
     await screen.findByText("Respuesta segura <img onerror=alert(1)>");
     expect(document.getElementsByTagName("img")).toHaveLength(0);
     await user.clear(request);
     await user.type(request, "Segunda pregunta");
-    await user.click(screen.getAllByRole("button", { name: "Consultar" }).at(-1)!);
+    await user.click(screen.getByRole("button", { name: "Enviar pregunta" }));
     await waitFor(() => expect(mocks.invoke.mock.calls.filter(([command]) => command === "execute_ai_query")).toHaveLength(2));
 
     const second = mocks.invoke.mock.calls.filter(([command]) => command === "execute_ai_query")[1][1];
@@ -173,9 +174,8 @@ describe("AssistantWorkspace", () => {
       throw new Error(command);
     });
     renderAssistant();
-    await screen.findByText("Conexión verificada.");
-    await user.type(screen.getByRole("textbox", { name: "Solicitud" }), "Consulta larga");
-    await user.click(screen.getAllByRole("button", { name: "Consultar" }).at(-1)!);
+    await user.type(await screen.findByRole("textbox", { name: "Tu pregunta" }), "Consulta larga");
+    await user.click(screen.getByRole("button", { name: "Enviar pregunta" }));
     await user.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(mocks.invoke).toHaveBeenCalledWith("cancel_ai_request", { requestId: expect.any(String) });
     finish({ request: "", snapshot: { worldId: "world-1", baseRevision: "revision-1", readScope: session.read_scope }, items: [], proposalAction: null });

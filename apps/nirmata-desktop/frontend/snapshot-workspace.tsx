@@ -58,7 +58,7 @@ export function SnapshotWorkspace({ onOpenReviews }: { onOpenReviews: () => void
       });
       await queryClient.invalidateQueries({ queryKey: pendingReviewsQueryKey(session!) });
       setImported(result);
-      showSuccess("Snapshot preparado", "Revisa el resumen y abre Cambios para decidir cada operación.");
+      showSuccess("Copia preparada", "Revisa el resumen y abre Cambios para decidir cada operación.");
     } catch (error) {
       showCommandError(error, { label: "Reintentar", run: () => importFrom(snapshotDirectory) });
     } finally {
@@ -71,18 +71,18 @@ export function SnapshotWorkspace({ onOpenReviews }: { onOpenReviews: () => void
       const selected = await dialog.open({ multiple: false, directory: true });
       if (typeof selected === "string") await importFrom(selected);
     } catch (error) {
-      showCommandError(error, { label: "Elegir snapshot", run: chooseImportDirectory });
+      showCommandError(error, { label: "Elegir copia", run: chooseImportDirectory });
     }
   }
 
   return (
     <section className="snapshot-workspace" aria-labelledby="snapshot-title">
       <p className="panel-eyebrow">Backup y traslado explícito</p>
-      <h2 id="snapshot-title">Snapshot estructurado</h2>
-      <p>Conserva objetos, relaciones, variante y revisión. A diferencia del lore, no extrae candidatos desde prosa.</p>
+      <h2 id="snapshot-title">Copia estructurada</h2>
+      <p>Conserva objetos, relaciones y versiones. A diferencia de un texto externo, no necesita extraer elementos desde prosa.</p>
       <div className="snapshot-comparison">
-        <article><h3>Lore</h3><p>Markdown o texto no confiable. Produce candidatos citados para decidir.</p></article>
-        <article><h3>Snapshot</h3><p>Copia estructurada. Antes de aplicar muestra altas, cambios y eliminaciones.</p></article>
+        <article><h3>Material del mundo</h3><p>Markdown o texto externo. Produce elementos citados para decidir.</p></article>
+        <article><h3>Copia de seguridad</h3><p>Antes de aplicar muestra objetos nuevos, modificados y eliminados.</p></article>
       </div>
 
       <div className="snapshot-actions-grid">
@@ -112,18 +112,18 @@ export function SnapshotWorkspace({ onOpenReviews }: { onOpenReviews: () => void
 
         <section className="snapshot-action-card" aria-labelledby="snapshot-import-title">
           <h3 id="snapshot-import-title">Importar y revisar</h3>
-          <p>Valida la identidad y calcula el diff. No modifica el canon hasta que uses <strong>Aplicar al mundo</strong>.</p>
+          <p>Comprueba la identidad y compara los cambios. No modifica el canon hasta que uses <strong>Aplicar al mundo</strong>.</p>
           {session.read_only && <p className="notice warning">Estás viendo una versión anterior. Vuelve a la versión actual para importar.</p>}
           <button type="button" disabled={session.read_only || importing} onClick={chooseImportDirectory}>
-            {importing ? "Validando snapshot…" : "Elegir snapshot…"}
+            {importing ? "Comprobando copia…" : "Elegir copia…"}
           </button>
           {imported && (
-            <article className="snapshot-result" aria-label="Resumen del snapshot importado">
+            <article className="snapshot-result" aria-label="Resumen de la copia importada">
               <strong>Comparación preparada</strong>
               <dl className="settings-facts">
                 <div><dt>Mundo</dt><dd>{session.world.name}</dd></div>
                 <div><dt>Variante</dt><dd>{imported.variant}</dd></div>
-                <div><dt>Diff</dt><dd>{imported.createdCount} altas, {imported.updatedCount} cambios, {imported.deletedCount} bajas</dd></div>
+                <div><dt>Cambios</dt><dd>{imported.createdCount} altas, {imported.updatedCount} cambios, {imported.deletedCount} bajas</dd></div>
               </dl>
               <ul className="snapshot-diff-preview">
                 {imported.review.operations.slice(0, 6).map((operation) => (

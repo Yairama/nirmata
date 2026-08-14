@@ -16,8 +16,9 @@ use crate::{
 };
 use nirmata_ai::ProviderCredentialStore;
 use nirmata_core::{
-    World, WorldId,
-    change_set::ChangeSet,
+    EntityId, World, WorldId,
+    change_set::{ChangeSet, RetconKind},
+    document::ObjectRef,
     validation::{ValidationIssue, ValidationReport},
 };
 use nirmata_store::{
@@ -457,6 +458,44 @@ impl NirmataApp {
             )?;
         }
         Ok(outcome.response)
+    }
+
+    pub fn prepare_entity_deletion(
+        &mut self,
+        entity_id: EntityId,
+    ) -> Result<ManualReviewSnapshot, AppError> {
+        let (review_key, stored) =
+            {
+                let active = self.active.as_mut().ok_or(AppError::NoWorldOpen)?;
+                ensure_active_write_scope(active)?;
+                refresh_active_world(active)?;
+                let entity = active.store.get_entity(entity_id)?.ok_or_else(|| {
+                    AppError::ObjectNotFound {
+                        object: "entity",
+                        id: entity_id.to_string(),
+                    }
+                })?;
+                let review_key = ObjectRef::Entity(entity.id()).to_string();
+                let review = ManualReviewSession::create(
+                    active.session.active_variant.id,
+                    active.session.world_id,
+                    active.session.current_revision,
+                    ManualReviewInput {
+                        objective: format!("Eliminar {} del canon", entity.name()),
+                        sources: vec![],
+                        assumptions: vec![],
+                        operations: vec![crate::DraftOperationInput::DeleteEntity {
+                            retcon: RetconKind::Replacement,
+                            before: entity,
+                        }],
+                    },
+                    &active.store,
+                )?;
+                (review_key, StoredManualReview::new(review))
+            };
+        let snapshot = stored.snapshot(&review_key);
+        self.insert_pending_review(review_key, stored)?;
+        Ok(snapshot)
     }
 
     pub fn close_world(&mut self) -> Result<(), AppError> {

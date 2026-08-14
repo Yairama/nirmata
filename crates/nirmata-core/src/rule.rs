@@ -1,7 +1,7 @@
 use crate::{DomainError, JsonObject, RuleId, WorldId, validate_version};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleKind {
     Constitutive,
@@ -10,20 +10,20 @@ pub enum RuleKind {
     Authorial,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleSeverity {
     Advisory,
     Hard,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleValidatorKind {
     NoResurrection,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Rule {
     id: RuleId,
     world_id: WorldId,
@@ -169,3 +169,4 @@ impl Rule {
 #[cfg(test)]
 #[path = "../tests/unit/rule/mod.rs"]
 mod tests;
+use schemars::JsonSchema;

@@ -811,6 +811,16 @@ fn response_request_body(request: &ResponseRequest, stream: bool) -> Value {
     if let Some(max_output_tokens) = request.max_output_tokens {
         body["max_output_tokens"] = Value::Number(max_output_tokens.into());
     }
+    if let Some(format) = &request.json_schema {
+        body["text"] = json!({
+            "format": {
+                "type": "json_schema",
+                "name": format.name,
+                "schema": format.schema,
+                "strict": format.strict,
+            }
+        });
+    }
     body
 }
 

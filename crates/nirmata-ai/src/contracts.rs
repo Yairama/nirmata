@@ -7,6 +7,7 @@ use nirmata_core::{
     relation::RelationDirection,
     validation::ValidationSeverity,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, error::Category as JsonErrorCategory};
 use std::{collections::HashSet, error::Error, fmt, str::FromStr};
@@ -114,8 +115,9 @@ impl fmt::Display for StructuredOutputError {
 
 impl Error for StructuredOutputError {}
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "String", into = "String")]
+#[schemars(with = "String")]
 pub struct ContentUri(ObjectRef);
 
 impl ContentUri {
@@ -140,8 +142,11 @@ impl From<ContentUri> for String {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(try_from = "String", into = "String")]
+#[schemars(with = "String")]
 pub struct ContractId(String);
 
 impl ContractId {
@@ -177,7 +182,7 @@ impl From<ContractId> for String {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AdvisoryClassification {
     Fact,
@@ -265,21 +270,21 @@ impl InternalDocumentDraft {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReferencedMarkdown {
     pub markdown: String,
     pub content_references: Vec<ContentUri>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdvisoryCitation {
     pub source_uri: ContentUri,
     pub quote_md: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdvisoryItem {
     pub item_id: ContractId,
@@ -288,7 +293,7 @@ pub struct AdvisoryItem {
     pub citations: Vec<AdvisoryCitation>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdvisoryResponse {
     pub items: Vec<AdvisoryItem>,

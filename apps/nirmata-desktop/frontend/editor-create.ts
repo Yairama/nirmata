@@ -135,7 +135,9 @@ export function buildCreateEditor(kind: SearchObjectKind): StructuredEditorState
           options: enumOptions(["person", "place", "faction", "culture", "resource", "concept"]),
         }),
         createField("name", "Nombre", "text", values.name, { required: true }),
-        createField("slug", "Slug", "text", values.slug, { required: true }),
+        createField("slug", "Identificador corto", "text", values.slug, {
+          help: "Se crea automáticamente a partir del nombre. Cámbialo solo si necesitas una ruta distinta.",
+        }),
         createField("aliases", "Nombres alternativos (uno por línea)", "textarea", values.aliases, { rows: 4 }),
         createField("summary", "Resumen", "textarea", values.summary, { rows: 4 }),
         createField("body_md", "Cuerpo Markdown", "textarea", values.body_md, { rows: 7 }),

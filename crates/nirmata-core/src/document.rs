@@ -5,7 +5,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectRef {
     World(WorldId),
@@ -76,7 +78,7 @@ impl FromStr for ObjectRef {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ContentReference {
     source: ObjectRef,
     target: ObjectRef,
@@ -117,7 +119,7 @@ pub fn ordered_content_references(
     ordered
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DocumentAggregate {
     object: Document,
     references: Vec<ContentReference>,
@@ -141,14 +143,14 @@ impl DocumentAggregate {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentCanonStatus {
     Canonical,
     NonCanonical,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Document {
     id: DocumentId,
     world_id: WorldId,
@@ -268,3 +270,4 @@ impl Document {
 #[cfg(test)]
 #[path = "../tests/unit/document/mod.rs"]
 mod tests;
+use schemars::JsonSchema;

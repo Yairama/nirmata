@@ -1,7 +1,7 @@
 use crate::{DomainError, EntityId, GoalId, Period, WorldId, required, validate_version};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalStatus {
     Active,
@@ -10,14 +10,14 @@ pub enum GoalStatus {
     Frustrated,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalVisibility {
     Public,
     Secret,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Goal {
     id: GoalId,
     world_id: WorldId,
@@ -130,3 +130,4 @@ impl Goal {
 #[cfg(test)]
 #[path = "../tests/unit/goal/mod.rs"]
 mod tests;
+use schemars::JsonSchema;

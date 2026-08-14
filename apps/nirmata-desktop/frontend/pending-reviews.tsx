@@ -32,6 +32,7 @@ import {
   selectUri,
   startCreatingObject,
 } from "./workspace.js";
+import { Icon } from "./icons.js";
 
 type PendingReviewsProps = {
   open: boolean;
@@ -135,7 +136,7 @@ export function ReviewDrawer({ open, onClose, records, loading, failed, onRetry,
           <div><p className="panel-eyebrow">Revisión manual</p><Dialog.Title asChild><h3 id="pending-title">Cambios pendientes</h3></Dialog.Title></div>
           <p className="panel-summary">{sorted.length === 0 ? "Sin cambios pendientes." : `${sorted.length} propuesta${sorted.length === 1 ? "" : "s"} pendiente${sorted.length === 1 ? "" : "s"}`}</p>
         </div>
-        <Dialog.Close asChild><button type="button" className="review-drawer-close ghost">Cerrar cambios</button></Dialog.Close>
+        <Dialog.Close asChild><button type="button" className="icon-button review-drawer-close" aria-label="Cerrar cambios" title="Cerrar cambios"><Icon name="x" /></button></Dialog.Close>
         <div className="panel-body">
           {loading && <p role="status" className="notice info">Recuperando revisiones guardadas…</p>}
           {failed && <section className="notice warning" role="alert"><h4>No se pudieron cargar los cambios</h4><p>Las revisiones siguen guardadas. Reintenta sin cerrar el mundo.</p><button type="button" className="secondary" onClick={onRetry}>Reintentar</button></section>}
@@ -223,7 +224,9 @@ function PendingReviewCard({ record, open, onEdit }: { record: PendingReviewSnap
       appActions.setSession(next);
       appActions.setWorkspaceNotice({ kind: "info", title: "Cambios aplicados", detail: `La revisión ${next.current_revision} quedó aplicada en una única transacción.` });
       const targetUri = review.operations[0]?.targetUri ?? review.reviewKey;
-      appActions.selectUri(targetUri);
+      const deleted = review.operations[0]?.before !== null && review.operations[0]?.after === null;
+      if (deleted) appActions.forgetUri(targetUri);
+      else appActions.selectUri(targetUri);
       await queryClient.invalidateQueries({ queryKey: ["world", next.world_id] });
       setStatus(`Cambios aplicados: ${record.title}.`);
     },
@@ -234,6 +237,7 @@ function PendingReviewCard({ record, open, onEdit }: { record: PendingReviewSnap
   });
 
   const targetUri = review.operations[0]?.targetUri ?? review.reviewKey;
+  const deleting = review.operations[0]?.before !== null && review.operations[0]?.after === null;
   const objectType = review.operations[0]?.after?.objectType ?? review.operations[0]?.before?.objectType ?? objectKindFromUri(targetUri) ?? "world";
   const firstIssue = firstReviewIssue(review.effectiveReport);
   const canApply = review.readyToConfirm && review.freshness.status === "current" && !session.read_only;
@@ -244,7 +248,7 @@ function PendingReviewCard({ record, open, onEdit }: { record: PendingReviewSnap
       <div className="badge-row">
         <span className="badge context">{originLabels[record.origin]}</span>
         <span className="badge kind">{humanize(objectType)}</span>
-        <span className="badge info">{record.editorRequest.existingUri ? "Modificar" : "Crear"}</span>
+        <span className={`badge ${deleting ? "error" : "info"}`}>{deleting ? "Eliminar" : record.editorRequest.existingUri ? "Modificar" : "Crear"}</span>
         <span className={`badge ${review.freshness.status === "current" ? "ready" : "warning"}`}>{review.freshness.status === "current" ? "Revisión vigente" : "Propuesta desactualizada"}</span>
         <span className={`badge ${review.readyToConfirm ? "ready" : "warning"}`}>{review.readyToConfirm ? "Listo para confirmar" : "Bloqueado"}</span>
       </div>
@@ -273,6 +277,7 @@ function ReviewOperation({ record, review, operation, busy, onAction, onEdit }: 
   const [waiverIssue, setWaiverIssue] = useState<ValidationIssue | null>(null);
   const [rationale, setRationale] = useState("");
   const title = operation.after?.title ?? operation.before?.title ?? "Objeto modificado";
+  const deleting = operation.before !== null && operation.after === null;
 
   async function submitJudgment(event: FormEvent) {
     event.preventDefault();
@@ -295,28 +300,29 @@ function ReviewOperation({ record, review, operation, busy, onAction, onEdit }: 
       <div className="badge-row"><span className={`badge ${operation.severity}`}>{humanize(operation.severity)}</span><span className={`badge ${operation.selected ? "ready" : "warning"}`}>{operation.selected ? "Seleccionada" : "Excluida"}</span><span className="badge info">{humanize(operation.decision)}</span></div>
       <div className="review-object-grid"><ReviewObject title="Antes" snapshot={operation.before} /><ReviewObject title="Después" snapshot={operation.after} /></div>
       {operation.dependencies.length > 0 && <section className="review-issue-group"><h5>Dependencias</h5><ReviewLinks label="Dependencias" uris={operation.dependencies} review={review} /></section>}
-      {operation.decisionPoints.length > 0 && <section className="review-issue-group"><h5>Decisiones pendientes</h5><div className="warning-list">{operation.decisionPoints.map((decision) => <DecisionPoint key={decision.decisionPointId} record={record} operationTitle={title} decision={decision} busy={busy} onAction={onAction} />)}</div></section>}
+      {operation.decisionPoints.length > 0 && <section className="review-issue-group"><h5>Decisiones pendientes</h5><div className="warning-list">{operation.decisionPoints.map((decision) => <DecisionPoint key={decision.decisionPointId} record={record} operationTitle={title} deleting={deleting} decision={decision} busy={busy} onAction={onAction} />)}</div></section>}
       {operation.risk.triggers.length > 0 && <section className="review-issue-group"><h5>Fricción de alto riesgo</h5><ul className="review-issue-list">{operation.risk.triggers.map((trigger) => <li key={trigger.code}>{trigger.title}: {trigger.detail}</li>)}</ul><p className="muted">{operation.risk.judgment ? `Juicio registrado: ${operation.risk.judgment}` : operation.risk.suggestedResolutionAvailable ? "Debes registrar un juicio breve antes de ver la resolución sugerida." : "Registra un juicio breve para dejar constancia antes de confirmar este cambio."}</p>{!operation.risk.judgment && !judgmentOpen && <button type="button" className="secondary" onClick={() => setJudgmentOpen(true)}>Registrar juicio</button>}{judgmentOpen && <form className="inline-review-form" onSubmit={(event) => void submitJudgment(event)}><label htmlFor={`judgment-${operation.operationId}`}>Tu lectura antes de revelar la resolución sugerida<textarea id={`judgment-${operation.operationId}`} name="review-judgment" required autoFocus value={judgment} onChange={(event) => setJudgment(event.currentTarget.value)} /></label><div className="pending-actions"><button type="submit" disabled={busy || !judgment.trim()}>Guardar juicio</button><button type="button" className="ghost" onClick={() => setJudgmentOpen(false)}>Cancelar</button></div></form>}</section>}
       {issueGroups.map(([label, key]) => operation.effectiveIssues[key].length > 0 && <section className="review-issue-group" key={key}><h5>{label}</h5><ul className="review-issue-list">{operation.effectiveIssues[key].map((issue) => <li key={`${issue.code}-${validationIssueMessage(issue)}`}><span>{validationIssueMessage(issue)}</span>{issue.severity !== "error" && <button type="button" className="ghost" disabled={busy} onClick={() => { setWaiverIssue(issue); setRationale(""); }}>Aceptar advertencia con motivo</button>}</li>)}</ul>{waiverIssue && operation.effectiveIssues[key].includes(waiverIssue) && <form className="inline-review-form" onSubmit={(event) => void submitWaiver(event)}><label htmlFor={`waiver-${operation.operationId}-${waiverIssue.code}`}>Motivo para aceptar {waiverIssue.code}<textarea id={`waiver-${operation.operationId}-${waiverIssue.code}`} name="waiver-rationale" required autoFocus value={rationale} onChange={(event) => setRationale(event.currentTarget.value)} /></label><div className="pending-actions"><button type="submit" disabled={busy || !rationale.trim()}>Guardar motivo</button><button type="button" className="ghost" onClick={() => setWaiverIssue(null)}>Cancelar</button></div></form>}</section>)}
       {operation.waivers.length > 0 && <section className="review-issue-group"><h5>Advertencias aceptadas con motivo</h5><ul className="review-issue-list">{operation.waivers.map((waiver) => <li key={`${waiver.issueCode}-${waiver.createdAtMs}`}>{waiver.issueCode}: {waiver.rationale}</li>)}</ul></section>}
-      <div className="pending-actions"><button type="button" className="secondary" disabled={busy || operation.selected} onClick={() => void onAction({ kind: "accept", operationId: operation.operationId })}>Aceptar operación</button><button type="button" className="secondary" disabled={busy || !operation.selected} onClick={() => void onAction({ kind: "reject", operationId: operation.operationId })}>Rechazar operación</button><button type="button" className="ghost" disabled={busy} onClick={onEdit}>Editar cambio</button>{operation.before && <button type="button" className="ghost" title="Abre el estado vigente sin aplicar esta propuesta." onClick={() => void selectUri(operation.targetUri)}>Ver objeto actual</button>}</div>
+      <div className="pending-actions"><button type="button" className="secondary" disabled={busy || operation.selected} onClick={() => void onAction({ kind: "accept", operationId: operation.operationId })}>Aceptar operación</button><button type="button" className="secondary" disabled={busy || !operation.selected} onClick={() => void onAction({ kind: "reject", operationId: operation.operationId })}>Rechazar operación</button>{!deleting && <button type="button" className="ghost" disabled={busy} onClick={onEdit}>Editar cambio</button>}{operation.before && <button type="button" className="ghost" title="Abre el estado vigente sin aplicar esta propuesta." onClick={() => void selectUri(operation.targetUri)}>Ver objeto actual</button>}</div>
     </section>
   );
 }
 
 function ReviewObject({ title, snapshot }: { title: string; snapshot: ManualReviewObjectSnapshot | null }) {
   if (!snapshot) return null;
-  const regular = snapshot.lines.filter((line) => !line.label.startsWith("Detalles técnicos"));
-  const technical = snapshot.lines.filter((line) => line.label.startsWith("Detalles técnicos"));
-  return <article className="review-object"><h5>{title}</h5><div className="subsection-header"><strong>{snapshot.title}</strong><button type="button" className="ghost" onClick={() => void selectUri(snapshot.targetUri)}>Abrir</button></div><dl className="meta-list">{regular.map((line) => <div className="meta-row" key={`${line.label}-${line.value}`}><dt>{line.label}</dt><dd>{line.value}</dd></div>)}</dl>{technical.length > 0 && <details className="technical-details"><summary>Detalles técnicos</summary><dl className="meta-list">{technical.map((line) => <div className="meta-row" key={`${line.label}-${line.value}`}><dt>{line.label.replace("Detalles técnicos del ", "")}</dt><dd>{line.value}</dd></div>)}</dl></details>}</article>;
+  const isTechnical = (label: string) => label.startsWith("Detalles técnicos") || ["SLUG", "ID", "URI"].includes(label.toLocaleUpperCase("es"));
+  const regular = snapshot.lines.filter((line) => !isTechnical(line.label));
+  const technical = snapshot.lines.filter((line) => isTechnical(line.label));
+  return <article className="review-object"><h5>{title}</h5><div className="subsection-header"><strong>{snapshot.title}</strong><button type="button" className="ghost" onClick={() => void selectUri(snapshot.targetUri)}>Abrir</button></div><dl className="meta-list">{regular.map((line) => <div className="meta-row" key={`${line.label}-${line.value}`}><dt>{line.label}</dt><dd>{line.label.toLocaleUpperCase("es") === "TIPO" ? humanize(line.value.toLocaleLowerCase("es")) : line.value}</dd></div>)}</dl>{technical.length > 0 && <details className="technical-details"><summary>Detalles técnicos</summary><dl className="meta-list">{technical.map((line) => <div className="meta-row" key={`${line.label}-${line.value}`}><dt>{line.label.replace("Detalles técnicos del ", "")}</dt><dd>{line.value}</dd></div>)}</dl></details>}</article>;
 }
 
 function ReviewLinks({ label, uris, review }: { label: string; uris: string[]; review: ManualReviewSnapshot }) {
   return <div className="review-source-list" aria-label={label}>{uris.map((uri) => <button key={uri} type="button" className="ghost" onClick={() => void selectUri(uri)}>{reviewLabelForUri(review, uri)}</button>)}</div>;
 }
 
-function DecisionPoint({ record, operationTitle, decision, busy, onAction }: { record: PendingReviewSnapshot; operationTitle: string; decision: ManualReviewDecisionPointSnapshot; busy: boolean; onAction: (action: ManualReviewActionRequest) => Promise<ManualReviewSnapshot> }) {
-  return <article className="warning-card"><h4>{record.merge ? `¿Qué versión debe conservarse para ${operationTitle}?` : decision.prompt}</h4><p>{decision.suggestionHidden ? "Registra primero tu juicio para revelar la resolución sugerida." : [decision.resolvedAlternative ? `Resuelta: ${decisionAlternativeLabel(record, decision.resolvedAlternative)}` : null, decision.reason ? `Razón: ${decision.reason}` : null].filter(Boolean).join(" · ")}</p><div className="pending-actions">{decision.alternatives.map((alternative) => <button key={alternative} type="button" className={decision.resolvedAlternative === alternative ? "secondary" : "ghost"} disabled={busy || decision.suggestionHidden} onClick={() => void onAction({ kind: "resolve_decision", decisionPointId: decision.decisionPointId, alternative })}>{decisionAlternativeLabel(record, alternative)}</button>)}</div></article>;
+function DecisionPoint({ record, operationTitle, deleting, decision, busy, onAction }: { record: PendingReviewSnapshot; operationTitle: string; deleting: boolean; decision: ManualReviewDecisionPointSnapshot; busy: boolean; onAction: (action: ManualReviewActionRequest) => Promise<ManualReviewSnapshot> }) {
+  return <article className="warning-card"><h4>{record.merge ? `¿Qué versión debe conservarse para ${operationTitle}?` : deleting ? `¿Eliminar ${operationTitle} del canon?` : decision.prompt}</h4><p>{decision.suggestionHidden ? "Registra primero tu juicio para revelar la resolución sugerida." : [decision.resolvedAlternative ? `Resuelta: ${decisionAlternativeLabel(record, decision.resolvedAlternative, deleting)}` : null, decision.reason && !deleting ? `Razón: ${decision.reason}` : null].filter(Boolean).join(" · ")}</p><div className="pending-actions">{decision.alternatives.map((alternative) => <button key={alternative} type="button" className={decision.resolvedAlternative === alternative ? "secondary" : "ghost"} disabled={busy || decision.suggestionHidden} onClick={() => void onAction({ kind: "resolve_decision", decisionPointId: decision.decisionPointId, alternative })}>{decisionAlternativeLabel(record, alternative, deleting)}</button>)}</div></article>;
 }
 
 function AiFinalCritique({ runId, reviewKey, open }: { runId: string; reviewKey: string; open: boolean }) {
@@ -356,7 +362,9 @@ function reviewLabelForUri(review: ManualReviewSnapshot, uri: string): string {
   return operation?.after?.title ?? operation?.before?.title ?? labelForUri(uri);
 }
 
-function decisionAlternativeLabel(record: PendingReviewSnapshot, alternative: string): string {
+function decisionAlternativeLabel(record: PendingReviewSnapshot, alternative: string, deleting = false): string {
+  if (deleting && alternative === "Keep current canon") return "Conservar en el canon";
+  if (deleting && alternative === "Apply replacement") return "Confirmar eliminación";
   if (!record.merge) return humanize(alternative);
   if (alternative === "keep_destination") return `Conservar lo que ya existe en ${record.merge.destinationName}`;
   if (alternative === "take_source") return `Traer la versión de ${record.merge.sourceName}`;

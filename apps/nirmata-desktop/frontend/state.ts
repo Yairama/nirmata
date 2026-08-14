@@ -19,7 +19,7 @@ export function listen<T>(event: string, handler: EventCallback<T>): Promise<Unl
   return isTauri() ? listenTauri(event, handler) : Promise.resolve(() => undefined);
 }
 export const dialog = { open, save };
-export const loreFilter = [{ name: "Lore UTF-8", extensions: ["md", "markdown", "txt"] }];
+export const loreFilter = [{ name: "Material del mundo", extensions: ["md", "markdown", "txt"] }];
 export const kinds: Array<{ value: SearchKind; label: string }> = [
   { value: "all", label: "Todo" },
   { value: "entity", label: "Entidades" },
@@ -97,6 +97,17 @@ export const appActions = {
   recordRecentUri(uri: string) {
     if (snapshot.recentUris[0] === uri) return;
     publish({ recentUris: [uri, ...snapshot.recentUris.filter((item) => item !== uri)].slice(0, 8) });
+  },
+  forgetUri(uri: string) {
+    const selected = snapshot.selectedUri === uri;
+    publish({
+      recentUris: snapshot.recentUris.filter((item) => item !== uri),
+      ...(selected ? {
+        selectedUri: null,
+        selectedLogicalPath: null,
+        structuredEditor: null,
+      } : {}),
+    });
   },
   setWorkspaceNotice(workspaceNotice: WorkspaceNotice | null) {
     publish({ workspaceNotice });

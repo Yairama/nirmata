@@ -79,7 +79,7 @@ test("landing visual baselines are deterministic in light, dark and narrow", asy
 
 test("themes persist, pass axe and keep responsive creation paths", async ({ page }, testInfo) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Ajustes" }).click();
   await page.getByRole("tab", { name: "Apariencia" }).click();
   const theme = page.getByLabel("Tema");
 
@@ -98,12 +98,12 @@ test("themes persist, pass axe and keep responsive creation paths", async ({ pag
 
   await expect.poll(() => page.evaluate(() => localStorage.getItem("nirmata.appearance.theme")))
     .toBe("high-contrast");
-  await page.getByRole("button", { name: "Cerrar Settings" }).click();
+  await page.getByRole("button", { name: "Cerrar Ajustes" }).click();
   await page.reload();
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Ajustes" }).click();
   await page.getByRole("tab", { name: "Apariencia" }).click();
   await expect(page.getByLabel("Tema")).toHaveValue("high-contrast");
-  await page.getByRole("button", { name: "Cerrar Settings" }).click();
+  await page.getByRole("button", { name: "Cerrar Ajustes" }).click();
   await expect(page.locator(".creation-path-card").first()).toHaveCSS("border-top-width", "2px");
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -141,12 +141,12 @@ test("AI creation wizard is stepped, inert until confirmation and accessible", a
   await page.screenshot({ path: testInfo.outputPath("wizard-ai-step-1-390x844.png") });
 });
 
-test("Settings and About trap and restore focus without a world", async ({ page }, testInfo) => {
+test("Ajustes and About trap and restore focus without a world", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 960, height: 680 });
   await page.goto("/");
-  const settings = page.getByRole("button", { name: "Settings" });
+  const settings = page.getByRole("button", { name: "Ajustes" });
   await settings.click();
-  const dialog = page.getByRole("dialog", { name: "Settings" });
+  const dialog = page.getByRole("dialog", { name: "Ajustes" });
   await expect(dialog).toBeVisible();
   await expect(page.getByRole("tab", { name: "General" })).toBeVisible();
   const accessibility = await new AxeBuilder({ page }).include("[role=dialog]").analyze();
@@ -193,10 +193,10 @@ test("reduced motion disables synthetic movement", async ({ page }) => {
 test("system theme follows operating-system color scheme without reload", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Ajustes" }).click();
   await page.getByRole("tab", { name: "Apariencia" }).click();
   await page.getByLabel("Tema").selectOption("system");
-  await page.getByRole("button", { name: "Cerrar Settings" }).click();
+  await page.getByRole("button", { name: "Cerrar Ajustes" }).click();
   await expect(page.locator("html")).toHaveCSS("background-color", "rgb(21, 20, 18)");
 
   await page.emulateMedia({ colorScheme: "light" });

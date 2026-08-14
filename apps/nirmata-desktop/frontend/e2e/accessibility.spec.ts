@@ -140,7 +140,7 @@ async function expectDomAuditClean(page: Page) {
   expect(issues).toEqual([]);
 }
 
-test("WCAG gate covers landing, wizard and Settings", async ({ page }) => {
+test("WCAG gate covers landing, wizard and Ajustes", async ({ page }) => {
   await installFixture(page, { closed: true });
   await page.goto("/");
   await expectAxeClean(page, "#closed-view");
@@ -151,7 +151,7 @@ test("WCAG gate covers landing, wizard and Settings", async ({ page }) => {
   await expectDomAuditClean(page);
   await page.getByRole("button", { name: "Cancelar" }).click();
 
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Ajustes" }).click();
   await expectAxeClean(page, ".software-dialog");
   await page.getByRole("tab", { name: "IA", exact: true }).click();
   await expectDomAuditClean(page);
@@ -192,9 +192,9 @@ test("WCAG gate covers workspace, overlays and advanced areas", async ({ page })
     await expectAxeClean(page, root);
     await expectDomAuditClean(page);
     if (area === "Importaciones") {
-      await page.getByRole("tab", { name: "Snapshot" }).click();
+      await page.getByRole("tab", { name: "Copias de seguridad" }).click();
       await expectAxeClean(page, "#imports-panel");
-      await page.getByRole("tab", { name: "Lore" }).click();
+      await page.getByRole("tab", { name: "Textos" }).click();
     }
   }
 

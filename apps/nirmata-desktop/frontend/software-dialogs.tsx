@@ -24,7 +24,7 @@ function providerSource(status: AiProviderDiagnosticStatus): string {
   }
 }
 
-function SettingsContent({ onBackups }: { onBackups: () => void }) {
+function SettingsContent({ onBackups, initialTab }: { onBackups: () => void; initialTab: "general" | "ai" }) {
   const session = useSession();
   const queryClient = useQueryClient();
   const [theme, setTheme] = useState<AppearanceTheme>(readAppearanceTheme);
@@ -120,8 +120,8 @@ function SettingsContent({ onBackups }: { onBackups: () => void }) {
     }
   }
   return (
-    <Tabs.Root className="settings-tabs" defaultValue="general" orientation="vertical">
-      <Tabs.List className="settings-tab-list" aria-label="Secciones de Settings">
+    <Tabs.Root className="settings-tabs" defaultValue={initialTab} orientation="vertical">
+      <Tabs.List className="settings-tab-list" aria-label="Secciones de Ajustes">
         <Tabs.Trigger value="general">General</Tabs.Trigger>
         <Tabs.Trigger value="appearance">Apariencia</Tabs.Trigger>
         <Tabs.Trigger value="ai">IA</Tabs.Trigger>
@@ -189,8 +189,9 @@ function SettingsContent({ onBackups }: { onBackups: () => void }) {
               </form>
               {providerSettingsError && <p role="alert" className="creation-error">{providerSettingsError}</p>}
               <button type="button" className="secondary" disabled={!provider.data.canCheckConnection || diagnose.isPending} onClick={() => diagnose.mutate()}>
-                {diagnose.isPending ? "Probando conexión…" : "Probar conexión"}
+                {diagnose.isPending ? "Comprobando acceso…" : "Comprobar acceso ahora"}
               </button>
+              <p className="muted">No necesitas comprobarlo antes de cada consulta. Úsalo solo al cambiar el endpoint, el modelo o la credencial.</p>
             </div>
           )}
           <form className="settings-credential-form" onSubmit={submitCredential}>
@@ -301,7 +302,7 @@ function HelpContent({ onAbout, onShowOnboarding }: { onAbout: () => void; onSho
       </section>
       <section id="help-import">
         <h3>Importar con seguridad</h3>
-        <p>Un archivo de lore es una fuente, no canon. Nirmata conserva procedencia, presenta candidatos y exige revisión. Un snapshot es una copia estructurada distinta de Markdown o texto.</p>
+        <p>Un texto externo es una fuente, no canon. Nirmata conserva procedencia, presenta elementos y exige revisión. Una copia de seguridad estructurada es distinta de Markdown o texto.</p>
       </section>
       <section id="help-changes">
         <h3>Cambios y recuperación</h3>
@@ -340,14 +341,15 @@ function HelpContent({ onAbout, onShowOnboarding }: { onAbout: () => void; onSho
   );
 }
 
-export function SoftwareDialogs({ active, onActiveChange, returnFocus, onOpenBackups, onShowOnboarding }: {
+export function SoftwareDialogs({ active, onActiveChange, returnFocus, onOpenBackups, onShowOnboarding, settingsInitialTab = "general" }: {
   active: SoftwareDialog;
   onActiveChange: (dialog: SoftwareDialog) => void;
   returnFocus?: HTMLElement | null;
   onOpenBackups: () => void;
   onShowOnboarding: () => void;
+  settingsInitialTab?: "general" | "ai";
 }) {
-  const title = active === "settings" ? "Settings" : active === "help" ? "Centro de ayuda" : "Acerca de Nirmata";
+  const title = active === "settings" ? "Ajustes" : active === "help" ? "Centro de ayuda" : "Acerca de Nirmata";
   return (
     <Dialog.Root open={active !== null} onOpenChange={(open) => !open && onActiveChange(null)}>
       <Dialog.Portal>
@@ -375,7 +377,7 @@ export function SoftwareDialogs({ active, onActiveChange, returnFocus, onOpenBac
             <Dialog.Close asChild><button type="button" className="ghost" aria-label={`Cerrar ${title}`}>Cerrar</button></Dialog.Close>
           </div>
           {active === "settings"
-            ? <SettingsContent onBackups={() => { onActiveChange(null); onOpenBackups(); }} />
+            ? <SettingsContent initialTab={settingsInitialTab} onBackups={() => { onActiveChange(null); onOpenBackups(); }} />
             : active === "help"
               ? <HelpContent onAbout={() => onActiveChange("about")} onShowOnboarding={onShowOnboarding} />
               : <AboutContent />}

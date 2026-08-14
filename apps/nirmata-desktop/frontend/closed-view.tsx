@@ -277,7 +277,7 @@ export function ClosedView({ desktopAction, onStartProposal, onStartImport }: { 
           <p>Construye canon, consulta consecuencias y revisa cada cambio antes de aplicarlo.</p>
         </div>
         <nav className="home-utilities" aria-label="Aplicación">
-          <button type="button" className="ghost" onClick={(event) => openSoftwareDialog("settings", event.currentTarget)}>Settings</button>
+          <button type="button" className="ghost" onClick={(event) => openSoftwareDialog("settings", event.currentTarget)}>Ajustes</button>
           <button type="button" className="ghost" onClick={(event) => openSoftwareDialog("help", event.currentTarget)}>Ayuda</button>
           <button type="button" className="ghost" onClick={(event) => openSoftwareDialog("about", event.currentTarget)}>Acerca de</button>
         </nav>

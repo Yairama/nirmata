@@ -18,6 +18,13 @@ nombre. Los identificadores internos viven en Detalles técnicos.
 
 `Preparar cambios` crea una propuesta revisable; todavía no modifica el mundo.
 
+Para eliminar una entidad, selecciónala en Mundo y usa `Eliminar del canon`.
+Nirmata prepara una propuesta, no borra inmediatamente. Si relaciones, eventos,
+metas, afirmaciones o documentos todavía la utilizan, Cambios muestra esas
+dependencias y bloquea la aplicación hasta que las elimines o redirijas. Después
+registra tu juicio, confirma la eliminación y usa `Aplicar al mundo`. No existe
+borrado automático en cascada y Versiones permite preparar el undo posterior.
+
 ## Preguntar y proponer
 
 `Consultar` responde con fuentes sin escribir. `Proponer cambios` produce

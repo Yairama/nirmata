@@ -28,7 +28,7 @@ impl<'a> ChangeSetValidationSnapshot<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetconKind {
     Additive,
@@ -36,7 +36,7 @@ pub enum RetconKind {
     Replacement,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionPoint {
     decision_point_id: DecisionPointId,
@@ -180,7 +180,7 @@ impl DecisionPoint {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ChangeOperation {
     UpdateWorld {
@@ -861,7 +861,7 @@ impl ChangeOperation {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChangeSetDraft {
     id: ChangeSetId,
@@ -974,7 +974,7 @@ impl ChangeSetDraft {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChangeSet {
     id: ChangeSetId,

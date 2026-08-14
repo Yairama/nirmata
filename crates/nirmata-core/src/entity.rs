@@ -2,7 +2,7 @@ use crate::{DomainError, EntityId, JsonObject, WorldId, required, validate_versi
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityKind {
     Person,
@@ -13,7 +13,7 @@ pub enum EntityKind {
     Concept,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Entity {
     id: EntityId,
     world_id: WorldId,
@@ -179,3 +179,4 @@ fn normalize_aliases(aliases: Vec<String>) -> Result<Vec<String>, DomainError> {
 #[cfg(test)]
 #[path = "../tests/unit/entity/mod.rs"]
 mod tests;
+use schemars::JsonSchema;

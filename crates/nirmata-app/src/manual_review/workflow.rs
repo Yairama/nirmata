@@ -236,20 +236,38 @@ fn operation_snapshot(
     let primary_ref = operation.current().primary_ref();
     let risk = operation_risk_snapshot(review, operation);
     let hide_suggested_resolution = risk.requires_judgment && is_blank_option(operation.judgment());
+    let mut dependencies = operation
+        .current()
+        .affected_ids()
+        .iter()
+        .copied()
+        .filter(|reference| *reference != primary_ref)
+        .map(|reference| reference.to_string())
+        .collect::<BTreeSet<_>>();
+    for issue in issues
+        .errors
+        .iter()
+        .filter(|issue| issue.code == "change_set.delete_orphan")
+    {
+        for object in &issue.objects {
+            if matches!(
+                object.kind.as_str(),
+                "world" | "entity" | "relation" | "event" | "claim" | "rule" | "goal" | "document"
+            ) {
+                let uri = format!("nirmata://{}/{}", object.kind, object.id);
+                if uri != primary_ref.to_string() {
+                    dependencies.insert(uri);
+                }
+            }
+        }
+    }
     ManualReviewOperationSnapshot {
         operation_id: operation.operation_id().to_string(),
         decision: decision_label(operation.decision()).to_owned(),
         selected: operation.is_selected(),
         severity: report_severity(&effective_issues),
         target_uri: primary_ref.to_string(),
-        dependencies: operation
-            .current()
-            .affected_ids()
-            .iter()
-            .copied()
-            .filter(|reference| *reference != primary_ref)
-            .map(|reference| reference.to_string())
-            .collect(),
+        dependencies: dependencies.into_iter().collect(),
         before: operation_object_snapshot_before(operation.current()),
         after: operation_object_snapshot_after(operation.current()),
         issues,

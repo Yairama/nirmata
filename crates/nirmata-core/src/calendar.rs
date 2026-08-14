@@ -1,7 +1,8 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{error::Error, fmt};
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 pub struct CalendarMonth {
     name: String,
     days: u32,
@@ -42,7 +43,7 @@ impl CalendarMonth {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 pub struct WorldCalendar {
     name: String,
     epoch_tick: i64,
@@ -197,7 +198,7 @@ impl WorldCalendar {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CalendarDate {
     pub year: i64,
     pub month: u32,

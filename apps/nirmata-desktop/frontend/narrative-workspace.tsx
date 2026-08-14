@@ -408,7 +408,7 @@ export function NarrativeWorkspace({
             {selectedMoment && <details><summary>Detalles técnicos de la fecha</summary><p>Unidad temporal interna: {selectedMoment.time.start_tick}</p></details>}
             {moments.isError && <p role="alert" className="notice warning">No se pudieron cargar los momentos. El formulario se conservó.</p>}
             <button type="submit" disabled={session.read_only || !providerReady || activeRequestId !== null || knownMoments.length === 0}>{activeRequestId ? "Preparando…" : "Generar borrador revisable"}</button>
-            {!providerReady && <p className="muted">Verifica la conexión de IA en Settings antes de generar.</p>}
+            {!providerReady && <p className="muted">Verifica la conexión de IA en Ajustes antes de generar.</p>}
           </form>
           {preview && <DocumentPreviewCard value={preview} reviewAttached={reviewAttached} onOpenReviews={onOpenReviews} />}
         </Tabs.Content>

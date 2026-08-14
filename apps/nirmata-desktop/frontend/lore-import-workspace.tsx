@@ -228,7 +228,7 @@ export function LoreImportWorkspace({ launchId }: { launchId: number | null }) {
 
   async function extract() {
     if (!batch) return;
-    const id = beginRequest("La IA está extrayendo candidatos del lote de lore.");
+    const id = beginRequest("La IA está extrayendo elementos del material importado.");
     setStatus("Preparando extracción citada…");
     try {
       await invoke("extract_lore_import", { input: { requestId: id, batchId: batch.id } });
@@ -349,7 +349,7 @@ export function LoreImportWorkspace({ launchId }: { launchId: number | null }) {
   return (
     <section className="lore-import-workspace" aria-labelledby="lore-import-title">
       <div className="lore-workspace-heading">
-        <div><p className="panel-eyebrow">Fuentes locales no confiables</p><h2 id="lore-import-title">Importar lore revisable</h2></div>
+        <div><p className="panel-eyebrow">Texto externo · todavía no es canon</p><h2 id="lore-import-title">Importar material del mundo</h2></div>
         <p role="status" className="panel-summary">{status}</p>
       </div>
       {session.read_only && <p className="notice warning">Estás viendo una versión anterior. Vuelve a la versión actual para crear o continuar lotes.</p>}
@@ -372,7 +372,7 @@ export function LoreImportWorkspace({ launchId }: { launchId: number | null }) {
           <button type="button" className="ghost" disabled={!batch || Boolean(activeRequestId)} onClick={deleteBatch}>{deleteArmed ? "Confirmar eliminar lote" : "Eliminar lote"}</button>
         </div>
       </div>
-      {!batch && <p className="empty-state">Selecciona varios Markdown o textos. Se copian a staging inerte y puedes cerrar el proyecto sin perder el lote.</p>}
+      {!batch && <p className="empty-state">Selecciona archivos Markdown o texto. Nirmata guarda una copia temporal que puedes revisar sin modificar los originales.</p>}
       {batch && (
         <>
           <div className="lore-source-grid">

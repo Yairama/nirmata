@@ -20,7 +20,7 @@ El corte incluye:
 - identidad y validacion minima de `World`;
 - esquema SQLite versionado con revision inicial;
 - casos de uso `create_world`, `open_world` y `close_world`;
-- frontend React + TypeScript, Vite, Radix y CSS semántico.
+- frontend React + TypeScript, Vite, Radix y Tailwind CSS v4 sobre tokens semánticos.
 
 Empieza por [`docs/README.md`](docs/README.md).
 

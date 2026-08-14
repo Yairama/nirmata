@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -9,6 +10,15 @@ pub struct ResponseRequest {
     pub instructions: String,
     pub input: String,
     pub max_output_tokens: Option<u32>,
+    pub json_schema: Option<ResponseJsonSchema>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseJsonSchema {
+    pub name: String,
+    pub schema: Value,
+    pub strict: bool,
 }
 
 impl ResponseRequest {
@@ -22,11 +32,26 @@ impl ResponseRequest {
             instructions: instructions.into(),
             input: input.into(),
             max_output_tokens: None,
+            json_schema: None,
         }
     }
 
     pub fn with_max_output_tokens(mut self, value: u32) -> Self {
         self.max_output_tokens = Some(value);
+        self
+    }
+
+    pub fn with_json_schema(
+        mut self,
+        name: impl Into<String>,
+        schema: Value,
+        strict: bool,
+    ) -> Self {
+        self.json_schema = Some(ResponseJsonSchema {
+            name: name.into(),
+            schema,
+            strict,
+        });
         self
     }
 }

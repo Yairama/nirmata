@@ -189,6 +189,12 @@ struct ReviewKeyCommand {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EntityCommand {
+    entity_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReviewOperationCommand {
     review_key: String,
     operation_id: String,
@@ -1310,6 +1316,16 @@ fn preview_manual_draft(
 }
 
 #[tauri::command]
+fn prepare_entity_deletion(
+    input: EntityCommand,
+    state: State<'_, Arc<Mutex<NirmataApp>>>,
+) -> Result<ManualReviewSnapshot, CommandError> {
+    lock_app(&state)?
+        .prepare_entity_deletion(parse_entity_id(&input.entity_id)?)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 fn apply_manual_review_action(
     input: ManualReviewActionCommand,
     state: State<'_, Arc<Mutex<NirmataApp>>>,
@@ -1920,7 +1936,7 @@ fn provider_diagnostic_status_from_config(
     } else {
         (
             "connection_unchecked",
-            "Configuración local completa. Comprueba la conexión antes de usar IA.",
+            "Configuración lista. Puedes usar IA; comprobar el acceso es opcional.",
             true,
         )
     };
@@ -2417,6 +2433,7 @@ fn main() {
             acknowledge_ai_critique,
             cancel_ai_request,
             preview_manual_draft,
+            prepare_entity_deletion,
             apply_manual_review_action,
             list_pending_reviews,
             read_manual_review,

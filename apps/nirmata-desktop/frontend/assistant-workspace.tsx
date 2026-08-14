@@ -3,7 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useReducer, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { clearError, commandCode, humanize, labelForUri, showError } from "./helpers.js";
+import { clearError, humanize, labelForUri, showError } from "./helpers.js";
 import { showAiCommandError } from "./feedback.js";
 import type { AiFailureObservation } from "./feedback.js";
 import { useObjectPicker } from "./object-picker.js";
@@ -30,6 +30,7 @@ import type {
   WorldSession,
 } from "./types.js";
 import { selectUri, selectUriInScope } from "./workspace.js";
+import { Icon } from "./icons.js";
 
 export type AssistantMode = "query" | "propose" | "deep_impact" | "audit";
 export type ProposalTemplate = "faction" | "city" | "character" | "conflict" | "chronology" | "consequences";
@@ -209,10 +210,12 @@ function currentOrigin(session: WorldSession, selectedUri: string | null): Propo
   };
 }
 
-export function AssistantWorkspace({ active, intent, onClose }: {
+export function AssistantWorkspace({ active, intent, onClose, onOpenSettings, onOpenReviews }: {
   active: boolean;
   intent: AssistantIntent | null;
   onClose: () => void;
+  onOpenSettings: () => void;
+  onOpenReviews: () => void;
 }) {
   const session = useSession();
   const selectedUri = useAppState().selectedUri;
@@ -220,11 +223,11 @@ export function AssistantWorkspace({ active, intent, onClose }: {
   const [workspace, dispatch] = useReducer(reducer, undefined, initialState);
   const workspaceRef = useRef(workspace);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const settingsRef = useRef<HTMLDetailsElement>(null);
-  const credentialRef = useRef<HTMLInputElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const aiObservation = useRef<AiFailureObservation>({ startedAtMs: Date.now(), phase: "preparing", receivedCharacters: 0 });
   const handledIntent = useRef<number | null>(null);
   const [templateScale, setTemplateScale] = useState<ProposalScale>("small");
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   workspaceRef.current = workspace;
 
   useEffect(() => {
@@ -241,7 +244,7 @@ export function AssistantWorkspace({ active, intent, onClose }: {
     enabled: Boolean(session),
     retry: false,
   });
-  const providerReady = provider.data?.connected === true;
+  const providerReady = provider.data?.canCheckConnection === true;
   const activeConversation = workspace.conversations.find((item) => item.id === workspace.activeConversationId) ?? null;
   const running = workspace.activeRequestId !== null;
   const writeBlocked = Boolean(session?.read_only && isWriteMode(workspace.mode));
@@ -366,9 +369,15 @@ export function AssistantWorkspace({ active, intent, onClose }: {
         mode,
         proposalOrigin: null,
         confirmingTurnId: null,
-        ...(mode === "query" ? { view: "conversation" as const, activeDeepRun: null, deepPlan: null } : {}),
+        view: "conversation",
+        activeRun: null,
+        activeRunOrigin: null,
+        activeDeepRun: null,
+        deepPlan: null,
+        progress: "",
       },
     });
+    setTemplatesOpen(false);
   }
 
   function startProposal(request = "", origin: ProposalOrigin | null = null): void {
@@ -376,7 +385,8 @@ export function AssistantWorkspace({ active, intent, onClose }: {
       showError("Vuelve a la versión actual antes de proponer cambios.");
       return;
     }
-    dispatch({ type: "patch", value: { mode: "propose", request, proposalOrigin: origin, confirmingTurnId: null } });
+    dispatch({ type: "patch", value: { mode: "propose", request, proposalOrigin: origin, confirmingTurnId: null, view: "conversation", activeRun: null, activeDeepRun: null, deepPlan: null, progress: "" } });
+    setTemplatesOpen(false);
     window.setTimeout(() => inputRef.current?.focus());
   }
 
@@ -534,7 +544,11 @@ export function AssistantWorkspace({ active, intent, onClose }: {
             }
           : item);
         persistConversations(conversations);
-        dispatch({ type: "patch", value: { conversations, activeConversationId: conversation.id, view: "conversation" } });
+        dispatch({ type: "patch", value: { conversations, activeConversationId: conversation.id, request: "", view: "conversation" } });
+        window.setTimeout(() => {
+          const transcript = transcriptRef.current;
+          if (typeof transcript?.scrollIntoView === "function") transcript.scrollIntoView({ block: "start" });
+        });
       } else if (workspace.mode === "propose") {
         if (workspace.proposalOrigin && !originIsCurrent(session, workspace.proposalOrigin)) {
           showError("La versión observada cambió. Repite la consulta antes de preparar cambios.");
@@ -553,7 +567,7 @@ export function AssistantWorkspace({ active, intent, onClose }: {
         });
         dispatch({ type: "patch", value: { deepPlan: { plan, origin }, activeDeepRun: null, view: "deep_plan" } });
       }
-      dispatch({ type: "patch", value: { progress: "Ejecución completada." } });
+      dispatch({ type: "patch", value: { progress: workspace.mode === "query" ? "" : "Propuesta preparada. Revísala antes de aplicarla." } });
     } catch (value) {
       showAiCommandError(value, aiObservation.current);
       dispatch({ type: "patch", value: { progress: "La ejecución terminó sin modificar el canon. Puedes reintentar." } });
@@ -601,96 +615,31 @@ export function AssistantWorkspace({ active, intent, onClose }: {
     }
   }
 
-  async function revalidateRun(): Promise<void> {
-    if (!workspace.activeRun || !session || session.read_only) return;
-    if (!workspace.activeRunOrigin || !originIsCurrent(session, workspace.activeRunOrigin)) {
-      showError("La versión observada cambió. Vuelve a Cambios para actualizar esta propuesta.");
-      return;
-    }
-    const requestId = crypto.randomUUID();
-    setRunning(requestId);
-    try {
-      const run = await invoke<AiRunSnapshot>("revalidate_ai_run", {
-        input: { requestId, runId: workspace.activeRun.id, anchorUri: selectedUri },
-      });
-      dispatch({ type: "patch", value: { activeRun: run, view: workspace.activeDeepRun ? "deep_run" : "run" } });
-      await invalidatePendingReview(run);
-    } catch (value) {
-      showAiCommandError(value, aiObservation.current);
-    } finally {
-      setRunning(null);
-    }
-  }
-
-  async function diagnoseProvider(): Promise<void> {
-    const requestId = crypto.randomUUID();
-    setRunning(requestId);
-    aiObservation.current.phase = "checking_connection";
-    dispatch({ type: "patch", value: { progress: "Comprobando credencial, endpoint y modelo sin usar contexto del mundo…" } });
-    try {
-      const status = await invoke<AiProviderDiagnosticStatus>("diagnose_ai_provider", { input: { requestId } });
-      queryClient.setQueryData(providerStatusKey, status);
-      dispatch({ type: "patch", value: { progress: "Conexión verificada. No se creó ninguna propuesta." } });
-    } catch (value) {
-      const code = commandCode(value);
-      queryClient.setQueryData<AiProviderDiagnosticStatus | undefined>(providerStatusKey, (current) => current ? { ...current, connected: false } : current);
-      dispatch({
-        type: "patch",
-        value: {
-          progress: code === "provider_timeout"
-            ? "El proveedor no respondió a tiempo. Revisa red y endpoint."
-            : code === "provider_http_error"
-              ? "El proveedor rechazó la credencial, el endpoint o el modelo."
-              : code === "provider_transport_error"
-                ? "No se pudo conectar al endpoint configurado."
-                : "La comprobación falló. Revisa la configuración del proveedor.",
-        },
-      });
-      showAiCommandError(value, aiObservation.current);
-    } finally {
-      setRunning(null);
-    }
-  }
-
-  async function saveCredential(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const apiKey = String(new FormData(form).get("assistant-api-key") ?? "").trim();
-    if (!apiKey) return;
-    try {
-      await invoke("set_provider_api_key", { apiKey });
-      form.reset();
-      await queryClient.invalidateQueries({ queryKey: providerStatusKey });
-    } catch (value) {
-      showError(value);
-    }
-  }
-
-  async function clearCredential(): Promise<void> {
-    try {
-      await invoke("clear_provider_api_key");
-      await queryClient.invalidateQueries({ queryKey: providerStatusKey });
-    } catch (value) {
-      showError(value);
-    }
-  }
-
   const contextLabel = workspace.mode === "propose" && workspace.proposalOrigin
     ? `Contexto heredado de la consulta: ${workspace.proposalOrigin.contextLabel}.`
     : selectedUri
       ? "La solicitud usará el objeto seleccionado como contexto."
       : "Sin selección: se usará contexto general acotado.";
   const submitLabel = workspace.mode === "query"
-    ? "Consultar"
+    ? "Enviar pregunta"
     : workspace.mode === "propose"
-      ? "Generar propuesta"
+      ? "Preparar propuesta"
       : workspace.mode === "audit"
         ? "Preparar auditoría"
         : "Preparar revisión profunda";
-  const showFinalCritique = Boolean(workspace.mode !== "audit"
-    && workspace.activeRun?.reviewKey
-    && workspace.activeRun.status !== "ready_to_commit"
-    && workspace.activeRun.status !== "committed");
+  const composing = workspace.view === "conversation";
+  const queryMode = workspace.mode === "query";
+  const proposalMode = workspace.mode === "propose";
+  const canGoBack = templatesOpen || workspace.view !== "conversation";
+
+  function goBack() {
+    if (templatesOpen) {
+      setTemplatesOpen(false);
+      return;
+    }
+    dispatch({ type: "patch", value: { view: "conversation", progress: "" } });
+    window.setTimeout(() => inputRef.current?.focus());
+  }
 
   return (
     <Dialog.Root open={active} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -704,21 +653,21 @@ export function AssistantWorkspace({ active, intent, onClose }: {
           }}
         >
       <section id="assistant-panel" className="assistant-panel" aria-labelledby="assistant-title" aria-modal="true">
-        <Dialog.Close asChild><button type="button" className="assistant-sheet-close ghost">Cerrar asistente</button></Dialog.Close>
-        <div className="assistant-heading">
-           <div><p className="panel-eyebrow">Microsoft Foundry · lectura controlada</p><Dialog.Title asChild><h3 id="assistant-title">Asistente del canon</h3></Dialog.Title></div>
-          <div className="provider-diagnostic">
-            <div className={`credential-status ${providerReady ? "ready" : "warning"}`} title={provider.data?.credential.limitation ?? undefined}>
-              {provider.isPending ? "Comprobando configuración…" : provider.data?.message ?? "No se pudo comprobar la configuración."}
-            </div>
-            <div className="pending-actions">
-              <button type="button" className="secondary" disabled={!provider.data?.canCheckConnection || running} onClick={() => void diagnoseProvider()}>Probar conexión</button>
-               <button type="button" className="ghost" onClick={() => { if (settingsRef.current) settingsRef.current.open = true; window.setTimeout(() => credentialRef.current?.focus()); }}>Configurar IA</button>
-            </div>
-          </div>
+        <header className="assistant-shell-header">
+          <button type="button" className="icon-button" aria-label="Volver en el asistente" title="Volver" disabled={!canGoBack} onClick={goBack}><Icon name="arrow-left" /></button>
+          <div className="assistant-heading"><p className="panel-eyebrow">{queryMode ? "Solo lectura" : proposalMode ? "Cambios revisables" : "Análisis avanzado"}</p><Dialog.Title asChild><h2 id="assistant-title">Asistente</h2></Dialog.Title></div>
+          <Dialog.Close asChild><button type="button" className="icon-button assistant-sheet-close" aria-label="Cerrar asistente" title="Cerrar asistente"><Icon name="x" /></button></Dialog.Close>
+        </header>
+        <div className="assistant-scroll-region">
+        <div className="assistant-task-tabs" role="tablist" aria-label="Tarea del asistente">
+          <button type="button" role="tab" aria-selected={queryMode} disabled={running} onClick={() => updateMode("query")}>Preguntar</button>
+          <button type="button" role="tab" aria-selected={proposalMode} disabled={running || Boolean(session?.read_only)} onClick={() => startProposal()}>Proponer un cambio</button>
         </div>
-        <div className="assistant-conversations">
-          <label>Conversación local
+        <p id="assistant-context" className="assistant-context">{contextLabel}</p>
+        {queryMode && <details className="assistant-history">
+          <summary>Historial de conversaciones</summary>
+          <div className="assistant-conversations">
+            <label>Conversación
             <select
               id="assistant-conversation-select"
               name="assistant-conversation"
@@ -727,20 +676,21 @@ export function AssistantWorkspace({ active, intent, onClose }: {
             >
               {workspace.conversations.map((conversation) => <option key={conversation.id} value={conversation.id}>{conversation.title}</option>)}
             </select>
-          </label>
-          <div className="pending-actions">
-            <button type="button" className="secondary" disabled={running} onClick={newConversation}>Nueva conversación</button>
-            <button type="button" className="ghost" disabled={running || (workspace.conversations.length === 1 && (activeConversation?.turns.length ?? 0) === 0)} onClick={deleteConversation}>{workspace.deleteArmed ? "Confirmar eliminación" : "Eliminar"}</button>
+            </label>
+            <div className="pending-actions">
+              <button type="button" className="secondary" disabled={running} onClick={newConversation}>Nueva</button>
+              <button type="button" className="ghost" disabled={running || (workspace.conversations.length === 1 && (activeConversation?.turns.length ?? 0) === 0)} onClick={deleteConversation}>{workspace.deleteArmed ? "Confirmar eliminación" : "Eliminar"}</button>
+            </div>
+            <p>Se guarda solo en este equipo y no forma parte del canon.</p>
           </div>
-          <p>Historial guardado en este equipo · no es canon.</p>
-        </div>
-        <div className="assistant-controls">
-          <div className="mode-switch" role="group" aria-label="Modo del asistente">
-            <button type="button" className={workspace.mode === "query" ? undefined : "secondary"} aria-pressed={workspace.mode === "query"} disabled={running} onClick={() => updateMode("query")}>Consultar</button>
-            <button type="button" className={workspace.mode === "propose" ? undefined : "secondary"} aria-pressed={workspace.mode === "propose"} disabled={running || Boolean(session?.read_only)} onClick={() => startProposal()}>Proponer cambios</button>
-          </div>
-          <details className="assistant-advanced-modes">
-            <summary>Perfiles avanzados</summary>
+        </details>}
+        {composing && !provider.isPending && !providerReady && <section className="notice warning assistant-provider-required">
+          <h4>Configura la IA una sola vez</h4>
+          <p>{provider.data?.message ?? "Falta completar la conexión con Microsoft Foundry."}</p>
+          <button type="button" className="secondary" onClick={onOpenSettings}>Abrir Ajustes de IA</button>
+        </section>}
+        {composing && (queryMode || proposalMode) && <details className="assistant-advanced-modes">
+            <summary>Más opciones</summary>
             <div className="assistant-advanced-options">
               <button type="button" className={`assistant-profile${workspace.mode === "deep_impact" ? "" : " secondary"}`} aria-pressed={workspace.mode === "deep_impact"} disabled={running || Boolean(session?.read_only)} onClick={() => updateMode("deep_impact")}>
                 <strong>Revisión profunda</strong><span>Especialistas de solo lectura analizan el impacto. La síntesis prepara una propuesta, pero nunca la aplica.</span>
@@ -749,10 +699,9 @@ export function AssistantWorkspace({ active, intent, onClose }: {
                 <strong>Auditoría del canon</strong><span>Busca problemas y presenta hallazgos orientativos. Es solo lectura y no crea propuestas.</span>
               </button>
             </div>
-          </details>
-          <p id="assistant-context" className="muted">{contextLabel}</p>
-        </div>
-        {workspace.mode === "propose" && (
+          </details>}
+        {composing && proposalMode && !templatesOpen && <button type="button" className="secondary assistant-template-open" disabled={running} onClick={() => setTemplatesOpen(true)}>Usar una plantilla</button>}
+        {composing && proposalMode && templatesOpen && (
           <section id="assistant-template-catalog" className="assistant-template-catalog" aria-labelledby="assistant-template-title">
             <div className="assistant-template-heading">
               <div><p className="panel-eyebrow">Expansión guiada</p><h4 id="assistant-template-title">Empezar desde una plantilla</h4></div>
@@ -767,29 +716,26 @@ export function AssistantWorkspace({ active, intent, onClose }: {
             <div className="assistant-template-grid">
               {templates.map((template) => <button key={template.id} type="button" className="assistant-template-card secondary" data-template={template.id} disabled={running || Boolean(session?.read_only)} onClick={() => void prepareTemplate(template.id)}><strong>{template.label}</strong><span>{template.detail}</span></button>)}
             </div>
+            <button type="button" className="ghost" onClick={() => setTemplatesOpen(false)}>Volver</button>
           </section>
         )}
-        <form className="assistant-form" onSubmit={(event) => void submitAssistant(event)}>
-          <label>Solicitud
-            <textarea id="assistant-input" ref={inputRef} name="assistant-request" rows={3} autoComplete="off" placeholder="Pregunta por el canon o solicita una propuesta revisable." value={workspace.request} disabled={running} onChange={(event) => dispatch({ type: "patch", value: { request: event.currentTarget.value } })} />
+        {composing && !templatesOpen && <form className="assistant-form" onSubmit={(event) => void submitAssistant(event)}>
+          <label>{queryMode ? "Tu pregunta" : proposalMode ? "Cambio que quieres preparar" : "Qué quieres analizar"}
+            <textarea id="assistant-input" ref={inputRef} name="assistant-request" rows={3} autoComplete="off" placeholder={queryMode ? "Ej.: ¿Qué sabemos de esta ciudad?" : proposalMode ? "Ej.: Añade una tensión política a esta ciudad." : "Describe el análisis que necesitas."} value={workspace.request} disabled={running} onChange={(event) => dispatch({ type: "patch", value: { request: event.currentTarget.value } })} />
           </label>
           <div className="pending-actions">
-            <button id="assistant-submit" type="submit" disabled={running || !providerReady || writeBlocked}>{submitLabel}</button>
-            <button type="button" className="secondary" disabled={!running} onClick={() => { if (workspace.activeRequestId) void invoke("cancel_ai_request", { requestId: workspace.activeRequestId }); }}>Cancelar</button>
-            {showFinalCritique && <button type="button" className="secondary" disabled={running || Boolean(session?.read_only)} onClick={() => void revalidateRun()}>Revalidar crítica final</button>}
+            <button id="assistant-submit" type="submit" disabled={running || !providerReady || writeBlocked || !workspace.request.trim()}>{submitLabel}</button>
+            {running && <button type="button" className="secondary" onClick={() => { if (workspace.activeRequestId) void invoke("cancel_ai_request", { requestId: workspace.activeRequestId }); }}>Cancelar</button>}
           </div>
-        </form>
-        <div className="assistant-progress" aria-live="polite">{workspace.progress}</div>
-        <div className="assistant-transcript" aria-live="polite">
-          {workspace.view === "conversation" && <ConversationView
+        </form>}
+        {composing && queryMode && (activeConversation?.turns.length ?? 0) === 0 && !workspace.request && <section className="assistant-example"><p><strong>Ejemplo:</strong> ¿Qué tensiones ya aparecen en el canon?</p><button type="button" className="ghost" onClick={() => { dispatch({ type: "patch", value: { request: "¿Qué tensiones ya aparecen en el canon?" } }); inputRef.current?.focus(); }}>Usar ejemplo</button></section>}
+        {workspace.progress && <div className="assistant-progress" aria-live="polite">{workspace.progress}</div>}
+        <div ref={transcriptRef} className="assistant-transcript" aria-live="polite">
+          {workspace.view === "conversation" && queryMode && <ConversationView
             conversation={activeConversation}
             streamedText={running && workspace.mode === "query" ? workspace.streamedText : ""}
             confirmingTurnId={workspace.confirmingTurnId}
             readOnly={Boolean(session?.read_only)}
-            examplesHidden={Boolean(session && localStorage.getItem(`nirmata.assistant.examples.hidden.${session.world_id}`) === "true")}
-            onExampleQuery={() => { dispatch({ type: "patch", value: { mode: "query", request: "¿Qué tensiones ya aparecen en el canon?" } }); inputRef.current?.focus(); }}
-            onExampleProposal={() => startProposal("Propón una consecuencia directa de la selección actual.")}
-            onHideExamples={() => { if (session) localStorage.setItem(`nirmata.assistant.examples.hidden.${session.world_id}`, "true"); dispatch({ type: "patch", value: {} }); }}
             onOpenCitation={(uri, scope) => void selectUriInScope(uri, scope).catch(showError)}
             onConfirm={(turnId) => dispatch({ type: "patch", value: { confirmingTurnId: turnId } })}
             onCancelConfirm={() => dispatch({ type: "patch", value: { confirmingTurnId: null } })}
@@ -801,20 +747,12 @@ export function AssistantWorkspace({ active, intent, onClose }: {
               startProposal(turn.response.proposalAction?.request ?? "", turn.origin);
             }}
           />}
-          {workspace.view === "run" && workspace.activeRun && <RunView run={workspace.activeRun} providerReady={providerReady} running={running} writeAllowed={Boolean(session && !session.read_only && workspace.activeRunOrigin && originIsCurrent(session, workspace.activeRunOrigin))} onContinue={continueIntentBrief} onRunChange={(run) => { dispatch({ type: "patch", value: { activeRun: run } }); void invalidatePendingReview(run); }} />}
+          {workspace.view === "run" && workspace.activeRun && <RunView run={workspace.activeRun} providerReady={providerReady} running={running} writeAllowed={Boolean(session && !session.read_only && workspace.activeRunOrigin && originIsCurrent(session, workspace.activeRunOrigin))} onContinue={continueIntentBrief} />}
           {workspace.view === "deep_plan" && workspace.deepPlan && <DeepPlanView key={`${workspace.deepPlan.plan.mode}:${workspace.deepPlan.plan.request}`} prepared={workspace.deepPlan} running={running} onExecute={executeDeepReview} />}
           {workspace.view === "deep_run" && workspace.activeDeepRun && <DeepRunView run={workspace.activeDeepRun} readOnly={Boolean(session?.read_only)} />}
         </div>
-        <details ref={settingsRef} className="credential-settings">
-          <summary>Credencial del proveedor</summary>
-          <form className="compact-form" onSubmit={(event) => void saveCredential(event)}>
-            <label>Reemplazar clave<input ref={credentialRef} name="assistant-api-key" type="password" autoComplete="off" /></label>
-            <div className="pending-actions">
-              <button type="submit">Guardar en almacén seguro</button>
-              <button type="button" className="ghost" disabled={!provider.data?.credential.configured} onClick={() => void clearCredential()}>Borrar clave</button>
-            </div>
-          </form>
-        </details>
+        {workspace.view === "run" && workspace.activeRun?.reviewKey && !workspace.activeRun.intentBrief && <div className="assistant-result-actions"><button type="button" onClick={onOpenReviews}>Abrir en Cambios</button><button type="button" className="secondary" onClick={() => startProposal()}>Preparar otra propuesta</button></div>}
+        </div>
       </section>
         </Dialog.Content>
       </Dialog.Portal>
@@ -822,22 +760,18 @@ export function AssistantWorkspace({ active, intent, onClose }: {
   );
 }
 
-function ConversationView({ conversation, streamedText, confirmingTurnId, readOnly, examplesHidden, onExampleQuery, onExampleProposal, onHideExamples, onOpenCitation, onConfirm, onCancelConfirm, onConvert }: {
+function ConversationView({ conversation, streamedText, confirmingTurnId, readOnly, onOpenCitation, onConfirm, onCancelConfirm, onConvert }: {
   conversation: AssistantConversation | null;
   streamedText: string;
   confirmingTurnId: string | null;
   readOnly: boolean;
-  examplesHidden: boolean;
-  onExampleQuery: () => void;
-  onExampleProposal: () => void;
-  onHideExamples: () => void;
   onOpenCitation: (uri: string, scope: ReadScope) => void;
   onConfirm: (turnId: string) => void;
   onCancelConfirm: () => void;
   onConvert: (turn: AssistantConversationTurn) => void;
 }) {
   if (!conversation || conversation.turns.length === 0) {
-    return <><p className="empty-state">Esta conversación está vacía. Las respuestas se guardan en este equipo y nunca se vuelven canon.</p>{!examplesHidden && <section className="assistant-examples"><h4>Ejemplos para empezar</h4><button type="button" className="ghost" onClick={onExampleQuery}>¿Qué tensiones ya aparecen en el canon?</button><button type="button" className="ghost" disabled={readOnly} onClick={onExampleProposal}>Proponer una consecuencia de la selección</button><button type="button" className="ghost" onClick={onHideExamples}>Ocultar ejemplos</button></section>}{streamedText && <article className="assistant-message"><strong>Stream estructurado en curso</strong><pre>{streamedText}</pre></article>}</>;
+    return streamedText ? <article className="assistant-message"><strong>Recibiendo respuesta</strong><pre>{streamedText}</pre></article> : null;
   }
   return <>{conversation.turns.map((turn) => <QueryTurn key={turn.id} turn={turn} confirming={confirmingTurnId === turn.id} readOnly={readOnly} onOpenCitation={onOpenCitation} onConfirm={() => onConfirm(turn.id)} onCancelConfirm={onCancelConfirm} onConvert={() => onConvert(turn)} />)}{streamedText && <article className="assistant-message"><strong>Stream estructurado en curso</strong><pre>{streamedText}</pre></article>}</>;
 }
@@ -854,20 +788,19 @@ function QueryTurn({ turn, confirming, readOnly, onOpenCitation, onConfirm, onCa
   const convertRef = useRef<HTMLButtonElement>(null);
   return <>
     <article className="assistant-message user-message"><div className="badge-row"><strong>Tú</strong><span className="muted">{turn.origin.contextLabel} · {new Date(turn.createdAtMs).toLocaleString()}</span></div><p>{turn.request}</p></article>
-    {turn.response.items.map((item) => <article className="assistant-message" key={item.itemId}><div className="badge-row"><strong>{humanize(item.classification)}</strong></div><p>{item.markdown}</p>{item.citations.length > 0 && <div className="assistant-sources">{item.citations.map((citation, index) => <button key={`${citation.source.uri}-${index}`} type="button" className="ghost" title={citation.quoteMd} onClick={() => onOpenCitation(citation.source.uri, turn.response.snapshot.readScope)}>{citation.source.snippet || "Abrir fuente"}</button>)}</div>}</article>)}
+    {turn.response.items.map((item) => <article className="assistant-message" key={item.itemId}><div className="badge-row"><strong>{humanize(item.classification)}</strong></div><p>{item.markdown}</p>{item.citations.length > 0 && <div className="assistant-sources">{Array.from(new Map(item.citations.map((citation) => [citation.source.uri, citation])).values()).map((citation) => <button key={citation.source.uri} type="button" className="ghost" title={citation.quoteMd} onClick={() => onOpenCitation(citation.source.uri, turn.response.snapshot.readScope)}>{citation.source.snippet || "Abrir fuente"}</button>)}</div>}</article>)}
     {turn.response.proposalAction?.action === "start_proposal" && <article className="assistant-message proposal-action"><p>Esta respuesta puede convertirse en una propuesta revisable. El mundo no cambiará automáticamente.</p>{!confirming ? <button ref={convertRef} type="button" className="secondary" disabled={readOnly} title={readOnly ? "Vuelve a la versión actual para proponer cambios." : ""} onClick={onConfirm}>Convertir en propuesta</button> : <div className="proposal-confirmation"><h4>Confirmar paso a propuesta</h4><blockquote>{turn.response.proposalAction.request}</blockquote><p>Contexto: {turn.origin.contextLabel} · versión actual · {turn.origin.sourceCount} fuentes heredadas</p><p>Esto preparará cambios revisables. No modifica el mundo hasta usar «Aplicar al mundo».</p><div className="pending-actions"><button type="button" className="ghost" autoFocus onClick={() => { onCancelConfirm(); window.setTimeout(() => convertRef.current?.focus()); }}>Cancelar</button><button type="button" className="secondary" onClick={onConvert}>Continuar a Proponer cambios</button></div></div>}</article>}
   </>;
 }
 
-function RunView({ run, providerReady, running, writeAllowed, onContinue, onRunChange }: {
+function RunView({ run, providerReady, running, writeAllowed, onContinue }: {
   run: AiRunSnapshot;
   providerReady: boolean;
   running: boolean;
   writeAllowed: boolean;
   onContinue: (run: AiRunSnapshot, edited: { objective: string; scope: string; entities: SearchResult[]; restrictions: string[]; scale?: ProposalScale }) => Promise<void>;
-  onRunChange: (run: AiRunSnapshot) => void;
 }) {
-  return <article className="assistant-message proposal"><h4>{run.intentBrief?.objective ?? run.draft?.objective ?? "Ejecución de propuesta"}</h4><p>Estado: {humanize(run.status)} · reparaciones: {run.repairCount}</p>{run.intentBrief && <IntentBriefForm key={run.id} run={run} providerReady={providerReady} running={running} writeAllowed={writeAllowed} onContinue={onContinue} />}{run.critiqueReport?.issues.map((issue) => <CritiqueIssue key={issue.issueId} run={run} issue={issue} writeAllowed={writeAllowed} onRunChange={onRunChange} />)}</article>;
+  return <article className="assistant-message proposal"><h4>{run.intentBrief?.objective ?? run.draft?.objective ?? "Propuesta preparada"}</h4>{run.intentBrief ? <IntentBriefForm key={run.id} run={run} providerReady={providerReady} running={running} writeAllowed={writeAllowed} onContinue={onContinue} /> : <p>La propuesta está fuera del canon. Revísala en Cambios antes de decidir si la aplicas.</p>}</article>;
 }
 
 function IntentBriefForm({ run, providerReady, running, writeAllowed, onContinue }: {
@@ -895,22 +828,6 @@ function IntentBriefForm({ run, providerReady, running, writeAllowed, onContinue
     {brief.template && <label>Escala<select name="intent-scale" value={scale} onChange={(event) => setScale(event.currentTarget.value as ProposalScale)}><option value="small">Pequeña · máximo 3 operaciones</option><option value="medium">Mediana · máximo 6 operaciones</option></select></label>}
     <button type="submit" className="secondary" disabled={!providerReady || running || !writeAllowed} title={!writeAllowed ? "La versión observada cambió. Prepara de nuevo el brief." : providerReady ? "" : "Configura y verifica la IA para continuar. El brief ya está guardado."}>Continuar al proveedor</button>
   </form>;
-}
-
-type CritiqueIssueValue = NonNullable<AiRunSnapshot["critiqueReport"]>["issues"][number];
-function CritiqueIssue({ run, issue, writeAllowed, onRunChange }: { run: AiRunSnapshot; issue: CritiqueIssueValue; writeAllowed: boolean; onRunChange: (run: AiRunSnapshot) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [judgment, setJudgment] = useState("");
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (!judgment.trim() || !writeAllowed) return;
-    try {
-      onRunChange(await invoke<AiRunSnapshot>("acknowledge_ai_critique", { input: { runId: run.id, issueId: issue.issueId, judgment: judgment.trim() } }));
-    } catch (value) {
-      showError(value);
-    }
-  }
-  return <div className={`assistant-issue ${issue.severity}`}><p>{humanize(issue.severity)}: {issue.summary.markdown}</p>{issue.evidence.map((evidence) => <button key={evidence.sourceUri} type="button" className="ghost" title={evidence.excerptMd} onClick={() => void selectUri(evidence.sourceUri)}>{evidence.sourceUri}</button>)}{issue.severity === "conflict" && run.reviewKey && !editing && <button type="button" className="secondary" disabled={!writeAllowed} title={writeAllowed ? "" : "Vuelve al scope donde se preparó esta propuesta."} onClick={() => setEditing(true)}>Registrar decisión humana</button>}{editing && <form className="inline-review-form" onSubmit={(event) => void submit(event)}><label>Por qué aceptas o corregirás este hallazgo<textarea name="critique-judgment" required autoFocus value={judgment} onChange={(event) => setJudgment(event.currentTarget.value)} /></label><div className="pending-actions"><button type="submit" disabled={!writeAllowed}>Guardar decisión</button><button type="button" className="ghost" onClick={() => setEditing(false)}>Cancelar</button></div></form>}</div>;
 }
 
 function DeepPlanView({ prepared, running, onExecute }: { prepared: DeepPlanState; running: boolean; onExecute: (prepared: DeepPlanState, roles: SpecialistRole[]) => Promise<void> }) {

@@ -1,6 +1,6 @@
 use nirmata_app::{
-    DraftOperationInput, ManualDraftRequest, ManualReviewFreshnessStatus, ManualReviewInput,
-    NirmataApp, PendingReviewOrigin,
+    DraftOperationInput, ManualDraftRequest, ManualReviewActionRequest,
+    ManualReviewFreshnessStatus, ManualReviewInput, NirmataApp, PendingReviewOrigin,
 };
 use nirmata_core::{
     World,
@@ -200,6 +200,85 @@ fn corrupted_pending_payload_fails_open_without_activating_the_world() {
         .expect_err("corruption must fail open");
     assert!(error.to_string().contains("invalid typed data"));
     assert!(app.get_current_world().expect("inactive app").is_none());
+    drop(app);
+    fs::remove_file(path).expect("remove project");
+}
+
+#[test]
+fn entity_deletion_is_durable_reviewed_and_reversible_before_commit() {
+    let path = project_path("pending-entity-delete");
+    let world = create_world(&path);
+    let mut app = open_app(&path);
+    let entity = Entity::new(
+        world.id(),
+        EntityKind::Place,
+        "Esperanza Gris",
+        "esperanza-gris",
+        "",
+        "",
+        "{}",
+        vec![],
+        1,
+    )
+    .expect("entity");
+    let entity_id = entity.id();
+    let creation = app
+        .start_manual_review(ManualReviewInput {
+            objective: "Crear ciudad".to_owned(),
+            sources: vec![],
+            assumptions: vec![],
+            operations: vec![DraftOperationInput::CreateEntity {
+                retcon: RetconKind::Additive,
+                after: entity,
+            }],
+        })
+        .expect("creation review");
+    app.confirm_manual_review(&creation).expect("create entity");
+
+    let prepared = app
+        .prepare_entity_deletion(entity_id)
+        .expect("prepare deletion");
+    assert_eq!(prepared.operations.len(), 1);
+    assert!(prepared.operations[0].before.is_some());
+    assert!(prepared.operations[0].after.is_none());
+    assert!(!prepared.ready_to_confirm);
+    assert!(app.open_uri(&prepared.review_key).is_ok());
+
+    app.close_world().expect("close with pending deletion");
+    app.open_world(path.clone())
+        .expect("reopen pending deletion");
+    let pending = app.list_pending_reviews().expect("pending deletion");
+    assert_eq!(pending.len(), 1);
+    let operation_id = pending[0].review.operations[0].operation_id.clone();
+    let decision_id = pending[0].review.operations[0].decision_points[0]
+        .decision_point_id
+        .clone();
+    app.apply_stored_manual_review_action(
+        &prepared.review_key,
+        ManualReviewActionRequest::RecordJudgment {
+            operation_id,
+            judgment: "La ciudad fue creada por error y no tiene referencias.".to_owned(),
+        },
+    )
+    .expect("record judgment");
+    let resolved = app
+        .apply_stored_manual_review_action(
+            &prepared.review_key,
+            ManualReviewActionRequest::ResolveDecision {
+                decision_point_id: decision_id,
+                alternative: "Apply replacement".to_owned(),
+            },
+        )
+        .expect("resolve deletion");
+    assert!(resolved.ready_to_confirm);
+    app.confirm_stored_manual_review(&prepared.review_key)
+        .expect("commit deletion");
+    assert!(app.open_uri(&prepared.review_key).is_err());
+    assert!(
+        app.list_pending_reviews()
+            .expect("no pending review")
+            .is_empty()
+    );
     drop(app);
     fs::remove_file(path).expect("remove project");
 }

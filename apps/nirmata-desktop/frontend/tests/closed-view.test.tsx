@@ -108,14 +108,14 @@ describe("ClosedView", () => {
     expect(mocks.startProposal).toHaveBeenCalledOnce();
   });
 
-  test("opens Settings and About without a world", async () => {
+  test("opens Ajustes and About without a world", async () => {
     const user = userEvent.setup();
     renderClosedView();
 
-    await user.click(screen.getByRole("button", { name: "Settings" }));
-    expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Ajustes" }));
+    expect(screen.getByRole("dialog", { name: "Ajustes" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Apariencia" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Cerrar Settings" }));
+    await user.click(screen.getByRole("button", { name: "Cerrar Ajustes" }));
     await user.click(screen.getByRole("button", { name: "Acerca de" }));
     expect(screen.getByRole("dialog", { name: "Acerca de Nirmata" })).toBeTruthy();
     expect(await screen.findByText("0.1.0")).toBeTruthy();
@@ -140,7 +140,7 @@ describe("ClosedView", () => {
     });
     renderClosedView();
 
-    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("button", { name: "Ajustes" }));
     await user.click(screen.getByRole("tab", { name: "IA" }));
     const endpoint = await screen.findByRole("textbox", { name: "Endpoint de Microsoft Foundry" });
     const model = screen.getByRole("textbox", { name: "Modelo o deployment" });

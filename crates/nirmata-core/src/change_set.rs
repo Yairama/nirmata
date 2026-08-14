@@ -14,6 +14,7 @@ use crate::{
     ChangeOperationId, ChangeSetId, DecisionPointId, DomainError, RevisionId, World, WorldId,
     required,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 

@@ -91,6 +91,12 @@ function App() {
     }
   }, [desktopAction?.id]);
 
+  useEffect(() => {
+    if (!state.status) return;
+    const timeout = window.setTimeout(() => appActions.setStatus(""), 4_000);
+    return () => window.clearTimeout(timeout);
+  }, [state.status]);
+
   function startProposal(request: string) {
     intentId.current += 1;
     setHandoff({ id: intentId.current, kind: "proposal", request });
@@ -160,7 +166,7 @@ void Promise.all([
   invoke<AiActivitySnapshot>("get_ai_activity"),
 ])
   .then(([session, activity]) => {
-    appActions.resetWorkspace(session, session ? "Navegación actualizada." : "");
+    appActions.resetWorkspace(session, "");
     if (activity.busy && activity.requestIds[0]) {
       appActions.setAiActivity({
         requestId: activity.requestIds[0],

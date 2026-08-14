@@ -118,6 +118,17 @@ async fn query_rejects_change_set_output() {
 async fn query_streaming_aggregates_deltas_and_parses_output() {
     let client = test_client(SimulatedTransport::new(|request| async move {
         assert!(request.body["stream"].as_bool().expect("stream flag"));
+        assert_eq!(request.body["text"]["format"]["type"], "json_schema");
+        assert_eq!(
+            request.body["text"]["format"]["name"],
+            "nirmata_advisory_response_v2"
+        );
+        assert_eq!(request.body["text"]["format"]["strict"], true);
+        assert_eq!(
+            request.body["text"]["format"]["schema"]["required"],
+            json!(["items"])
+        );
+        assert!(request.body.get("response_format").is_none());
         let second_content = r#"{"itemId":"item-1","classification":"fact","answer":{"markdown":"Mara guarda la puerta.","contentReferences":["nirmata://entity/11111111-1111-1111-1111-111111111111"]},"citations":[{"sourceUri":"nirmata://entity/11111111-1111-1111-1111-111111111111","quoteMd":"Mara guarda la puerta."}]}"#;
         Ok(crate::TransportResponse {
             status: 200,
@@ -229,6 +240,19 @@ async fn propose_request_omits_write_capabilities() {
         .expect("captured request body");
     assert!(body.get("tools").is_none());
     assert!(body.get("functions").is_none());
+    assert_eq!(body["text"]["format"]["type"], "json_schema");
+    assert_eq!(
+        body["text"]["format"]["name"],
+        "nirmata_change_set_draft_v2"
+    );
+    assert_eq!(body["text"]["format"]["strict"], false);
+    let generated_schema = &body["text"]["format"]["schema"];
+    let generated_schema_text = generated_schema.to_string();
+    assert!(generated_schema_text.contains("DecisionPoint"));
+    assert!(generated_schema_text.contains("ChangeOperation"));
+    assert!(generated_schema_text.contains("create_entity"));
+    assert!(!generated_schema_text.contains("\"$schema\""));
+    assert!(!generated_schema_text.contains("\"format\""));
     assert!(
         body["instructions"]
             .as_str()

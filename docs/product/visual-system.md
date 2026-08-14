@@ -14,19 +14,19 @@ estado o severidad, no el subsistema.
 | Token | Light | Dark |
 |---|---|---|
 | `--n-color-canvas` | `#F5F2EA` | `#151412` |
-| `--n-color-surface` | `#FFFCF5` | `#1D1B18` |
-| `--n-color-raised` | `#FFFFFF` | `#26231F` |
-| `--n-color-subtle` | `#ECE7DC` | `#302C27` |
-| `--n-color-text` | `#24211C` | `#F1ECE2` |
-| `--n-color-text-muted` | `#625D54` | `#BDB5A8` |
-| `--n-color-border` | `#898175` | `#756E64` |
-| `--n-color-border-strong` | `#625B52` | `#AAA194` |
-| `--n-color-accent` | `#1F5C78` | `#8BC6DC` |
-| `--n-color-accent-soft` | `#DCEAF0` | `#20343D` |
-| `--n-color-action` | `#1F5C78` | `#2E6D89` |
-| `--n-color-action-hover` | `#17475D` | `#255A72` |
+| `--n-color-surface` | `#FBFCF8` | `#171E1B` |
+| `--n-color-raised` | `#FFFFFF` | `#202925` |
+| `--n-color-subtle` | `#E9ECE7` | `#28322E` |
+| `--n-color-text` | `#18201E` | `#EDF2EE` |
+| `--n-color-text-muted` | `#5E6965` | `#AAB7B1` |
+| `--n-color-border` | `#D1D7D2` | `#36433E` |
+| `--n-color-border-strong` | `#9DA8A3` | `#718079` |
+| `--n-color-accent` | `#136F68` | `#73D0C7` |
+| `--n-color-accent-soft` | `#DCEFEB` | `#173D39` |
+| `--n-color-action` | `#176F68` | `#287E76` |
+| `--n-color-action-hover` | `#0F5B56` | `#33958B` |
 | `--n-color-on-action` | `#FFFFFF` | `#FFFFFF` |
-| `--n-color-focus` | `#006A87` | `#8DD3ED` |
+| `--n-color-focus` | `#087F78` | `#80DDD3` |
 
 El contraste texto/canvas supera `14:1`; texto de accion/action supera `7:1`
 en light y `5.7:1` en dark; borde/superficie supera `3:1`.
@@ -45,13 +45,13 @@ nombre y texto. `success` describe una accion completada, no una severidad.
 
 | Estado | Light | Dark |
 |---|---|---|
-| Danger | `#A12622` / `#F5DEDA` | `#FFB4AB` / `#49201E` |
-| Warning | `#7A4B00` / `#F3E3C3` | `#F0C36A` / `#453516` |
-| Conflict | `#7A3E00` / `#F4DFC9` | `#E7A45A` / `#442B18` |
-| Info | `#1F5C78` / `#DCEAF0` | `#8BC6DC` / `#20343D` |
-| Success | `#2F6B4F` / `#DCE9DF` | `#91D5A8` / `#1E3829` |
-| Canon | `#376A47` / `#DDE9DF` | `#A4D5AF` / `#203526` |
-| Perspectiva | `#684B8A` / `#E9E0F2` | `#D0B6F4` / `#382A49` |
+| Danger | `#B43A36` / `#F8E5E3` | `#FFB4AE` / `#4C2422` |
+| Warning | `#8A5A12` / `#F8ECD2` | `#F0C879` / `#463717` |
+| Conflict | `#9A4B17` / `#F8E6DA` | `#EFAA72` / `#4A2D1C` |
+| Info | `#256789` / `#DEEDF5` | `#91CBEA` / `#183847` |
+| Success | `#287052` / `#DCEEE4` | `#8FD4AD` / `#1B3C2B` |
+| Canon | `#287052` / `#DCEEE4` | `#8FD4AD` / `#1B3C2B` |
+| Perspectiva | `#6B55A0` / `#EBE5F6` | `#CFB8F3` / `#382D4B` |
 | Inferencia | `#7A4B00` / `#F3E3C3` | `#F0C36A` / `#453516` |
 
 ## Tipografia y densidad
@@ -66,15 +66,17 @@ nombre y texto. `success` describe una accion completada, no una severidad.
 
 ## Shell responsive
 
-- `>920px`: topbar, navegacion primaria y workspace con Explorador, editor y
+- `>1180px`: topbar, navegacion primaria y workspace con Explorador, editor y
   Contexto visibles. Dos separadores ajustan las columnas laterales, permiten
   colapsarlas y conservan el editor como region flexible.
 - El layout del workspace se guarda localmente por mundo en
   `nirmata.workspace.layout.<worldId>`; cambiar de mundo no mezcla anchos ni
   estados colapsados y recargar no pierde la preferencia.
-- `<=920px`: una sola region de Mundo visible mediante tabs; no se muestran
+- `<=1180px`: una sola region de Mundo visible mediante tabs; no se muestran
   separadores ni se desmonta el estado de las otras regiones.
-- Asistente y Cambios son drawers modales independientes del grid. Cambios no
+- Asistente y Cambios son drawers modales independientes del grid. El asistente
+  conserva visible el área de origen, usa un único scroll interno y ofrece volver
+  dentro de su workflow sin convertir el drawer en una ruta primaria. Cambios no
   usa splitter vertical porque actualmente no es una fila acoplada permanente.
 - Cada region tiene scroll propio dentro de `100dvh`.
 
@@ -96,4 +98,5 @@ progreso estatico.
 7. En estrecho solo una region principal esta abierta.
 8. Forced colors y reduced motion conservan foco, seleccion y significado.
 9. Todo icon-only tiene nombre accesible.
-10. No se agrega una dependencia para colores, tipografia, iconos o motion.
+10. Tailwind consume únicamente la paleta semántica; los iconos son SVG locales
+    y no se agrega un catálogo visual paralelo.

@@ -60,7 +60,7 @@ export function hasPendingWork(): boolean {
 }
 
 export function openSession(session: WorldSession): void {
-  appActions.resetWorkspace(session, "Navegación actualizada.");
+  appActions.resetWorkspace(session, "");
 }
 
 export function closeSession(): void {

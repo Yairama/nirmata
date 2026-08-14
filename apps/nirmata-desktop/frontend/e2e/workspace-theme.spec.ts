@@ -652,6 +652,21 @@ test.beforeEach(async ({ page }) => {
             storePending(review, "simulation", "Resultados de simulación", { objectType: "event", sourceUris: [], assumptions: [], values: {} });
             return review;
           }
+          if (command === "prepare_entity_deletion") {
+            const targetUri = `nirmata://entity/${String(args?.input?.entityId ?? "")}`;
+            const orphan = localStorage.getItem("nirmata.fixture.deleteBlocked") === "true";
+            const issue = { code: "change_set.delete_orphan", severity: "error", objects: [], message: "delete operation would leave orphaned references" };
+            const report = orphan ? { ...emptyReport, errors: [issue] } : emptyReport;
+            const before = { title: "Archivo de la Aurora", objectType: "entity", targetUri, lines: [{ label: "Tipo", value: "Lugar" }] };
+            const review = {
+              reviewKey: targetUri, objective: "Eliminar Archivo de la Aurora del canon", sources: [], assumptions: [], baseRevision: variantValue.headRevisionId,
+              operations: [{ operationId: "delete-operation", decision: "accept", selected: true, severity: orphan ? "error" : "info", targetUri, dependencies: orphan ? ["nirmata://event/60000000-0000-4000-8000-000000000010"] : [], before, after: null, issues: report, effectiveIssues: report, waivers: [], decisionPoints: [{ decisionPointId: "delete-decision", prompt: "Should entity be replaced?", alternatives: ["Keep current canon", "Apply replacement"], replacementTarget: targetUri, suggestionAvailable: true, suggestionHidden: true, reason: null, resolvedAlternative: null }], risk: { requiresJudgment: true, judgment: null, suggestedResolutionAvailable: true, suggestedResolutionHidden: true, triggers: [{ code: "replacement", title: "Replacement", detail: "Requiere juicio humano." }] } }],
+              validationReport: report, effectiveReport: report, readyToConfirm: false,
+              freshness: { status: "current", currentRevision: variantValue.headRevisionId, canRevalidate: true, message: "Vigente" },
+            };
+            storePending(review, "manual", "Archivo de la Aurora", { objectType: "entity", existingUri: targetUri, sourceUris: [], assumptions: [], values: {} });
+            return review;
+          }
           if (command === "preview_manual_draft") {
             if (localStorage.getItem("nirmata.fixture.editorFailure") === "true") {
               throw { code: "storage_error", message: "raw backend failure" };
@@ -918,7 +933,7 @@ test("workspace themes are distinct, accessible and screenshotable", async ({ pa
     await expect(page.getByRole("heading", { name: "Mundo vacío", level: 1 })).toBeVisible();
     await expect(page.locator(".open-shell-topbar").getByText("Escribiendo en", { exact: true })).toBeVisible();
     await expect(page.locator(".open-shell-topbar")).not.toContainText(variant.id);
-    await expect(page.locator("#status")).toHaveText("Navegación actualizada.");
+    await expect(page.locator("#status")).toHaveCount(0);
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 
     const accessibility = await new AxeBuilder({ page }).include("main").analyze();
@@ -1158,12 +1173,15 @@ test("workspace splitters support pointer, keyboard, collapse and persisted desk
   expect(resizePerformance.longestTask).toBeLessThanOrEqual(50);
   expect(resizePerformance.fps).toBeGreaterThanOrEqual(55);
 
-  for (const viewport of [{ width: 1440, height: 960 }, { width: 960, height: 680 }]) {
-    await page.setViewportSize(viewport);
-    await expect(page.getByRole("separator")).toHaveCount(2);
-    await expect(page.locator("#workspace-shell > .panel:visible")).toHaveCount(3);
-    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
-  }
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await expect(page.getByRole("separator")).toHaveCount(2);
+  await expect(page.locator("#workspace-shell > .panel:visible")).toHaveCount(3);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
+  await page.setViewportSize({ width: 960, height: 680 });
+  await expect(page.getByRole("separator")).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "Región de Mundo" })).toBeVisible();
+  await expect(page.locator("#workspace-shell > .panel:visible")).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.screenshot({ path: testInfo.outputPath("workspace-splitters-desktop-1440x960.png") });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1190,13 +1208,13 @@ test("responsive matrix keeps one narrow World region and accessible modal overl
     await navigation.getByRole("button", { name: "Mundo", exact: true }).click();
     const regionTabs = page.getByRole("tablist", { name: "Región de Mundo" });
     const panels = page.locator("#workspace-shell > .panel:visible");
-    if (viewport.width <= 920) {
+    if (viewport.width <= 1180) {
       await expect(regionTabs).toBeVisible();
       await expect(panels).toHaveCount(1);
       await page.locator(".world-explorer-search").fill("memoria persistente");
-      await regionTabs.getByRole("tab", { name: "Editor" }).click();
+      await regionTabs.getByRole("tab", { name: "Editar" }).click();
       await expect(page.locator("#editor-panel")).toBeVisible();
-      await regionTabs.getByRole("tab", { name: "Explorador" }).click();
+      await regionTabs.getByRole("tab", { name: "Explorar" }).click();
       await expect(page.locator(".world-explorer-search")).toHaveValue("memoria persistente");
     } else {
       await expect(regionTabs).toBeHidden();
@@ -1207,7 +1225,7 @@ test("responsive matrix keeps one narrow World region and accessible modal overl
 
     const assistantTrigger = navigation.getByRole("button", { name: "Asistente", exact: true });
     await assistantTrigger.click();
-    const assistant = page.getByRole("dialog", { name: "Asistente del canon" });
+    const assistant = page.getByRole("dialog", { name: "Asistente" });
     await expect(assistant).toHaveAttribute("aria-modal", "true");
     await expect(page.locator("#root")).toHaveJSProperty("inert", true);
     await expect(page).toHaveScreenshot(`assistant-light-${viewport.width}x${viewport.height}.png`);
@@ -1234,11 +1252,11 @@ test("Import center distinguishes lore from structured snapshots", async ({ page
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Importaciones", exact: true }).click();
   const center = page.locator("#imports-panel");
     await expect(page.locator(".lore-import-workspace")).toBeVisible();
-  await center.getByRole("tab", { name: "Snapshot" }).click();
+  await center.getByRole("tab", { name: "Copias de seguridad" }).click();
   await expect(page.locator(".lore-import-workspace")).toBeHidden();
   await expect(center.getByText("Copia estructurada", { exact: false }).first()).toBeVisible();
-  await expect(center.getByRole("button", { name: "Elegir snapshot…" })).toBeEnabled();
-  await center.getByRole("tab", { name: "Lore" }).click();
+  await expect(center.getByRole("button", { name: "Elegir copia…" })).toBeEnabled();
+  await center.getByRole("tab", { name: "Textos" }).click();
   await expect(page.locator(".lore-import-workspace")).toBeVisible();
 });
 
@@ -1248,7 +1266,7 @@ test("Lore resumes persisted batches with complete candidates and advanced hashe
   await page.goto("/");
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Importaciones", exact: true }).click();
   const lore = page.locator(".lore-import-workspace");
-  await expect(lore.getByRole("heading", { name: "Importar lore revisable" })).toBeVisible();
+  await expect(lore.getByRole("heading", { name: "Importar material del mundo" })).toBeVisible();
   await expect(lore).toContainText("cronica.md");
   await expect(lore).toContainText("Mara");
   await expect(lore).toContainText("La Custodia");
@@ -1271,7 +1289,7 @@ test("Lore resumes persisted batches with complete candidates and advanced hashe
 test("Snapshot uses controlled naming and shows identity and diff before review", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Importaciones", exact: true }).click();
-  await page.getByRole("tab", { name: "Snapshot" }).click();
+  await page.getByRole("tab", { name: "Copias de seguridad" }).click();
   const snapshot = page.locator(".snapshot-workspace");
   const name = snapshot.getByLabel("Nombre de la carpeta");
   await name.fill("nombre inválido");
@@ -1282,7 +1300,7 @@ test("Snapshot uses controlled naming and shows identity and diff before review"
   await expect(snapshot).toContainText("Canon principal");
   await expect(snapshot).toContainText("12 objetos");
   await expect(snapshot.getByText("sha256:snapshot-export")).toBeHidden();
-  await snapshot.getByRole("button", { name: "Elegir snapshot…" }).click();
+  await snapshot.getByRole("button", { name: "Elegir copia…" }).click();
   await expect(snapshot).toContainText("1 altas, 1 cambios, 0 bajas");
   await expect(snapshot).toContainText("Torre restaurada");
   await expect.poll(() => page.evaluate(() => (window as unknown as { __nirmataCommands: Array<{ command: string }> }).__nirmataCommands.some((call) => call.command === "confirm_manual_review"))).toBe(false);
@@ -1291,17 +1309,18 @@ test("Snapshot uses controlled naming and shows identity and diff before review"
   await expect(page.locator("#pending-panel")).toBeVisible();
 });
 
-test("Project Settings exposes diagnostics, copy actions and backup routing", async ({ page }) => {
+test("Project Ajustes exposes diagnostics, copy actions and backup routing", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings", exact: true }).first().click();
-  const settings = page.getByRole("dialog", { name: "Settings" });
+  await page.getByLabel("Más acciones").click();
+  await page.getByRole("button", { name: "Ajustes", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Ajustes" });
   await settings.getByRole("tab", { name: "Proyecto" }).click();
   await expect(settings).toContainText("Versión 11");
   await expect(settings).toContainText("Integridad");
   await expect(settings).toContainText("Correcta");
   await expect(settings).toContainText("sin exponer consultas SQL");
   await settings.getByRole("button", { name: "Abrir backups" }).click();
-  await expect(page.getByRole("tab", { name: "Snapshot" })).toHaveAttribute("data-state", "active");
+  await expect(page.getByRole("tab", { name: "Copias de seguridad" })).toHaveAttribute("data-state", "active");
   await expect(page.locator(".snapshot-workspace")).toBeVisible();
 });
 
@@ -1524,6 +1543,28 @@ test("structured editor mounts create and canonical edit forms for every aggrega
   }
 });
 
+test("entity deletion is prepared for review instead of mutating canon directly", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("nirmata.fixture.editorAggregates", "true"));
+  await page.goto("/");
+  await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Mundo", exact: true }).click();
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("dialog", { name: "Buscar objetos y acciones" });
+  await palette.getByRole("combobox").fill("objeto entity");
+  await palette.getByRole("option", { name: /Objeto entity/iu }).click();
+  const editor = page.locator("#editor-panel");
+  await editor.getByRole("button", { name: "Eliminar del canon" }).click();
+  const confirmation = page.getByRole("dialog", { name: "Preparar eliminación de Archivo de la Aurora" });
+  await expect(confirmation).toContainText("El canon no cambiará todavía");
+  await confirmation.getByRole("button", { name: "Preparar eliminación" }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __nirmataCommands: Array<{ command: string }> }).__nirmataCommands.filter((entry) => entry.command === "prepare_entity_deletion").length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __nirmataCommands: Array<{ command: string }> }).__nirmataCommands.filter((entry) => entry.command === "confirm_manual_review").length)).toBe(0);
+  await page.getByRole("button", { name: /Cambios 1 cambios pendientes/u }).click();
+  const review = page.locator("#pending-panel");
+  await expect(review).toContainText("Eliminar");
+  await expect(review.getByRole("button", { name: "Editar cambio" })).toHaveCount(0);
+  await expect(review.getByRole("button", { name: "Aplicar al mundo" })).toBeDisabled();
+});
+
 test("composed event and document references use named pickers and ordered transport", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("nirmata.fixture.editorAggregates", "true"));
   await page.goto("/");
@@ -1597,15 +1638,11 @@ test("RHF reset, dirty navigation guard and backend failure preserve the structu
   await explorer.getByLabel("Nuevo").selectOption("entity");
   await explorer.getByRole("button", { name: "Crear", exact: true }).click();
   const name = editor.getByLabel("Nombre", { exact: true });
-  const slug = editor.getByLabel("Slug", { exact: true });
   await name.fill("Mara");
-  await slug.fill("mara");
   await editor.getByRole("button", { name: "Revertir formulario" }).click();
   await expect(name).toHaveValue("");
-  await expect(slug).toHaveValue("");
 
   await name.fill("Mara");
-  await slug.fill("mara");
   await page.keyboard.press("Control+k");
   const palette = page.getByRole("dialog", { name: "Buscar objetos y acciones" });
   await palette.getByRole("combobox").fill("objeto entity");
@@ -1618,7 +1655,6 @@ test("RHF reset, dirty navigation guard and backend failure preserve the structu
 
   await editor.getByRole("button", { name: "Preparar cambios", exact: true }).click();
   await expect(name).toHaveValue("Mara");
-  await expect(slug).toHaveValue("mara");
   await expect(editor).toContainText("La transacción no pudo completarse");
 });
 
@@ -1775,7 +1811,8 @@ test("historical calendar remains read-only in timeline and shell", async ({ pag
   await page.goto("/");
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Cronología", exact: true }).click();
   await expect(page.getByRole("button", { name: "Configurar calendario (solo lectura)" })).toBeDisabled();
-  await expect(page.locator(".open-shell-topbar").getByRole("button", { name: "Calendario" })).toBeDisabled();
+  await page.getByLabel("Más acciones").click();
+  await expect(page.locator(".open-shell-topbar").getByRole("button", { name: "Editar calendario" })).toBeDisabled();
   await page.keyboard.press("Control+k");
   const palette = page.getByRole("dialog", { name: "Buscar objetos y acciones" });
   await palette.getByRole("combobox").fill("configurar calendario");
@@ -1803,30 +1840,24 @@ test("Markdown preview keeps hostile HTML inert and preserves editor text", asyn
   await expect(body).toHaveValue(hostile);
 });
 
-test("onboarding offers direct actions and verifies the first applied revision", async ({ page }) => {
+test("home offers direct actions and a compact workflow guide", async ({ page }) => {
   await page.goto("/");
-  const guide = page.getByRole("heading", { name: "Construye una base coherente" });
+  const guide = page.getByRole("heading", { name: "Tú decides qué entra al mundo" });
   await expect(guide).toBeVisible();
-  await expect(page.getByRole("button", { name: "Editar mundo" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Crear regla" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Abrir Mundo" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Crear entidad" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Crear evento" })).toBeVisible();
-  await page.getByRole("button", { name: "Consultar", exact: true }).click();
+  await expect(page.locator(".world-home-guide")).toContainText("Aplicar al mundo");
+  await page.getByRole("button", { name: "Preguntar", exact: true }).click();
   await page.getByRole("button", { name: "Cerrar asistente", exact: true }).last().click();
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Inicio", exact: true }).click();
-  await expect(page.getByText(/1 de 7 pasos completados/u)).toBeVisible();
   await page.getByRole("button", { name: "Ocultar guía" }).click();
   await expect(guide).toBeHidden();
 
+  await page.getByLabel("Más acciones").click();
   await page.getByRole("button", { name: "Ayuda", exact: true }).click();
   await page.getByRole("button", { name: "Volver a mostrar la guía del mundo" }).click();
   await expect(guide).toBeVisible();
-  await expect(page.getByText(/1 de 7 pasos completados/u)).toBeVisible();
-  await page.evaluate(() => localStorage.setItem("nirmata.fixture.firstApplied", "true"));
-  await page.reload();
-  await expect(page.getByText(/2 de 7 pasos completados/u)).toBeVisible();
-  const reopenedGuide = page.locator(".world-home-guide");
-  await expect(reopenedGuide.locator("li").last()).toContainText(/Hecho.*Aplicar el primer conjunto de cambios/u);
   await expect.poll(() => page.evaluate(() => localStorage.getItem(`nirmata.onboarding.${"10000000-0000-4000-8000-000000000001"}`))).not.toBeNull();
 });
 
@@ -1847,20 +1878,19 @@ test("six proposal templates prepare locally and continue the same run into revi
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Asistente", exact: true }).click();
-  await page.getByRole("button", { name: "Proponer cambios", exact: true }).click();
+  await page.getByRole("tab", { name: "Proponer un cambio", exact: true }).click();
+  await page.getByRole("button", { name: "Usar una plantilla", exact: true }).click();
   const catalog = page.locator("#assistant-template-catalog");
   await expect(catalog).toBeVisible();
   await expect(catalog.locator("[data-template]" )).toHaveCount(6);
-  for (const name of ["Facción", "Ciudad", "Personaje", "Conflicto", "Cronología", "Consecuencias"]) {
-    await catalog.getByRole("button", { name: new RegExp(`^${name}`) }).click();
-  }
   await expect(catalog).not.toContainText("Novela");
+  await catalog.getByRole("button", { name: /^Ciudad/u }).click();
   await expect(page.getByText(/Por qué se prepara este brief/u)).toBeVisible();
   await expect(page.getByText(/no puede aplicarla ni convertirla en canon/u)).toBeVisible();
   await expect(page.getByLabel("Escala").last()).toHaveValue("small");
   await expect(page.getByRole("button", { name: "Continuar al proveedor" })).toBeDisabled();
   const localCalls = await page.evaluate(() => (window as unknown as { __nirmataCommands: Array<{ command: string }> }).__nirmataCommands.map((entry) => entry.command));
-  expect(localCalls.filter((command) => command === "prepare_ai_proposal_template")).toHaveLength(6);
+  expect(localCalls.filter((command) => command === "prepare_ai_proposal_template")).toHaveLength(1);
   expect(localCalls.filter((command) => command === "execute_ai_proposal_from_brief")).toHaveLength(0);
 
   await page.evaluate(() => {
@@ -1869,7 +1899,8 @@ test("six proposal templates prepare locally and continue the same run into revi
   });
   await page.reload();
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Asistente", exact: true }).click();
-  await page.getByRole("button", { name: "Proponer cambios", exact: true }).click();
+  await page.getByRole("tab", { name: "Proponer un cambio", exact: true }).click();
+  await page.getByRole("button", { name: "Usar una plantilla", exact: true }).click();
   await catalog.getByRole("button", { name: /^Ciudad/u }).click();
   const brief = page.locator(".intent-brief-form");
   await brief.getByLabel("Objetivo").fill("Convertir el puerto en una ciudad autónoma");
@@ -1884,7 +1915,8 @@ test("six proposal templates prepare locally and continue the same run into revi
   await page.screenshot({ path: testInfo.outputPath("template-brief-desktop.png"), fullPage: true });
   await expect(page).toHaveScreenshot("assistant-brief-light-1280x900.png");
   await brief.getByRole("button", { name: "Continuar al proveedor" }).click();
-  await expect(page.getByText(/Estado: Awaiting Review/u)).toBeVisible();
+  await expect(page.getByText(/La propuesta está fuera del canon/u)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Abrir en Cambios" })).toBeVisible();
   const continued = await page.evaluate(() => {
     const calls = (window as unknown as { __nirmataCommands: Array<{ command: string; args?: { input?: Record<string, unknown> } }> }).__nirmataCommands;
     return calls.find((entry) => entry.command === "execute_ai_proposal_from_brief")?.args?.input;
@@ -1916,11 +1948,11 @@ test("sample prompts only fill or open a mode and never execute AI", async ({ pa
   await page.addInitScript(() => localStorage.setItem("nirmata.fixture.aiReady", "true"));
   await page.goto("/");
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Asistente", exact: true }).click();
-  await page.getByRole("button", { name: "¿Qué tensiones ya aparecen en el canon?" }).click();
+  await page.getByRole("button", { name: "Usar ejemplo" }).click();
   await expect(page.locator("#assistant-input")).toHaveValue("¿Qué tensiones ya aparecen en el canon?");
-  await page.getByRole("button", { name: "Proponer una consecuencia de la selección" }).click();
-  await expect(page.locator("#assistant-input")).toHaveValue("Propón una consecuencia directa de la selección actual.");
-  await expect(page.getByRole("button", { name: "Proponer cambios", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("tab", { name: "Proponer un cambio" }).click();
+  await expect(page.locator("#assistant-input")).toHaveValue("");
+  await expect(page.getByRole("tab", { name: "Proponer un cambio" })).toHaveAttribute("aria-selected", "true");
   const calls = await page.evaluate(() => (window as unknown as { __nirmataCommands: Array<{ command: string }> }).__nirmataCommands.map((entry) => entry.command));
   expect(calls.filter((command) => /execute_ai_query|execute_ai_proposal|prepare_ai_proposal_template/u.test(command))).toEqual([]);
 });
@@ -1956,9 +1988,9 @@ test("advanced assistant profiles explain authority and preserve read-only audit
   await page.goto("/");
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Asistente", exact: true }).click();
 
-  await expect(page.getByRole("group", { name: "Modo del asistente" }).getByRole("button", { name: "Consultar", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Proponer cambios", exact: true })).toBeDisabled();
-  await page.getByText("Perfiles avanzados", { exact: true }).click();
+  await expect(page.getByRole("tab", { name: "Preguntar", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Proponer un cambio", exact: true })).toBeDisabled();
+  await page.getByText("Más opciones", { exact: true }).click();
 
   const deep = page.getByRole("button", { name: /Revisión profunda Especialistas de solo lectura/u });
   const audit = page.getByRole("button", { name: /Auditoría del canon Busca problemas/u });
@@ -1977,7 +2009,7 @@ test("deep review requires role confirmation and audit remains read-only", async
   await page.addInitScript(() => localStorage.setItem("nirmata.fixture.aiReady", "true"));
   await page.goto("/");
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Asistente", exact: true }).click();
-  await page.getByText("Perfiles avanzados", { exact: true }).click();
+  await page.getByText("Más opciones", { exact: true }).click();
   await page.getByRole("button", { name: /Revisión profunda Especialistas/u }).click();
   await page.locator("#assistant-input").fill("Analiza el impacto institucional de independizar la ciudad");
   await page.locator("#assistant-submit").click();
@@ -1992,7 +2024,8 @@ test("deep review requires role confirmation and audit remains read-only", async
   await expect(page.getByRole("button", { name: /Cambios 1 cambios pendientes/u })).toBeVisible();
 
   await page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Asistente", exact: true }).click();
-  await page.getByText("Perfiles avanzados", { exact: true }).click();
+  await page.getByRole("tab", { name: "Preguntar", exact: true }).click();
+  await page.getByText("Más opciones", { exact: true }).click();
   await page.getByRole("button", { name: /Auditoría del canon Busca problemas/u }).click();
   await page.locator("#assistant-input").fill("Audita reglas y continuidad temporal");
   await page.locator("#assistant-submit").click();
@@ -2017,13 +2050,13 @@ test("query conversion confirms inherited request and context before changing mo
   await expect(page.getByRole("heading", { name: "Confirmar paso a propuesta" })).toBeVisible();
   await expect(page.getByText("Preparar la independencia de la ciudad", { exact: true })).toBeVisible();
   await expect(page.getByText(/Contexto: contexto general · versión actual/u)).toBeVisible();
-  await expect(page.getByRole("group", { name: "Modo del asistente" }).getByRole("button", { name: "Consultar" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("tab", { name: "Preguntar" })).toHaveAttribute("aria-selected", "true");
 
   await page.locator(".proposal-confirmation").getByRole("button", { name: "Cancelar", exact: true }).click();
   await expect(convert).toBeFocused();
   await convert.click();
   await page.getByRole("button", { name: "Continuar a Proponer cambios" }).click();
-  await expect(page.getByRole("group", { name: "Modo del asistente" }).getByRole("button", { name: "Proponer cambios" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("tab", { name: "Proponer un cambio" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("#assistant-input")).toHaveValue("Preparar la independencia de la ciudad");
   await expect(page.locator("#assistant-context")).toContainText("Contexto heredado de la consulta");
   await expect.poll(() => page.evaluate(() => (window as unknown as { __nirmataCommands: Array<{ command: string }> }).__nirmataCommands.filter((entry) => entry.command === "execute_ai_proposal").length)).toBe(0);
@@ -2034,7 +2067,7 @@ test("local conversations persist, send bounded history and delete without chang
   await page.goto("/");
   const assistantArea = page.getByRole("navigation", { name: "Áreas del mundo" }).getByRole("button", { name: "Asistente", exact: true });
   await assistantArea.click();
-  await expect(page.getByText("Historial guardado en este equipo · no es canon.")).toBeVisible();
+  await expect(page.getByText("Historial de conversaciones")).toBeVisible();
 
   await page.locator("#assistant-input").fill("¿Qué controla la ciudad?");
   await page.locator("#assistant-submit").click();
@@ -2054,8 +2087,9 @@ test("local conversations persist, send bounded history and delete without chang
   await page.reload();
   await assistantArea.click();
   await expect(page.locator(".assistant-message.user-message")).toHaveCount(2);
-  await page.getByRole("button", { name: "Nueva conversación" }).click();
-  await expect(page.getByText("Esta conversación está vacía.", { exact: false })).toBeVisible();
+  await page.getByText("Historial de conversaciones").click();
+  await page.getByRole("button", { name: "Nueva", exact: true }).click();
+  await expect(page.locator(".assistant-message.user-message")).toHaveCount(0);
   await page.locator("#assistant-conversation-select").selectOption({ label: "¿Qué controla la ciudad?" });
   await page.getByRole("button", { name: "Eliminar", exact: true }).click();
   await page.getByRole("button", { name: "Confirmar eliminación" }).click();
@@ -2065,7 +2099,7 @@ test("local conversations persist, send bounded history and delete without chang
   await page.evaluate((worldId) => localStorage.setItem(`nirmata.assistant.conversations.${worldId}`, '[{"id":"damaged","turns":[{}]}]'), variant.worldId);
   await page.reload();
   await assistantArea.click();
-  await expect(page.getByText("Esta conversación está vacía.", { exact: false })).toBeVisible();
+  await expect(page.locator(".assistant-message.user-message")).toHaveCount(0);
 });
 
 test("global review drawer opens over Inicio and restores focus", async ({ page }) => {
@@ -2171,6 +2205,7 @@ test("failed and cancelled document requests never create review cards", async (
   await workspace.getByRole("button", { name: "Generar borrador revisable" }).click();
   await expect(page.locator(".open-shell-topbar .count-badge")).toHaveText("0");
   await expect(workspace.locator(".narrative-document-preview")).toHaveCount(0);
+  await page.getByRole("button", { name: "Cerrar aviso" }).click();
 
   await page.evaluate(() => localStorage.setItem("nirmata.fixture.narrativeOutcome", "cancelled"));
   await workspace.getByRole("button", { name: "Generar borrador revisable" }).click();

@@ -2,14 +2,14 @@ use crate::time::Certainty;
 use crate::{DomainError, EntityId, JsonObject, RelationId, WorldId, required, validate_version};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RelationDirection {
     Directed,
     Undirected,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Relation {
     id: RelationId,
     world_id: WorldId,
@@ -169,3 +169,4 @@ impl Relation {
 #[cfg(test)]
 #[path = "../tests/unit/relation/mod.rs"]
 mod tests;
+use schemars::JsonSchema;

@@ -1,7 +1,7 @@
 use crate::DomainError;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EventTimeKind {
     Unknown,
@@ -10,7 +10,7 @@ pub enum EventTimeKind {
     Ongoing,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TimePrecision {
     Exact,
@@ -21,7 +21,7 @@ pub enum TimePrecision {
     Unknown,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Certainty {
     Certain,
@@ -43,7 +43,7 @@ impl From<bool> for PartialTruth {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EventTime {
     kind: EventTimeKind,
     start_tick: Option<i64>,
@@ -222,3 +222,4 @@ impl EventTime {
 #[cfg(test)]
 #[path = "../tests/unit/time/mod.rs"]
 mod tests;
+use schemars::JsonSchema;

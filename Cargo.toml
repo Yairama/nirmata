@@ -15,4 +15,5 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
+schemars = { version = "0.8.22", features = ["uuid1"] }
 uuid = { version = "1", features = ["serde", "v4"] }

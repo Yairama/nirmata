@@ -3,14 +3,14 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimPolarity {
     Positive,
     Negative,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimAuthentication {
     Canonical,
@@ -18,7 +18,7 @@ pub enum ClaimAuthentication {
     Disputed,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimModality {
     Assertion,
@@ -27,14 +27,14 @@ pub enum ClaimModality {
     Counterfactual,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimObject {
     Entity(EntityId),
     Scalar(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Claim {
     id: ClaimId,
     world_id: WorldId,
@@ -288,3 +288,4 @@ fn validate_context(
 #[cfg(test)]
 #[path = "../tests/unit/claim/mod.rs"]
 mod tests;
+use schemars::JsonSchema;

@@ -3,7 +3,7 @@ use crate::{DomainError, EntityId, EventId, GoalId, WorldId, required, validate_
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EventParticipant {
     entity_id: EntityId,
     role: String,
@@ -36,7 +36,7 @@ impl EventParticipant {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Event {
     id: EventId,
     world_id: WorldId,
@@ -167,7 +167,7 @@ impl Event {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EventAggregate {
     event: Event,
     links: Vec<EventLink>,
@@ -201,7 +201,7 @@ fn validate_ordinals(participants: &[EventParticipant]) -> Result<(), DomainErro
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EventLinkKind {
     Enables,
@@ -212,7 +212,7 @@ pub enum EventLinkKind {
     Reveals,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EventLink {
     source_event_id: EventId,
     target_event_id: EventId,
@@ -251,3 +251,4 @@ impl EventLink {
 #[cfg(test)]
 #[path = "../tests/unit/event/mod.rs"]
 mod tests;
+use schemars::JsonSchema;

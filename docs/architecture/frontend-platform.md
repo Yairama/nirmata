@@ -1,24 +1,23 @@
 # Plataforma frontend y WebViews
 
-**Estado:** decisión fechada el 12 de agosto de 2026; validación macOS/Linux
+**Estado:** decisión actualizada el 14 de agosto de 2026; validación macOS/Linux
 pendiente de hardware real.
 
 ## Estrategia de estilos
 
-Nirmata usa CSS convencional con variables semánticas. No adopta Tailwind CSS
-v4 ni mantiene una hoja alternativa.
+Nirmata usa Tailwind CSS v4 como motor de build mediante `@tailwindcss/vite`.
+Existe una sola entrada `styles.css`: define los tokens semánticos, los expone a
+Tailwind con `@theme inline` y compone las primitivas locales con utilities. No
+hay CDN, configuración JavaScript, pipeline PostCSS alternativo ni una hoja
+heredada paralela.
 
-La decisión aplica YAGNI: el sistema visual ya define tokens CSS, React todavía
-no ha demostrado duplicación que justifique utilities y Tailwind v4 eleva el
-piso a Chrome 111, Safari 16.4 y Firefox 128 sin publicar una equivalencia
-oficial para WebKitGTK.
+Los tokens `--n-*` siguen siendo la autoridad para light, dark, system, high
+contrast y forced colors. Tailwind no introduce una segunda paleta de producto.
+El piso de soporte permanece en WebView2 `>=111`, Sonoma 14+ y WebKitGTK `>=2.44`;
+la validación del binario real en WKWebView y WebKitGTK sigue siendo un gate de
+release separado.
 
-La integración de estilos queda cerrada independientemente del gate de hardware:
-existe una sola hoja de producción, sin Tailwind, CDN, PostCSS paralelo ni
-fallback duplicado. La validación del binario en WKWebView y WebKitGTK permanece
-como requisito separado de la matriz de plataformas.
-
-Las primitivas nativas, Radix importado desde sus módulos reales y componentes
+Las primitivas nativas, Radix importado desde sus módulos reales, Tailwind y componentes
 locales de cada feature cubren Button, Field, Dialog, Sheet, Tabs, Badge,
 ScrollArea y Toast. No se adopta un catálogo shadcn: copiarlo ahora duplicaría
 soluciones ya verificadas. Un componente individual solo se reconsiderará ante
@@ -55,7 +54,7 @@ Fuentes:
 
 ## Build
 
-Vite es el único build frontend. Desarrollo usa `http://localhost:1420` con
+Vite con `@tailwindcss/vite` es el único build frontend. Desarrollo usa `http://localhost:1420` con
 puerto estricto; producción genera assets estáticos locales en `dist` sin source
 maps. TypeScript estricto se comprueba sin emitir una segunda copia de módulos.
 

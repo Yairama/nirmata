@@ -28,6 +28,8 @@ function validationIssueMessage(issue: ValidationIssue): string {
     "change_set.operation.target_exists": "Ya existe un objeto con esa identidad.",
     "change_set.operation.world_revision_changed": "El mundo avanzó desde que se preparó esta operación.",
     "change_set.dependency_order": "Ordena primero las operaciones de las que depende este cambio.",
+    "change_set.delete_orphan": "Este objeto todavía es utilizado por otros elementos del canon. Abre las dependencias y elimina o cambia esas referencias antes de confirmar.",
+    "change_set.replacement_decision_unresolved": "Elige si conservar el objeto actual o aplicar su eliminación.",
     "reference.cross_world": "La referencia pertenece a otro mundo.",
     "version.mismatch": "La versión esperada ya no coincide con la actual.",
     "period.inverted": "El final del período ocurre antes que el inicio.",

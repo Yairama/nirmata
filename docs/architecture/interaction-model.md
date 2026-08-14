@@ -4,7 +4,7 @@
 
 ## Decision
 
-La GUI debe tener **un panel de asistente con dos modos explicitos**, no dos
+La GUI debe tener **un drawer de asistente con dos modos explicitos**, no dos
 chatbots distintos:
 
 1. `Consultar`: solo lectura.
@@ -12,6 +12,10 @@ chatbots distintos:
 
 Ambos comparten historial visible y seleccion actual, pero tienen contratos de
 salida diferentes.
+
+El drawer no reemplaza el área activa: conserva Mundo, Cronología o la herramienta
+de origen debajo del overlay. Su cabecera ofrece volver entre brief, resultado y
+composición, además de cerrar y devolver foco al control que lo abrió.
 
 Las solicitudes complejas pueden activar `Revision profunda`, que ejecuta
 especialistas de solo lectura antes de construir la propuesta. No es otro
@@ -193,6 +197,12 @@ controles humanos al `ManualDraftRequest` existente y `preview_manual_draft`
 sigue siendo la autoridad para construir y validar la propuesta. Crear, editar y
 `begin_manual_review_edit`/`apply_manual_review_edit` recorren el mismo editor;
 el resultado vuelve siempre a Cambios para revision estandar.
+
+Una entidad existente ofrece `Eliminar del canon`. Esta acción prepara una
+operación `DeleteEntity` de reemplazo y nunca borra directamente. Referencias
+entrantes aparecen como dependencias navegables y bloquean la confirmación; no
+hay borrado en cascada. La eliminación exige juicio, decisión explícita y
+`Aplicar al mundo`, y puede revertirse desde Versiones mediante una nueva revisión.
 
 ## Streaming
 

@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { appActions } from "./state.js";
+import { Icon } from "./icons.js";
 
 type FeedbackAction = {
   label: string;
@@ -42,8 +43,8 @@ const errorCopy: Record<string, ErrorCopy> = {
   invalid_project_format: { kind: "error", title: "El archivo no es un proyecto Nirmata", detail: "Elige otro archivo .nirmata o restaura una copia válida." },
   incompatible_schema: { kind: "error", title: "El proyecto usa otra versión", detail: "Esta versión de Nirmata no puede abrirlo de forma segura." },
   corrupt_project: { kind: "error", title: "El proyecto está dañado", detail: "No se realizaron cambios. Restaura un backup o elige otro archivo." },
-  provider_key_missing: { kind: "warning", title: "Falta configurar la credencial de IA", detail: "Abre Settings de IA y guarda una credencial antes de continuar." },
-  provider_config_missing: { kind: "warning", title: "La IA no está configurada", detail: "Completa la configuración de Microsoft Foundry en Settings." },
+  provider_key_missing: { kind: "warning", title: "Falta configurar la credencial de IA", detail: "Abre Ajustes de IA y guarda una credencial antes de continuar." },
+  provider_config_missing: { kind: "warning", title: "La IA no está configurada", detail: "Completa la configuración de Microsoft Foundry en Ajustes." },
   invalid_provider_base_url: { kind: "warning", title: "La dirección del proveedor no es válida", detail: "Corrige la configuración de Microsoft Foundry y vuelve a probar." },
   provider_timeout: { kind: "warning", title: "La IA tardó demasiado", detail: "La solicitud terminó sin modificar el canon. Puedes volver a intentarlo." },
   provider_cancelled: { kind: "info", title: "Solicitud cancelada", detail: "El trabajo preparado se conserva y puedes retomarlo cuando quieras." },
@@ -57,8 +58,8 @@ const errorCopy: Record<string, ErrorCopy> = {
   invalid_snapshot_name: { kind: "warning", title: "El nombre del backup no es válido", detail: "Usa letras, números, guion o guion bajo, sin espacios y con un máximo de 80 caracteres." },
   snapshot_destination_occupied: { kind: "warning", title: "Ya existe un backup con ese nombre", detail: "Escribe otro nombre o elige otra carpeta." },
   snapshot_io_error: { kind: "error", title: "No se pudo guardar el backup", detail: "Comprueba el espacio, la carpeta y sus permisos antes de reintentar." },
-  invalid_snapshot_import: { kind: "warning", title: "El snapshot no corresponde a esta vista", detail: "Elige un backup del mismo mundo y variante, preparado desde una versión compatible." },
-  snapshot_has_no_changes: { kind: "info", title: "El snapshot no contiene cambios", detail: "El backup ya coincide con la versión actual; no se creó una propuesta." },
+  invalid_snapshot_import: { kind: "warning", title: "La copia no corresponde a esta vista", detail: "Elige un backup del mismo mundo y variante, preparado desde una versión compatible." },
+  snapshot_has_no_changes: { kind: "info", title: "La copia no contiene cambios", detail: "El backup ya coincide con la versión actual; no se creó una propuesta." },
   invalid_object_uri: { kind: "warning", title: "La referencia no es válida", detail: "Selecciona nuevamente el objeto desde el explorador." },
   invalid_simulation_scenario: { kind: "warning", title: "El escenario necesita correcciones", detail: "Revisa facciones, recursos, existencias y reglas. El escenario permanece fuera del canon." },
   simulation_scenario_not_found: { kind: "warning", title: "El escenario ya no está disponible", detail: "Actualiza la lista o crea otro escenario para esta sesión." },
@@ -194,7 +195,7 @@ export function FeedbackHost() {
             {item.action.label}
           </button>
         )}
-        <button type="button" className="ghost" onClick={clearFeedback} aria-label="Cerrar aviso">Cerrar</button>
+        <button type="button" className="icon-button" onClick={clearFeedback} aria-label="Cerrar aviso" title="Cerrar aviso"><Icon name="x" /></button>
       </div>
     </aside>,
     document.body,

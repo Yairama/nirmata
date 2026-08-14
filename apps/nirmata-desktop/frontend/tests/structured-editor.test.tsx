@@ -131,4 +131,15 @@ describe("StructuredEditor", () => {
     await user.click(screen.getByRole("button", { name: "Preparar cambios" }));
     await waitFor(() => expect(mocks.saveCurrentDraft.mock.calls[0][0].values.content_references).toBe(`${second.uri}|0\n${first.uri}|1`));
   });
+
+  test("creates the technical entity identifier from the visible name", async () => {
+    appActions.setStructuredEditor(buildCreateEditor("entity"));
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.type(screen.getByRole("textbox", { name: "Nombre" }), "Nácar del Alba");
+    await user.click(screen.getByRole("button", { name: "Preparar cambios" }));
+
+    await waitFor(() => expect(mocks.saveCurrentDraft.mock.calls[0][0].values.slug).toBe("nacar-del-alba"));
+  });
 });

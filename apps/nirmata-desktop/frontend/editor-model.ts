@@ -176,7 +176,7 @@ function buildSelectionEditor(selection: OpenUriResponse): StructuredEditorState
           options: enumOptions(["person", "place", "faction", "culture", "resource", "concept"]),
         }),
         createField("name", "Nombre", "text", entity.name, { required: true }),
-        createField("slug", "Slug", "text", entity.slug, { required: true }),
+        createField("slug", "Identificador corto", "text", entity.slug, { required: true }),
         createField("aliases", "Nombres alternativos (uno por línea)", "textarea", linesToText(entity.aliases), {
           rows: 4,
         }),
